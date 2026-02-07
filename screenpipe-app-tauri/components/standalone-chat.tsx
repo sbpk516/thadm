@@ -61,7 +61,7 @@ const TOOLS: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "search_content",
-      description: `Search screenpipe's recorded content: screen text (OCR), audio transcriptions, and UI elements.
+      description: `Search thadm's recorded content: screen text (OCR), audio transcriptions, and UI elements.
 
 **MANDATORY**: start_time is REQUIRED for every search. Database has 600k+ entries - searches without time bounds WILL timeout.
 
@@ -100,7 +100,7 @@ function buildSystemPrompt(): string {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offsetStr = getTimezoneOffsetString();
 
-  return `You are a helpful AI assistant that can search through the user's Screenpipe data - their screen recordings, audio transcriptions, and UI interactions.
+  return `You are a helpful AI assistant that can search through the user's thadm data - their screen recordings, audio transcriptions, and UI interactions.
 
 CRITICAL SEARCH RULES (database has 600k+ entries - ALWAYS use time filters):
 1. ALWAYS include start_time in EVERY search - NEVER search without a time range
@@ -645,7 +645,7 @@ export function StandaloneChat() {
     if (!hasPresets) return "No AI presets configured";
     if (!activePreset) return "No preset selected";
     if (!hasValidModel) return `No model selected in "${activePreset.id}" preset`;
-    if (needsLogin) return "Login required for Screenpipe Cloud";
+    if (needsLogin) return "Login required for thadm Cloud";
     return null;
   };
   const disabledReason = getDisabledReason();

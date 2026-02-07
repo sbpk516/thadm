@@ -437,7 +437,7 @@ const OnboardingWelcome: React.FC<OnboardingWelcomeProps> = ({
               <img
                 className="w-14 h-14"
                 src="/128x128.png"
-                alt="screenpipe"
+                alt="thadm"
               />
               {/* Subtle glow */}
               <motion.div
@@ -447,7 +447,7 @@ const OnboardingWelcome: React.FC<OnboardingWelcomeProps> = ({
               />
             </motion.div>
             <div>
-              <h1 className="text-2xl font-bold tracking-tight">screenpipe</h1>
+              <h1 className="text-2xl font-bold tracking-tight">thadm</h1>
               <p className="text-sm text-muted-foreground mt-1">
                 AI memory for your screen
               </p>

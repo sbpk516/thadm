@@ -465,7 +465,7 @@ EXAMPLES:
   },
 ];
 
-const SYSTEM_PROMPT = `You are a helpful AI assistant that can search through the user's Screenpipe data - their screen recordings, audio transcriptions, and UI interactions. You also have access to web search for current information.
+const SYSTEM_PROMPT = `You are a helpful AI assistant that can search through the user's thadm data - their screen recordings, audio transcriptions, and UI interactions. You also have access to web search for current information.
 
 CAPABILITIES:
 1. **Screen/Audio Search** (search_content): Search user's captured screen text, audio transcriptions, UI elements
@@ -650,7 +650,7 @@ export function GlobalChat() {
             case "completed":
               if (data.video_data) {
                 closeWebSocket();
-                const filename = `screenpipe_export_${new Date().toISOString().replace(/[:.]/g, "-")}.mp4`;
+                const filename = `thadm_export_${new Date().toISOString().replace(/[:.]/g, "-")}.mp4`;
 
                 try {
                   if ("__TAURI__" in window) {
@@ -1062,7 +1062,7 @@ export function GlobalChat() {
     if (!hasPresets) return "No AI presets configured";
     if (!activePreset) return "No preset selected";
     if (!hasValidModel) return `No model selected in "${activePreset.id}" preset - click edit to add one`;
-    if (needsLogin) return "Login required for Screenpipe Cloud";
+    if (needsLogin) return "Login required for thadm Cloud";
     return null;
   };
   const disabledReason = getDisabledReason();
@@ -1165,7 +1165,7 @@ export function GlobalChat() {
 
       // Check for API error response
       if (data.error) {
-        return `Search failed: ${data.error}. Please inform the user about this error and suggest they restart Screenpipe or check logs.`;
+        return `Search failed: ${data.error}. Please inform the user about this error and suggest they restart thadm or check logs.`;
       }
 
       const searchResults = data.data || [];

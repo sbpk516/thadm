@@ -78,7 +78,7 @@ async function getInstalledMcpVersion(): Promise<string | null> {
     const config = JSON.parse(configContent);
 
     // Check if screenpipe is configured
-    if (config?.mcpServers?.screenpipe) {
+    if (config?.mcpServers?.thadm) {
       // Try to get version from the installed package
       // For now, just return "installed" if configured
       return "installed";
@@ -132,7 +132,7 @@ export function ConnectionsSection() {
 
       // Save to temp directory automatically (no dialog)
       const tmpDir = await tempDir();
-      const filePath = await join(tmpDir, "screenpipe-mcp.mcpb");
+      const filePath = await join(tmpDir, "thadm.mcpb");
 
       await writeFile(filePath, uint8Array);
 
@@ -202,7 +202,7 @@ export function ConnectionsSection() {
           Connections
         </h1>
         <p className="text-muted-foreground text-lg">
-          Connect Screenpipe to AI assistants and other applications
+          Connect thadm to AI assistants and other applications
         </p>
       </div>
 
@@ -245,7 +245,7 @@ export function ConnectionsSection() {
                   )}
                 </div>
                 <p className="text-muted-foreground mb-4">
-                  Connect Screenpipe to Claude Desktop to search your screen recordings,
+                  Connect thadm to Claude Desktop to search your screen recordings,
                   audio transcriptions, and control your computer using natural language.
                 </p>
 
@@ -290,7 +290,7 @@ export function ConnectionsSection() {
               <div className="px-6 pb-6">
                 <div className="p-4 bg-muted border border-border rounded-lg">
                   <p className="text-sm text-foreground">
-                    <strong>Screenpipe is now connected to Claude!</strong> Try asking Claude:
+                    <strong>thadm is now connected to Claude!</strong> Try asking Claude:
                     &quot;What did I do in the last 5 minutes?&quot; or &quot;Search my screen for meetings today&quot;
                   </p>
                 </div>

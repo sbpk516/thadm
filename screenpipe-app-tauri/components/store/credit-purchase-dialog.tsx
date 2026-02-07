@@ -63,7 +63,7 @@ export function CreditPurchaseDialog({
                       monthly
                     </Badge>
                     <span className="text-sm font-mono">
-                      15 credits/m, unlimited screenpipe cloud, priority support
+                      15 credits/m, unlimited thadm cloud, priority support
                     </span>
                   </div>
                   <Button

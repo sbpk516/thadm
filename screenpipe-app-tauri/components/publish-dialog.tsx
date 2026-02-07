@@ -102,7 +102,7 @@ export const PublishDialog: React.FC<PublishDialogProps> = ({ app }) => {
           <DialogHeader>
             <DialogTitle>publish to store</DialogTitle>
             <DialogDescription>
-              submit your app to the screenpipe community store
+              submit your app to the thadm community store
             </DialogDescription>
           </DialogHeader>
 

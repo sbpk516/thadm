@@ -22,17 +22,17 @@ const OnboardingPipes: React.FC<OnboardingPipesProps> = ({
         <img
           className="w-24 h-24 justify-center"
           src="/128x128.png"
-          alt="screenpipe-logo"
+          alt="thadm-logo"
         />
         <DialogTitle className="text-center text-2xl">
-          screenpipe tips
+          thadm tips
         </DialogTitle>
       </DialogHeader>
       <div className="mt-32 w-full flex justify-around flex-col text-center">
         <div className="mx-3">
           <p className="text-muted-foreground text-[14px]">
             <span className="font-medium text-nowrap text-[14px] prose mr-1">
-              screenpipe is built to be fully extensible,
+              thadm is built to be fully extensible,
             </span>
             allowing you to enhance its capabilities with custom pipes,
             versatile plugins that streamline workflow automation for analyzing,

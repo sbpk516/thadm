@@ -57,7 +57,7 @@ export function useAiProvider(
 						if (!settings.user?.token) {
 							setStatus({
 								isAvailable: false,
-								error: "login required for screenpipe cloud",
+								error: "login required for thadm cloud",
 							});
 							return;
 						}

@@ -57,7 +57,7 @@ const OPTIONS = [
     key: "curious",
     icon: Sparkles,
     label: "just exploring",
-    description: "i heard about screenpipe and want to see what it does",
+    description: "i heard about thadm and want to see what it does",
   },
   {
     key: "other",
@@ -169,13 +169,13 @@ const OnboardingSelection: React.FC<OnboardingSelectionProps> = ({
         <motion.img
           className="w-20 h-20 justify-center mb-4"
           src="/128x128.png"
-          alt="screenpipe-logo"
+          alt="thadm-logo"
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.5 }}
         />
         <h2 className="text-center text-2xl font-bold">
-          what&apos;s your #1 goal with screenpipe?
+          what&apos;s your #1 goal with thadm?
         </h2>
         <p className="text-center text-muted-foreground mt-2">
           pick the one that matters most to you

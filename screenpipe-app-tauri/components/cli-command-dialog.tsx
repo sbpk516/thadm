@@ -183,7 +183,7 @@ export function CliCommandDialog({ settings }: CliCommandDialogProps) {
           <DialogHeader>
             <DialogTitle>CLI command</DialogTitle>
             <DialogDescription>
-              you can use this CLI command to start screenpipe with the current
+              you can use this CLI command to start thadm with the current
               settings.
             </DialogDescription>
           </DialogHeader>

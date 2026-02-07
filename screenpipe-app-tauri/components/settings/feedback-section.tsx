@@ -13,7 +13,7 @@ export function FeedbackSection() {
           Send Feedback
         </h1>
         <p className="text-muted-foreground text-lg">
-          Help us improve screenpipe by sharing your feedback
+          Help us improve thadm by sharing your feedback
         </p>
       </div>
 
@@ -26,7 +26,7 @@ export function FeedbackSection() {
             <div>
               <h3 className="text-lg font-semibold mb-1">Share Your Thoughts</h3>
               <p className="text-sm text-muted-foreground">
-                Your feedback helps us make screenpipe better. Logs are automatically
+                Your feedback helps us make thadm better. Logs are automatically
                 included to help us diagnose any issues you&apos;re experiencing.
               </p>
             </div>

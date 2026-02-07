@@ -41,13 +41,13 @@ const OnboardingIntro: React.FC<OnboardingIntroProps> = ({
         <motion.img
           className="w-24 h-24 justify-center"
           src="/128x128.png"
-          alt="screenpipe-logo"
+          alt="thadm-logo"
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.5 }}
         />
         <h1 className="text-center text-3xl font-mono font-bold text-foreground mt-4">
-          screenpipe
+          thadm
         </h1>
         <p className="text-center text-sm font-mono text-muted-foreground mt-2">
           memory infrastructure for your computer

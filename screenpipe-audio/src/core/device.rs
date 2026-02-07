@@ -148,10 +148,17 @@ where
 #[cfg(target_os = "macos")]
 async fn get_screen_capture_host() -> Result<cpal::Host> {
     // necessary hack because this is unreliable
+    // Also catch panics from cpal when Screen Recording permission is not granted
     with_retry(
         || async {
-            cpal::host_from_id(cpal::HostId::ScreenCaptureKit)
-                .map_err(|e| anyhow!("Failed to get ScreenCaptureKit host: {}", e))
+            let result = std::panic::catch_unwind(|| {
+                cpal::host_from_id(cpal::HostId::ScreenCaptureKit)
+            });
+            match result {
+                Ok(Ok(host)) => Ok(host),
+                Ok(Err(e)) => Err(anyhow!("Failed to get ScreenCaptureKit host: {}", e)),
+                Err(_) => Err(anyhow!("ScreenCaptureKit panicked - Screen Recording permission may not be granted")),
+            }
         },
         3,
     )
@@ -192,7 +199,13 @@ pub async fn get_cpal_device_and_config(
         #[cfg(target_os = "macos")]
         if is_output_device {
             if let Ok(screen_capture_host) = get_screen_capture_host().await {
-                devices = screen_capture_host.input_devices()?;
+                // Wrap in panic catch because cpal can panic when Screen Recording permission is not granted
+                let input_devices_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    screen_capture_host.input_devices()
+                }));
+                if let Ok(Ok(sck_devices)) = input_devices_result {
+                    devices = sck_devices;
+                }
             }
         }
 
@@ -260,12 +273,20 @@ pub async fn list_audio_devices() -> Result<Vec<AudioDevice>> {
         // !HACK macos is supposed to use special macos feature "display capture"
         // ! see https://github.com/RustAudio/cpal/pull/894
         if let Ok(screen_capture_host) = get_screen_capture_host().await {
-            for device in screen_capture_host.input_devices()? {
-                if let Ok(name) = device.name() {
-                    if should_include_output_device(&name) {
-                        devices.push(AudioDevice::new(name, DeviceType::Output));
+            // Wrap in panic catch because cpal can panic when Screen Recording permission is not granted
+            let input_devices_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                screen_capture_host.input_devices()
+            }));
+            if let Ok(Ok(input_devices)) = input_devices_result {
+                for device in input_devices {
+                    if let Ok(name) = device.name() {
+                        if should_include_output_device(&name) {
+                            devices.push(AudioDevice::new(name, DeviceType::Output));
+                        }
                     }
                 }
+            } else {
+                tracing::warn!("ScreenCaptureKit input_devices() failed or panicked - Screen Recording permission may not be granted");
             }
         }
     }
@@ -409,8 +430,12 @@ pub async fn default_output_device() -> Result<AudioDevice> {
     {
         // ! see https://github.com/RustAudio/cpal/pull/894
         // Try to get device from ScreenCaptureKit first
+        // Wrap in panic catch because cpal can panic when Screen Recording permission is not granted
         if let Ok(host) = get_screen_capture_host().await {
-            if let Some(device) = host.default_input_device() {
+            let default_device_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                host.default_input_device()
+            }));
+            if let Ok(Some(device)) = default_device_result {
                 if let Ok(name) = device.name() {
                     return Ok(AudioDevice::new(name, DeviceType::Output));
                 }

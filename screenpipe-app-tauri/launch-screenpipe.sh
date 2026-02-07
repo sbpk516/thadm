@@ -1,12 +1,12 @@
 #!/bin/bash
-# Launch screenpipe - Development.app
+# Launch Thadm - Development.app
 # Kills any previous instances before starting
 
 APP_DIR="$(cd "$(dirname "$0")" && pwd)"
-APP_BIN="$APP_DIR/src-tauri/target/debug/bundle/macos/screenpipe - Development.app/Contents/MacOS/screenpipe-app"
+APP_BIN="$APP_DIR/src-tauri/target/debug/bundle/macos/Thadm - Development.app/Contents/MacOS/thadm"
 
 # Kill previous instances
-pkill -f "screenpipe-app" 2>/dev/null
+pkill -f "thadm" 2>/dev/null
 pkill -f "screenpipe --port" 2>/dev/null
 sleep 1
 

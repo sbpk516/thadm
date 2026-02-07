@@ -7,9 +7,9 @@ use tracing::{error, info};
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_unhealth_icon(app_handle: tauri::AppHandle) {
-    if let Some(main_tray) = app_handle.tray_by_id("screenpipe_main") {
+    if let Some(main_tray) = app_handle.tray_by_id("thadm_main") {
         let _ = main_tray.set_icon(Some(
-            tauri::image::Image::from_path("icons/screenpipe-logo-tray-failed.png").unwrap(),
+            tauri::image::Image::from_path("icons/thadm-tray-failed.png").unwrap(),
         ));
     }
 }
@@ -17,9 +17,9 @@ pub fn set_tray_unhealth_icon(app_handle: tauri::AppHandle) {
 #[tauri::command]
 #[specta::specta]
 pub fn set_tray_health_icon(app_handle: tauri::AppHandle) {
-    if let Some(main_tray) = app_handle.tray_by_id("screenpipe_main") {
+    if let Some(main_tray) = app_handle.tray_by_id("thadm_main") {
         let _ = main_tray.set_icon(Some(
-            tauri::image::Image::from_path("icons/screenpipe-logo-tray-black.png").unwrap(),
+            tauri::image::Image::from_path("assets/thadm-tray-black.png").unwrap(),
         ));
     }
 }

@@ -36,7 +36,7 @@ const OnboardingLogin: React.FC<OnboardingLoginProps> = ({
     <div className={`w-full h-full flex flex-col items-center justify-center space-y-6 py-4 ${className}`}>
       <div className="w-full max-w-md space-y-6">
         <div className="text-center space-y-2 mb-8">
-          <h1 className="text-3xl font-bold tracking-tight">welcome to screenpipe</h1>
+          <h1 className="text-3xl font-bold tracking-tight">welcome to thadm</h1>
           <p className="text-sm text-muted-foreground">
             100% local. your data never leaves your device.
           </p>
@@ -70,7 +70,7 @@ const OnboardingLogin: React.FC<OnboardingLoginProps> = ({
           ) : (
             <>
               <div className="space-y-3 text-sm text-muted-foreground">
-                <p className="font-medium text-foreground">no account needed to use screenpipe</p>
+                <p className="font-medium text-foreground">no account needed to use thadm</p>
                 <p className="text-xs">
                   optional sign in unlocks: cloud AI, settings sync, priority support
                 </p>

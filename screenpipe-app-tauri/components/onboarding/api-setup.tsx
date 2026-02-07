@@ -160,7 +160,7 @@ const OnboardingAPISetup: React.FC<OnboardingAPISetupProps> = ({
           <img
             className="w-24 h-24 justify-center"
             src="/128x128.png"
-            alt="screenpipe-logo"
+            alt="thadm-logo"
           />
           <h1 className="text-center text-2xl text-text-primary">
             setup your ai settings

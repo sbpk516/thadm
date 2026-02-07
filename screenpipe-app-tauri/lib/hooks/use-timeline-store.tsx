@@ -334,7 +334,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 			if (connectionAttempts < MAX_SILENT_RETRIES) {
 				console.log(`Connection attempt ${connectionAttempts}/${MAX_SILENT_RETRIES}, retrying...`);
 				// Keep showing loading state, not error
-				set({ isLoading: true, message: "connecting to screenpipe..." });
+				set({ isLoading: true, message: "connecting to thadm..." });
 
 				// Schedule retry
 				if (!errorGraceTimer) {

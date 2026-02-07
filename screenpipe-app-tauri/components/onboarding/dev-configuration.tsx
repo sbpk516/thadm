@@ -93,10 +93,10 @@ const OnboardingDevConfig: React.FC<OnboardingDevConfigProps> = ({
         <img
           className="w-24 h-24 justify-center"
           src="/128x128.png"
-          alt="screenpipe-logo"
+          alt="thadm-logo"
         />
         <DialogTitle className="text-center text-2xl text-text-primary">
-          screenpipe in dev mode
+          thadm in dev mode
         </DialogTitle>
       </DialogHeader>
       <div className="mt-8 w-full flex justify-around flex-col">
@@ -112,7 +112,7 @@ const OnboardingDevConfig: React.FC<OnboardingDevConfigProps> = ({
         {instructions.length > 0 && (
           <div className="mx-3 mt-1">
             <h1 className="font-medium text-md text-text-primary">
-              run the screenpipe backend via cli:
+              run the thadm backend via cli:
             </h1>
             <ul className="mt-0">
               {instructions.map((instructions, index) => (
@@ -138,7 +138,7 @@ const OnboardingDevConfig: React.FC<OnboardingDevConfigProps> = ({
           href="#"
           className="mt-4 text-text-secondary text-sm mr-auto ml-auto !text-center hover:underline"
         >
-          learn more about screenpipe args &amp; api
+          learn more about thadm args &amp; api
           <ArrowUpRight className="inline w-4 h-4 ml-1 " />
         </a>
       </div>

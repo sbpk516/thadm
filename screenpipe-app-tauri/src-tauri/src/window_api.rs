@@ -386,6 +386,17 @@ impl ShowRewindWindow {
                 }
             }
 
+            if id.label() == RewindWindowId::Settings.label() {
+                // Settings window needs Regular activation policy on macOS to appear properly
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                }
+                window.show().ok();
+                window.set_focus().ok();
+                return Ok(window);
+            }
+
             if id.label() == RewindWindowId::Search.label() {
                 if let Some(query) = self.metadata() {
                     let _ = window.eval(&format!("window.location.replace(`/search/{}`);", query)).ok();
@@ -655,6 +666,11 @@ impl ShowRewindWindow {
                 window
             }
             ShowRewindWindow::Settings { page } => {
+                // Set Regular activation policy on macOS so Settings window appears properly
+                #[cfg(target_os = "macos")]
+                {
+                    let _ = app.set_activation_policy(tauri::ActivationPolicy::Regular);
+                }
                 let url = match page {
                     Some(p) => format!("/settings?section={}", p),
                     None => "/settings".to_string(),
@@ -663,6 +679,9 @@ impl ShowRewindWindow {
                 #[cfg(target_os = "macos")]
                 let builder = builder.hidden_title(true);
                 let window = builder.build()?;
+                // Explicitly show and focus the window
+                window.show().ok();
+                window.set_focus().ok();
                 window
             }
             ShowRewindWindow::Search { query } => {

@@ -236,8 +236,8 @@ if (platform == 'linux') {
 	}
 
 
-	// Copy screenpipe binary
-	console.log('copying screenpipe binary for linux...');
+	// Copy screenpipe binary as thadm-recorder
+	console.log('copying thadm-recorder binary for linux...');
 	const potentialPaths = [
 		path.join(__dirname, '..', '..', '..', '..', 'target', 'release', 'screenpipe'),
 		path.join(__dirname, '..', '..', '..', '..', 'target', 'x86_64-unknown-linux-gnu', 'release', 'screenpipe'),
@@ -254,19 +254,19 @@ if (platform == 'linux') {
 			copied = true;
 			break;
 		}
-		const screenpipeDest = path.join(cwd, 'screenpipe-x86_64-unknown-linux-gnu');
+		const screenpipeDest = path.join(cwd, 'thadm-recorder-x86_64-unknown-linux-gnu');
 		try {
 			await fs.copyFile(screenpipeSrc, screenpipeDest);
-			console.log(`screenpipe binary copied successfully from ${screenpipeSrc}`);
+			console.log(`thadm-recorder binary copied successfully from ${screenpipeSrc}`);
 			copied = true;
 			break;
 		} catch (error) {
-			console.warn(`failed to copy screenpipe binary from ${screenpipeSrc}:`, error);
+			console.warn(`failed to copy binary from ${screenpipeSrc}:`, error);
 		}
 	}
 
 	if (!copied) {
-		console.error("failed to copy screenpipe binary from any potential path.");
+		console.error("failed to copy thadm-recorder binary from any potential path.");
 		// uncomment the following line if you want the script to exit on failure
 		// process.exit(1);
 	}
@@ -294,7 +294,7 @@ if (platform == 'linux') {
 if (platform == 'windows') {
 	const wgetPath = await findWget();
 
-	console.log('Copying screenpipe binary...');
+	console.log('Copying thadm-recorder binary...');
 
 	const potentialPaths = [
 		path.join(__dirname, '..', '..', 'target', 'release', 'screenpipe.exe'),
@@ -310,19 +310,19 @@ if (platform == 'windows') {
 			copied = true;
 			break;
 		}
-		const screenpipeDest = path.join(cwd, 'screenpipe-x86_64-pc-windows-msvc.exe');
+		const screenpipeDest = path.join(cwd, 'thadm-recorder-x86_64-pc-windows-msvc.exe');
 		try {
 			await fs.copyFile(screenpipeSrc, screenpipeDest);
-			console.log(`Screenpipe binary copied successfully from ${screenpipeSrc}`);
+			console.log(`thadm-recorder binary copied successfully from ${screenpipeSrc}`);
 			copied = true;
 			break;
 		} catch (error) {
-			console.warn(`Failed to copy screenpipe binary from ${screenpipeSrc}:`, error);
+			console.warn(`Failed to copy binary from ${screenpipeSrc}:`, error);
 		}
 	}
 
 	if (!copied) {
-		console.error("Failed to copy screenpipe binary from any potential path.");
+		console.error("Failed to copy thadm-recorder binary from any potential path.");
 		// Uncomment the following line if you want the script to exit on failure
 		// process.exit(1);
 	}
@@ -371,7 +371,7 @@ if (platform == 'macos') {
 		if (process.env['SKIP_SCREENPIPE_SETUP']) {
 			break;
 		}
-		console.log(`Setting up screenpipe bin for ${arch}...`);
+		console.log(`Setting up thadm-recorder bin for ${arch}...`);
 		if (arch === 'arm64') {
 			const paths = [
 				"../../target/aarch64-apple-darwin/release/screenpipe",
@@ -379,26 +379,25 @@ if (platform == 'macos') {
 			];
 			const mostRecentPath = await getMostRecentBinaryPath('arm64', paths);
 			if (mostRecentPath) {
-				await $`cp ${mostRecentPath} screenpipe-aarch64-apple-darwin`;
-				console.log(`Copied most recent arm64 screenpipe binary from ${mostRecentPath}`);
+				await $`cp ${mostRecentPath} thadm-recorder-aarch64-apple-darwin`;
+				console.log(`Copied most recent arm64 binary from ${mostRecentPath}`);
 			} else {
 				console.error("No suitable arm64 screenpipe binary found");
 			}
 		} else if (arch === 'x86_64') {
-			// copy screenpipe binary (more recent one)
 			const paths = [
 				"../../target/x86_64-apple-darwin/release/screenpipe",
 				"../../target/release/screenpipe"
 			];
 			const mostRecentPath = await getMostRecentBinaryPath('x86_64', paths);
 			if (mostRecentPath) {
-				await $`cp ${mostRecentPath} screenpipe-x86_64-apple-darwin`;
-				console.log(`Copied most recent x86_64 screenpipe binary from ${mostRecentPath}`);
+				await $`cp ${mostRecentPath} thadm-recorder-x86_64-apple-darwin`;
+				console.log(`Copied most recent x86_64 binary from ${mostRecentPath}`);
 			} else {
 				console.error("No suitable x86_64 screenpipe binary found");
 			}
 		}
-		console.log(`screenpipe for ${arch} set up successfully.`);
+		console.log(`thadm-recorder for ${arch} set up successfully.`);
 	}
 
   // Setup ffmpeg and ffprobe for both arm64 and x86_64

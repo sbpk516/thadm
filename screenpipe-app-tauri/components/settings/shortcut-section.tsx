@@ -24,7 +24,7 @@ const ShortcutSection = () => {
         <ShortcutRow
           type="global"
           shortcut="showScreenpipeShortcut"
-          title="toggle screenpipe overlay"
+          title="toggle thadm overlay"
           description="global shortcut to show/hide the main interface"
           value={settings.showScreenpipeShortcut}
         />
@@ -75,7 +75,7 @@ const ShortcutSection = () => {
               show shortcut reminder
             </Label>
             <p className="text-sm text-muted-foreground">
-              display a small overlay showing the screenpipe shortcut on screen
+              display a small overlay showing the thadm shortcut on screen
             </p>
           </div>
           <Switch

@@ -110,7 +110,7 @@ const OnboardingPersonalize: React.FC<OnboardingPersonalizeProps> = ({
         <motion.img
           className="w-20 h-20 justify-center mb-4"
           src="/128x128.png"
-          alt="screenpipe-logo"
+          alt="thadm-logo"
           initial={{ scale: 0.8, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.5 }}
@@ -119,7 +119,7 @@ const OnboardingPersonalize: React.FC<OnboardingPersonalizeProps> = ({
           Choose your AI assistance level
         </h2>
         <p className="text-center text-muted-foreground mt-2 max-w-md">
-          screenpipe uses AI to help you find and understand your recorded data. Choose how much AI assistance you&apos;d like.
+          thadm uses AI to help you find and understand your recorded data. Choose how much AI assistance you&apos;d like.
         </p>
       </div>
 

@@ -10,7 +10,7 @@
             }
         },
         "externalBin": [
-            "screenpipe",
+            "thadm-recorder",
             "bun",
             "ui_monitor",
             "ffmpeg",

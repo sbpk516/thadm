@@ -10,7 +10,7 @@ export function ShortcutTracker() {
     const unsubscribers: (() => void)[] = [];
 
     const shortcuts = [
-      { event: "shortcut-show", name: "show_screenpipe" },
+      { event: "shortcut-show", name: "show_thadm" },
       { event: "shortcut-start-recording", name: "start_recording" },
       { event: "shortcut-stop-recording", name: "stop_recording" },
       { event: "shortcut-start-audio", name: "start_audio" },

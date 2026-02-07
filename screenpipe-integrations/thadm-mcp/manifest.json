@@ -1,12 +1,12 @@
 {
   "manifest_version": "0.3",
-  "name": "screenpipe",
-  "display_name": "Screenpipe",
+  "name": "thadm",
+  "display_name": "Thadm",
   "version": "0.5.0",
   "description": "Search your screen recordings and audio transcriptions with AI",
-  "long_description": "Screenpipe is a 24/7 screen and audio recorder that lets you search everything you've seen or heard. This extension connects Claude to your local screenpipe instance, enabling AI-powered search through your digital memory.",
+  "long_description": "Thadm is a 24/7 screen and audio recorder that lets you search everything you've seen or heard. This extension connects Claude to your local thadm instance, enabling AI-powered search through your digital memory.",
   "author": {
-    "name": "screenpipe",
+    "name": "thadm",
     "url": "https://screenpi.pe"
   },
   "repository": {
@@ -41,5 +41,5 @@
       "node": ">=18.0.0"
     }
   },
-  "keywords": ["screen-recording", "ocr", "audio-transcription", "automation", "memory", "search"]
+  "keywords": ["screen-recording", "ocr", "audio-transcription", "automation", "memory", "search", "adhd"]
 }

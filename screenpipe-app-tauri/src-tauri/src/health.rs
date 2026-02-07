@@ -85,18 +85,18 @@ pub async fn start_health_check(app: tauri::AppHandle) -> Result<()> {
                 last_status = current_status.to_string();
                 last_theme = theme;
 
-                if let Some(main_tray) = app.tray_by_id("screenpipe_main") {
+                if let Some(main_tray) = app.tray_by_id("thadm_main") {
                     let icon_path = if current_status == "unhealthy" || current_status == "error" {
                         if theme == Mode::Light {
-                            "assets/screenpipe-logo-tray-black-failed.png"
+                            "assets/thadm-tray-black-failed.png"
                         } else {
-                            "assets/screenpipe-logo-tray-white-failed.png"
+                            "assets/thadm-tray-white-failed.png"
                         }
                     } else {
                         if theme == Mode::Light {
-                            "assets/screenpipe-logo-tray-black.png"
+                            "assets/thadm-tray-black.png"
                         } else {
-                            "assets/screenpipe-logo-tray-white.png"
+                            "assets/thadm-tray-white.png"
                         }
                     };
 

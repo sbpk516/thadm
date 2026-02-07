@@ -536,7 +536,7 @@ const AISection = ({
 
           <AIProviderCard
             type="screenpipe-cloud"
-            title="Screenpipe Cloud"
+            title="thadm Cloud"
             description="Use AI models instantly. Free: 25 queries/day. Login for 50/day. Subscribe for unlimited."
             imageSrc="/images/screenpipe.png"
             selected={settingsPreset?.provider === "screenpipe-cloud"}

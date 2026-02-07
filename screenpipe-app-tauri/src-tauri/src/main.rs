@@ -935,7 +935,7 @@ async fn main() {
                 });
             let file_appender = RollingFileAppender::builder()
                 .rotation(Rotation::DAILY)
-                .filename_prefix("screenpipe-app")
+                .filename_prefix("thadm")
                 .filename_suffix("log")
                 .max_log_files(5)
                 .build(log_dir)?;
@@ -1108,7 +1108,7 @@ async fn main() {
 
             // Setup tray
             info!("[DEBUG STARTUP] setting up tray...");
-            if let Some(_) = app_handle.tray_by_id("screenpipe_main") {
+            if let Some(_) = app_handle.tray_by_id("thadm_main") {
                 let update_item = update_manager.update_now_menu_item_ref().clone();
                 if let Err(e) = tray::setup_tray(&app_handle, &update_item) {
                     error!("[DEBUG STARTUP] Failed to setup tray: {}", e);
@@ -1116,7 +1116,7 @@ async fn main() {
                     info!("[DEBUG STARTUP] tray setup successful");
                 }
             } else {
-                warn!("[DEBUG STARTUP] no tray with id 'screenpipe_main' found");
+                warn!("[DEBUG STARTUP] no tray with id 'thadm_main' found");
             }
 
             // Check analytics settings from store

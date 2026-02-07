@@ -289,7 +289,7 @@ export function AIProviderConfig({
           <div className="text-center space-y-2">
             <h3 className="font-semibold text-lg">Login Required</h3>
             <p className="text-sm text-muted-foreground max-w-sm">
-              This preset uses Screenpipe Cloud. Please log in to your Screenpipe account to edit it.
+              This preset uses thadm Cloud. Please log in to your thadm account to edit it.
             </p>
           </div>
           {showLoginCta && (
@@ -402,10 +402,10 @@ export function AIProviderConfig({
             }}
           >
             <Icons.terminal className="h-8 w-8" />
-            <span>screenpipe</span>
+            <span>thadm</span>
             {!settings?.user?.token && (
               <span className="text-xs text-destructive font-normal">
-                login to screenpipe to use this provider
+                login to thadm to use this provider
               </span>
             )}
           </Button>
@@ -1042,7 +1042,7 @@ export const AIPresetsSelector = ({
           <div className="flex items-center gap-2 p-2 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg">
             <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
             <span className="text-amber-600 dark:text-amber-400 flex-1">
-              Login required to use Screenpipe Cloud
+              Login required to use thadm Cloud
             </span>
             {showLoginCta && (
               <Button

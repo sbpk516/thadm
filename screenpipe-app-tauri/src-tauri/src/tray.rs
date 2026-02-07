@@ -30,7 +30,7 @@ struct MenuState {
 }
 
 pub fn setup_tray(app: &AppHandle, update_item: &tauri::menu::MenuItem<Wry>) -> Result<()> {
-    if let Some(main_tray) = app.tray_by_id("screenpipe_main") {
+    if let Some(main_tray) = app.tray_by_id("thadm_main") {
         // Initial menu setup with empty state
         let menu = create_dynamic_menu(app, &MenuState::default(), update_item)?;
         main_tray.set_menu(Some(menu))?;
@@ -68,13 +68,12 @@ fn create_dynamic_menu(
                     .build(app)?,
             )
             .item(&PredefinedMenuItem::separator(app)?)
-            .item(&MenuItemBuilder::with_id("quit", "quit screenpipe").build(app)?);
+            .item(&MenuItemBuilder::with_id("quit", "quit thadm").build(app)?);
 
         return menu_builder.build().map_err(Into::into);
     }
 
     // Full menu after onboarding is complete
-    // Get the show shortcut from store (must match frontend defaults in use-settings.tsx)
     let default_shortcut = if cfg!(target_os = "windows") {
         "Alt+S"
     } else {
@@ -85,63 +84,74 @@ fn create_dynamic_menu(
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_else(|| default_shortcut.to_string());
 
-    // Show item with formatted shortcut in label
+    // Show thadm
     menu_builder = menu_builder.item(
         &MenuItemBuilder::with_id(
             "show",
-            format!("show screenpipe ({})", format_shortcut(&show_shortcut)),
+            format!("Show thadm               {}", format_shortcut(&show_shortcut)),
         )
         .build(app)?,
     );
 
-    // Recording status indicator
-    let status_text = match get_recording_status() {
-        RecordingStatus::Recording => "● recording",
-        RecordingStatus::Stopped => "○ stopped",
-        RecordingStatus::Error => "○ error",
-    };
-    menu_builder = menu_builder.item(
-        &MenuItemBuilder::with_id("recording_status", status_text)
-            .enabled(false)
-            .build(app)?,
-    );
-
-    // Version and update items
-    let is_beta = app.config().identifier.contains("beta");
-    let version_text = if is_beta {
-        format!("version {} (beta)", app.package_info().version)
-    } else {
-        format!("version {}", app.package_info().version)
+    // Recording status
+    let recording_status = get_recording_status();
+    let status_text = match recording_status {
+        RecordingStatus::Recording => "● Recording",
+        RecordingStatus::Stopped => "○ Stopped",
+        RecordingStatus::Error => "○ Error",
     };
     menu_builder = menu_builder
         .item(&PredefinedMenuItem::separator(app)?)
         .item(
-            &MenuItemBuilder::with_id("version", version_text)
+            &MenuItemBuilder::with_id("recording_status", status_text)
                 .enabled(false)
                 .build(app)?,
-        )
-        .item(update_item);
+        );
 
-    // Only show recording controls if not in dev mode
+    // Contextual recording control — show only the relevant action
     let dev_mode = store
         .get("devMode")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
     if !dev_mode {
         menu_builder = menu_builder
-            .item(&PredefinedMenuItem::separator(app)?)
-            .item(&MenuItemBuilder::with_id("start_recording", "start recording").build(app)?)
-            .item(&MenuItemBuilder::with_id("stop_recording", "stop recording").build(app)?);
+            .item(&PredefinedMenuItem::separator(app)?);
+        match recording_status {
+            RecordingStatus::Recording => {
+                menu_builder = menu_builder
+                    .item(&MenuItemBuilder::with_id("stop_recording", "Stop Recording").build(app)?);
+            }
+            _ => {
+                menu_builder = menu_builder
+                    .item(&MenuItemBuilder::with_id("start_recording", "Start Recording").build(app)?);
+            }
+        }
     }
 
-    // Settings, feedback and quit
+    // Update item — only for non-source builds
+    if !is_source_build(app) {
+        menu_builder = menu_builder
+            .item(&PredefinedMenuItem::separator(app)?)
+            .item(update_item);
+    }
+
+    // Settings and feedback
     menu_builder = menu_builder
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("settings", "settings").build(app)?)
-        .item(&MenuItemBuilder::with_id("feedback", "send feedback").build(app)?)
-        .item(&MenuItemBuilder::with_id("onboarding", "onboarding").build(app)?)
+        .item(&MenuItemBuilder::with_id("settings", "Settings...").build(app)?)
+        .item(&MenuItemBuilder::with_id("feedback", "Send Feedback").build(app)?);
+
+    // Quit with version
+    let version = app.package_info().version.to_string();
+    let is_beta = app.config().identifier.contains("beta");
+    let quit_text = if is_beta {
+        format!("Quit thadm                v{} (beta)", version)
+    } else {
+        format!("Quit thadm                v{}", version)
+    };
+    menu_builder = menu_builder
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("quit", "quit screenpipe").build(app)?);
+        .item(&MenuItemBuilder::with_id("quit", &quit_text).build(app)?);
 
     menu_builder.build().map_err(Into::into)
 }
@@ -196,7 +206,18 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             }
         }
         "settings" => {
-            let _ = ShowRewindWindow::Settings { page: None }.show(app_handle);
+            info!("Opening settings window from tray");
+            match (ShowRewindWindow::Settings { page: None }).show(app_handle) {
+                Ok(window) => {
+                    info!("Settings window opened successfully");
+                    // Ensure the window is visible and focused
+                    let _ = window.show();
+                    let _ = window.set_focus();
+                }
+                Err(e) => {
+                    error!("Failed to open settings window: {:?}", e);
+                }
+            }
         }
         "feedback" => {
             let _ = ShowRewindWindow::Settings { page: Some("feedback".to_string()) }.show(app_handle);
@@ -262,7 +283,7 @@ async fn update_menu_if_needed(
     };
 
     if should_update {
-        if let Some(tray) = app.tray_by_id("screenpipe_main") {
+        if let Some(tray) = app.tray_by_id("thadm_main") {
             let menu = create_dynamic_menu(app, &new_state, update_item)?;
             tray.set_menu(Some(menu))?;
         }

@@ -42,7 +42,7 @@ export async function scheduleFirstRunNotification(): Promise<void> {
     setTimeout(() => {
       sendNotification({
         title: "Your screen history is ready",
-        body: "You have 2 hours of activity recorded. Open screenpipe to search or ask AI about what you did.",
+        body: "You have 2 hours of activity recorded. Open thadm to search or ask AI about what you did.",
       });
       console.log("First run notification sent");
     }, TWO_HOURS_MS);

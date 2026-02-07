@@ -23,7 +23,7 @@ export function DiskUsageSection() {
         <div>
           <h3 className="text-lg font-medium">Disk Usage</h3>
           <p className="text-sm text-muted-foreground">
-            Monitor storage usage for your Screenpipe data
+            Monitor storage usage for your thadm data
           </p>
         </div>
         <Card>
@@ -47,7 +47,7 @@ export function DiskUsageSection() {
         <div>
           <h3 className="text-lg font-medium">Disk Usage</h3>
           <p className="text-sm text-muted-foreground">
-            Monitor storage usage for your Screenpipe data at ~/.screenpipe/data
+            Monitor storage usage for your thadm data
           </p>
         </div>
         <Button

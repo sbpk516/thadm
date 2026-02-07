@@ -39,12 +39,12 @@ for (let i = 0; i < args.length; i++) {
   }
 }
 
-const SCREENPIPE_API = `http://localhost:${port}`;
+const THADM_API = `http://localhost:${port}`;
 
 // Initialize server
 const server = new Server(
   {
-    name: "screenpipe",
+    name: "thadm",
     version: "0.5.0",
   },
   {
@@ -61,10 +61,10 @@ const BASE_TOOLS: Tool[] = [
   {
     name: "search-content",
     description:
-      "Search screenpipe's recorded content: screen text (OCR), audio transcriptions, and UI elements. " +
+      "Search thadm's recorded content: screen text (OCR), audio transcriptions, and UI elements. " +
       "Returns timestamped results with app context. " +
       "Call with no parameters to get recent activity. " +
-      "Use the 'screenpipe://context' resource for current time when building time-based queries.",
+      "Use the 'thadm://context' resource for current time when building time-based queries.",
     annotations: {
       title: "Search Content",
       readOnlyHint: true,
@@ -182,15 +182,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // MCP Resources - provide dynamic context data
 const RESOURCES = [
   {
-    uri: "screenpipe://context",
+    uri: "thadm://context",
     name: "Current Context",
     description: "Current date/time and pre-computed timestamps for common time ranges",
     mimeType: "application/json",
   },
   {
-    uri: "screenpipe://guide",
+    uri: "thadm://guide",
     name: "Usage Guide",
-    description: "How to use screenpipe search effectively",
+    description: "How to use thadm search effectively",
     mimeType: "text/markdown",
   },
   {
@@ -213,7 +213,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const now = Date.now();
 
   switch (uri) {
-    case "screenpipe://context":
+    case "thadm://context":
       return {
         contents: [
           {
@@ -221,14 +221,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
             mimeType: "application/json",
             text: JSON.stringify({
               current_time: dateInfo.isoDate,
+              current_time_local: new Date().toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: true }),
               current_date_local: dateInfo.localDate,
               timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+              utc_offset_hours: -new Date().getTimezoneOffset() / 60,
               timestamps: {
                 now: dateInfo.isoDate,
                 one_hour_ago: new Date(now - 60 * 60 * 1000).toISOString(),
                 three_hours_ago: new Date(now - 3 * 60 * 60 * 1000).toISOString(),
-                today_start: `${new Date().toISOString().split("T")[0]}T00:00:00Z`,
-                yesterday_start: `${new Date(now - 24 * 60 * 60 * 1000).toISOString().split("T")[0]}T00:00:00Z`,
+                today_start: new Date(new Date().setHours(0, 0, 0, 0)).toISOString(),
+                yesterday_start: new Date(new Date(now - 24 * 60 * 60 * 1000).setHours(0, 0, 0, 0)).toISOString(),
                 one_week_ago: new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString(),
               },
               common_apps: ["Google Chrome", "Safari", "Slack", "zoom.us", "Microsoft Teams", "Code", "Terminal"],
@@ -237,13 +239,13 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
         ],
       };
 
-    case "screenpipe://guide":
+    case "thadm://guide":
       return {
         contents: [
           {
             uri,
             mimeType: "text/markdown",
-            text: `# Screenpipe Search Guide
+            text: `# Thadm Search Guide
 
 ## Quick Start
 - **Get recent activity**: Call search-content with no parameters
@@ -268,10 +270,16 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 | include_frames | Include screenshots | false |
 
 ## Tips
-1. Read screenpipe://context first to get current timestamps
+1. Read thadm://context first to get current timestamps and timezone
 2. Omit \`q\` to get all content (useful for "what was I doing?")
 3. Use \`limit: 50-100\` for comprehensive searches
-4. Combine app_name + time filters for focused results`,
+4. Combine app_name + time filters for focused results
+
+## IMPORTANT: Timezone Display
+- All API timestamps are in UTC. The thadm://context resource includes the user's timezone and UTC offset.
+- When displaying times to the user, ALWAYS convert UTC timestamps to the user's local timezone.
+- Use the \`timezone\` and \`utc_offset_hours\` fields from thadm://context for conversion.
+- Example: If UTC is 17:00 and utc_offset_hours is -5, display as 12:00 PM EST.`,
           },
         ],
       };
@@ -296,7 +304,7 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   </style>
 </head>
 <body>
-  <h2>screenpipe search</h2>
+  <h2>thadm search</h2>
   <input id="q" placeholder="search..." onkeydown="if(event.key==='Enter')search()"/>
   <button onclick="search()">search</button>
   <div id="results"></div>
@@ -382,7 +390,7 @@ server.setRequestHandler(GetPromptRequestSchema, async (request) => {
             role: "user" as const,
             content: {
               type: "text" as const,
-              text: `Search screenpipe for recent activity.
+              text: `Search thadm for recent activity.
 
 Current time: ${dateInfo.isoDate}
 
@@ -407,7 +415,7 @@ ${query ? `- q: "${query}"` : "- No query filter (get all content)"}
             role: "user" as const,
             content: {
               type: "text" as const,
-              text: `Search screenpipe for content from ${app}.
+              text: `Search thadm for content from ${app}.
 
 Current time: ${dateInfo.isoDate}
 
@@ -459,7 +467,7 @@ async function fetchAPI(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<Response> {
-  const url = `${SCREENPIPE_API}${endpoint}`;
+  const url = `${THADM_API}${endpoint}`;
   return fetch(url, {
     ...options,
     headers: {
@@ -604,7 +612,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [
               {
                 type: "text",
-                text: `No screen recordings found between ${startTime} and ${endTime}. Make sure screenpipe was recording during this time period.`,
+                text: `No screen recordings found between ${startTime} and ${endTime}. Make sure thadm was recording during this time period.`,
               },
             ],
           };
@@ -687,7 +695,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 // Save video to temp file
                 const tempDir = os.tmpdir();
                 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-                const filename = `screenpipe_export_${timestamp}.mp4`;
+                const filename = `thadm_export_${timestamp}.mp4`;
                 const filePath = path.join(tempDir, filename);
 
                 fs.writeFileSync(filePath, Buffer.from(message.video_data));
@@ -759,7 +767,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Screenpipe MCP server running on stdio");
+  console.error("Thadm MCP server running on stdio");
 }
 
 main().catch((error) => {

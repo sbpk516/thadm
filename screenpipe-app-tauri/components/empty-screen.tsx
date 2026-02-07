@@ -17,7 +17,7 @@ const suggestions = [
 export function EmptyScreen({ onSuggestionClick }: EmptyScreenProps) {
   return (
     <div className="flex flex-col items-center justify-center h-full space-y-4">
-      <h3 className="text-lg font-semibold">Get started with Screenpipe</h3>
+      <h3 className="text-lg font-semibold">Get started with thadm</h3>
       <p className="text-sm text-gray-500">
         Click on a suggestion or type your own query
       </p>

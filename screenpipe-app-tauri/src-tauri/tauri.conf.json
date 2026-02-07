@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "screenpipe - Development",
-  "identifier": "screenpi.pe.dev",
+  "productName": "Thadm",
+  "identifier": "com.thadm.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
@@ -11,8 +11,8 @@
   "bundle": {
     "active": true,
     "category": "DeveloperTool",
-    "shortDescription": "24/7 memory for your desktop",
-    "longDescription": "24/7 memory for your desktop. 100% local. You own your data.",
+    "shortDescription": "Your personal memory assistant",
+    "longDescription": "Automatic, searchable memory for your desktop. Never forget what you were working on. 100% local.",
     "copyright": "",
     "targets": [
       "app",
@@ -31,8 +31,7 @@
       "icons/1024x1024.png",
       "icons/icon.icns",
       "icons/icon.ico",
-      "icons/screenpipe-logo-tray-failed.png",
-      "icons/screenpipe-logo-tray-black.png"
+      "icons/thadm-tray-failed.png"
     ],
     "resources": [
       "assets/*"
@@ -51,7 +50,7 @@
     "deep-link": {
       "desktop": {
         "schemes": [
-          "screenpipe"
+          "thadm"
         ]
       },
       "mobile": [
@@ -103,8 +102,8 @@
   "app": {
     "withGlobalTauri": true,
     "trayIcon": {
-      "id": "screenpipe_main",
-      "iconPath": "assets/screenpipe-logo-tray-white.png",
+      "id": "thadm_main",
+      "iconPath": "assets/thadm-tray-white.png",
       "iconAsTemplate": true,
       "menuOnLeftClick": true
     },

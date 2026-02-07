@@ -72,7 +72,7 @@ impl User {
 pub async fn get_available_monitors(app: &tauri::AppHandle) -> Result<Vec<MonitorDevice>, String> {
     debug!("Getting available monitors");
     
-    let sidecar = app.shell().sidecar("screenpipe")
+    let sidecar = app.shell().sidecar("thadm-recorder")
         .map_err(|e| format!("Failed to create sidecar command: {}", e))?;
     
     let output = sidecar
@@ -142,9 +142,9 @@ pub async fn stop_screenpipe(
                 }
             }
         }
-        // Use pgrep + kill instead of pkill -f to avoid killing screenpipe-app
-        // -x matches exact process name, so "screenpipe" won't match "screenpipe-app"
-        let command = "pgrep -x screenpipe | xargs -r kill -9 2>/dev/null || true";
+        // Use pgrep + kill instead of pkill -f to avoid killing thadm
+        // -x matches exact process name, so "screenpipe" won't match "thadm"
+        let command = "pgrep -x thadm-recorder | xargs -r kill -9 2>/dev/null || true";
         match tokio::process::Command::new("sh")
             .arg("-c")
             .arg(command)
@@ -216,7 +216,7 @@ pub async fn stop_screenpipe(
         // -15 from gnu man page
         // ref: https://www.gnu.org/software/coreutils/manual/html_node/kill-invocation.html
         let command = format!(
-            "pgrep -x screenpipe | xargs -I {{}} kill -15 {{}}",
+            "pgrep -x thadm-recorder | xargs -I {{}} kill -15 {{}}",
         );
         match tokio::process::Command::new("sh")
             .arg("-c")
@@ -508,7 +508,7 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
     let override_args_as_vec = override_args.unwrap_or_default();
 
     if cfg!(windows) {
-        let mut c = app.shell().sidecar("screenpipe").unwrap();
+        let mut c = app.shell().sidecar("thadm-recorder").unwrap();
 
         // Set file descriptor limit to prevent "Too many open files" errors
         c = c.env("SCREENPIPE_FD_LIMIT", "8192");
@@ -548,7 +548,7 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
         return Ok(child);
     }
 
-    let mut c = app.shell().sidecar("screenpipe").unwrap();
+    let mut c = app.shell().sidecar("thadm-recorder").unwrap();
 
     // Set file descriptor limit to prevent "Too many open files" errors
     // This is especially important for WebSocket connections and video processing

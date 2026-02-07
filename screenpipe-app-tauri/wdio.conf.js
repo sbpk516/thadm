@@ -10,19 +10,19 @@ let tauriDriver;
 // Helper function to find the correct executable path
 const findExecutablePath = () => {
 	const paths = [
-		'./src-tauri/target/release/screenpipe-app.exe',
-		'./src-tauri/target/x86_64-pc-windows-msvc/release/screenpipe-app.exe',
-		'./src-tauri/target/release/screenpipe-app',
-		'./src-tauri/target/x86_64-unknown-linux-gnu/release/screenpipe-app'
+		'./src-tauri/target/release/thadm.exe',
+		'./src-tauri/target/x86_64-pc-windows-msvc/release/thadm.exe',
+		'./src-tauri/target/release/thadm',
+		'./src-tauri/target/x86_64-unknown-linux-gnu/release/thadm'
 	];
-	
+
 	for (const p of paths) {
 		if (fs.existsSync(p)) {
 			return p;
 		}
 	}
-	
-	throw new Error('Could not find screenpipe-app.exe in any of the expected locations');
+
+	throw new Error('Could not find thadm binary in any of the expected locations');
 };
 
 const executablePath = findExecutablePath();

@@ -37,10 +37,10 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
       "# OS not recognized. Please check the documentation for your specific operating system.\n";
   }
 
-  const baseInstructions = `# First, view the Screenpipe CLI arguments:
+  const baseInstructions = `# First, view the thadm CLI arguments:
   ${cliInstructions}
   # 3. Run: screenpipe -h
-  # 4. Choose your preferred setup and start Screenpipe:
+  # 4. Choose your preferred setup and start thadm:
   #    (Replace [YOUR_ARGS] with your chosen arguments)
   #    Example: screenpipe --fps 1 `;
 
@@ -58,7 +58,7 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
     (os === "windows"
       ? `\n\n# We highly recommend adding --ocr-engine windows-native to your command.\n# This will use a very experimental but powerful engine to extract text from your screen instead of the default one.\n# Example: screenpipe --data-dir ${dataDir} --ocr-engine windows-native\n`
       : "") +
-    "\n\n# 5. If you've already started Screenpipe, try these debugging commands:\n";
+    "\n\n# 5. If you've already started thadm, try these debugging commands:\n";
 
   if (os === "windows") {
     return (
@@ -116,7 +116,7 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
   const handleStartScreenpipe = async () => {
     setIsLoading(true);
     const toastId = toast({
-      title: "starting screenpipe",
+      title: "starting thadm",
       description: "please wait...",
       duration: Infinity,
     });
@@ -125,16 +125,16 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       toastId.update({
         id: toastId.id,
-        title: "screenpipe started",
-        description: "screenpipe is now running.",
+        title: "thadm started",
+        description: "thadm is now running.",
         duration: 3000,
       });
     } catch (error) {
-      console.error("failed to start screenpipe:", error);
+      console.error("failed to start thadm:", error);
       toastId.update({
         id: toastId.id,
         title: "error",
-        description: "failed to start screenpipe.",
+        description: "failed to start thadm.",
         variant: "destructive",
         duration: 3000,
       });
@@ -147,7 +147,7 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
   const handleStopScreenpipe = async () => {
     setIsLoading(true);
     const toastId = toast({
-      title: "stopping screenpipe",
+      title: "stopping thadm",
       description: "please wait...",
       duration: Infinity,
     });
@@ -156,16 +156,16 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
       await new Promise((resolve) => setTimeout(resolve, 2000));
       toastId.update({
         id: toastId.id,
-        title: "screenpipe stopped",
-        description: "screenpipe is now stopped.",
+        title: "thadm stopped",
+        description: "thadm is now stopped.",
         duration: 3000,
       });
     } catch (error) {
-      console.error("failed to stop screenpipe:", error);
+      console.error("failed to stop thadm:", error);
       toastId.update({
         id: toastId.id,
         title: "error",
-        description: "failed to stop screenpipe.",
+        description: "failed to stop thadm.",
         variant: "destructive",
         duration: 3000,
       });
@@ -238,7 +238,7 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>stop screenpipe backend</p>
+                          <p>stop thadm backend</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -257,7 +257,7 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
                           </Button>
                         </TooltipTrigger>
                         <TooltipContent>
-                          <p>start screenpipe recording</p>
+                          <p>start thadm recording</p>
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
@@ -266,7 +266,7 @@ export const DevModeSettings = ({ localDataDir }: { localDataDir: string }) => {
               </CardContent>
               <CardFooter className="flex flex-col items-center">
                 <p className="text-sm text-muted-foreground">
-                  manually start or stop screenpipe recording
+                  manually start or stop thadm recording
                 </p>
                 <p className="text-xs text-muted-foreground">
                   (auto started when dev mode is off)

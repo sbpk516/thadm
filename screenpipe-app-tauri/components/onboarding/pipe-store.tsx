@@ -142,7 +142,7 @@ const OnboardingPipeStore: React.FC<OnboardingPipeStoreProps> = ({
     >
       <div className="flex-1 flex flex-col items-center">
         <div className="flex flex-col items-center mb-8">
-          <img className="w-24 h-24" src="/128x128.png" alt="screenpipe-logo" />
+          <img className="w-24 h-24" src="/128x128.png" alt="thadm-logo" />
           <h1 className="text-2xl font-bold mt-4">welcome to the pipe store</h1>
         </div>
 
@@ -156,9 +156,9 @@ const OnboardingPipeStore: React.FC<OnboardingPipeStoreProps> = ({
 
           <div className="space-y-4 text-center">
             <p className="text-muted-foreground my-2">
-              screenpipe records your screen and audio 24/7 and makes it easy
+              thadm records your screen and audio 24/7 and makes it easy
               for AI to search through your recordings. developers can create
-              powerful apps on top of screenpipe. let&apos;s start with
+              powerful apps on top of thadm. let&apos;s start with
               &quot;search&quot; to explore your recordings. once in the search
               pipe, you can use the &quot;search&quot; button to search through
               your recordings and ask a summary to AI.

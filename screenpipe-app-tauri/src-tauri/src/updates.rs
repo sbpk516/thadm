@@ -95,12 +95,12 @@ impl UpdatesManager {
                     .set_text("downloading latest version of screenpipe")?;
             }
 
-            if let Some(tray) = self.app.tray_by_id("screenpipe_main") {
+            if let Some(tray) = self.app.tray_by_id("thadm_main") {
                 let theme = dark_light::detect().unwrap_or(Mode::Dark);
                 let icon_path = if theme == Mode::Light {
-                    "assets/screenpipe-logo-tray-updates-black.png"
+                    "assets/thadm-tray-updates-black.png"
                 } else {
-                    "assets/screenpipe-logo-tray-updates-white.png"
+                    "assets/thadm-tray-updates-white.png"
                 };
     
                 let path = self

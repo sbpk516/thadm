@@ -76,8 +76,16 @@ export function DeeplinkHandler() {
 
     const unlisten = Promise.all([
       listen("shortcut-start-recording", async () => {
-        await commands.spawnScreenpipe(null);
-
+        const result = await commands.spawnScreenpipe(null);
+        if (result.status === "error") {
+          console.error("failed to start recording:", result.error);
+          toast({
+            title: "failed to start recording",
+            description: result.error,
+            variant: "destructive",
+          });
+          return;
+        }
         toast({
           title: "recording started",
           description: "screen recording has been initiated",
@@ -85,8 +93,16 @@ export function DeeplinkHandler() {
       }),
 
       listen("shortcut-stop-recording", async () => {
-        await commands.stopScreenpipe();
-
+        const result = await commands.stopScreenpipe();
+        if (result.status === "error") {
+          console.error("failed to stop recording:", result.error);
+          toast({
+            title: "failed to stop recording",
+            description: result.error,
+            variant: "destructive",
+          });
+          return;
+        }
         toast({
           title: "recording stopped",
           description: "screen recording has been stopped",

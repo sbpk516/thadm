@@ -37,9 +37,9 @@ export default function OnboardingShortcuts({
   const shortcuts = [
     {
       id: "showScreenpipeShortcut",
-      title: "Show/Hide screenpipe",
+      title: "Show/Hide thadm",
       defaultShortcut: isWindows ? "Alt+S" : "Control+Super+S",
-      description: "Quickly toggle the screenpipe interface",
+      description: "Quickly toggle the thadm interface",
       value: settings.showScreenpipeShortcut,
     },
     {

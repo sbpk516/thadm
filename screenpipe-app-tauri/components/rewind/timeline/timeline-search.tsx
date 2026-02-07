@@ -495,7 +495,7 @@ export function TimelineSearch({
 			.map(([window, count]) => `${window} (${count} occurrences)`)
 			.join(", ");
 
-		return `you are a search assistant for screenpipe, a system that continuously records screens & mics.
+		return `you are a search assistant for thadm, a system that continuously records screens & mics.
 
 your task is to analyze search queries and extract key information to find specific moments in the timeline.
 be extremely strict about matches - all keywords must be present in the correct context.

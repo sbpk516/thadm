@@ -115,7 +115,7 @@ export function ExampleSearchCards({ onSelect }: ExampleSearchCardsProps) {
               <TooltipContent>
                 <div className="flex items-center">
                   <AlertCircle className="mr-2 h-4 w-4 text-red-500" />
-                  <p>screenpipe is not running. examples are disabled.</p>
+                  <p>thadm is not running. examples are disabled.</p>
                 </div>
               </TooltipContent>
             )}

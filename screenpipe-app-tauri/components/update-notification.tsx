@@ -43,8 +43,8 @@ const UpdateNotification: React.FC<{ checkIntervalHours: number }> = ({
 
           if (downloadLink) {
             sendNotification({
-              title: "Screenpipe Update Available",
-              body: `A new version of Screenpipe is available. Click to download:\n${downloadLink}`,
+              title: "thadm Update Available",
+              body: `A new version of thadm is available. Click to download:\n${downloadLink}`,
               //   icon: "update-icon", // Replace with your update icon
             });
           }

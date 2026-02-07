@@ -27,7 +27,7 @@ export const AddPipeForm: React.FC<AddPipeFormProps> = ({
             type="url"
             placeholder={
               !isHealthy
-                ? "screenpipe not running..."
+                ? "thadm not running..."
                 : "enter github url or local path"
             }
             value={newRepoUrl}

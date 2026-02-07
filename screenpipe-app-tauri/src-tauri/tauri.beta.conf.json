@@ -32,9 +32,7 @@
       "icons/beta/1024x1024.png",
       "icons/beta/icon.icns",
       "icons/beta/icon.ico",
-      "icons/screenpipe-logo-tray-failed.png",
-      "icons/screenpipe-logo-tray-black.png",
-      "icons/screenpipe-logo-tray-beta.png"
+      "icons/thadm-tray-failed.png"
     ],
     "resources": [
       "assets/*"
@@ -107,8 +105,8 @@
   "app": {
     "withGlobalTauri": true,
     "trayIcon": {
-      "id": "screenpipe_main",
-      "iconPath": "assets/screenpipe-logo-tray-beta-white.png",
+      "id": "thadm_main",
+      "iconPath": "assets/thadm-tray-white.png",
       "iconAsTemplate": true,
       "menuOnLeftClick": true
     },

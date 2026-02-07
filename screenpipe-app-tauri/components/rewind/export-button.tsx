@@ -95,7 +95,7 @@ export function ExportButton() {
 						case "completed":
 							if (data.video_data) {
 								closeWebSocket();
-								const filename = `screenpipe_export_${new Date()
+								const filename = `thadm_export_${new Date()
 									.toISOString()
 									.replace(/[:.]/g, "-")}.mp4`;
 

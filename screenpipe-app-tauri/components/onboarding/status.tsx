@@ -415,7 +415,7 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
           <div className="text-center space-y-2">
             <h2 className="font-mono text-xl text-foreground">grant access</h2>
             <p className="font-mono text-xs text-muted-foreground">
-              screenpipe needs these permissions to work
+              thadm needs these permissions to work
             </p>
           </div>
 
@@ -505,7 +505,7 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
             className="w-32 h-12"
           />
           <div className="text-center space-y-2">
-            <p className="font-mono text-sm text-foreground">starting screenpipe...</p>
+            <p className="font-mono text-sm text-foreground">starting thadm...</p>
             <p className="font-mono text-xs text-muted-foreground">downloading AI models</p>
           </div>
 
@@ -590,7 +590,7 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
 
           <div className="text-center space-y-2">
             <p className="font-mono text-sm text-muted-foreground">
-              screenpipe is now capturing your screen and audio
+              thadm is now capturing your screen and audio
             </p>
             <p className="font-mono text-xs text-muted-foreground">
               find it in your menu bar anytime
@@ -655,7 +655,7 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
             loop={true}
             className="w-32 h-12"
           />
-          <p className="font-mono text-sm text-muted-foreground">starting screenpipe...</p>
+          <p className="font-mono text-sm text-muted-foreground">starting thadm...</p>
 
           {isStuck && (
             <motion.div

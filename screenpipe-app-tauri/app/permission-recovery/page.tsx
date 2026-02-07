@@ -131,13 +131,13 @@ export default function PermissionRecoveryPage() {
       setJustFixed(newJustFixed);
     }
 
-    // Close window and restart screenpipe if all critical permissions are granted
+    // Close window and restart thadm if all critical permissions are granted
     if (screenOk && micOk) {
-      // Wait a moment to show success state, then restart screenpipe
+      // Wait a moment to show success state, then restart thadm
       setTimeout(async () => {
         try {
           // Restart screenpipe to resume recording
-          console.log("Permissions fixed, restarting screenpipe...");
+          console.log("Permissions fixed, restarting thadm...");
           await commands.stopScreenpipe();
           await commands.spawnScreenpipe(null);
           console.log("Screenpipe restarted successfully");
@@ -145,7 +145,7 @@ export default function PermissionRecoveryPage() {
           // Close the modal
           await commands.closeWindow("PermissionRecovery");
         } catch (error) {
-          console.error("Failed to restart screenpipe:", error);
+          console.error("Failed to restart thadm:", error);
           // Still close the modal even if restart fails
           try {
             await commands.closeWindow("PermissionRecovery");

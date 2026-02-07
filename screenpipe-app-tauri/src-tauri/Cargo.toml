@@ -1,11 +1,11 @@
 [package]
-name = "screenpipe-app"
+name = "thadm"
 version = "2.0.161"
 description = "24/7 memory for your desktop. 100% local."
 authors = ["you"]
 license = ""
 repository = ""
-default-run = "screenpipe-app"
+default-run = "thadm"
 edition = "2021"
 rust-version = "1.92"
 

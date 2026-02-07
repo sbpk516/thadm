@@ -23,14 +23,14 @@ const DEV_OPTIONS = [
     icon: UserRound,
     title: "standard mode",
     description:
-      "screenpipe takes care of everything for you, making it easy and stress-free.",
+      "thadm takes care of everything for you, making it easy and stress-free.",
   },
   {
     key: "devMode",
     icon: Wrench,
     title: "dev mode",
     description:
-      "run the CLI on top of the UI, and customize screenpipe to fit your needs.",
+      "run the CLI on top of the UI, and customize thadm to fit your needs.",
   },
 ];
 
@@ -87,7 +87,7 @@ const OnboardingDevOrNonDev: React.FC<OnboardingDevOrNonDevProps> = ({
         setLocalSettings({ ...localSettings, devMode: false } as SettingsStore);
         toast({
           title: "success",
-          description: "screenpipe backend is in standard mode",
+          description: "thadm backend is in standard mode",
           variant: "default",
         });
         // TODO: should give better user feedback
@@ -110,10 +110,10 @@ const OnboardingDevOrNonDev: React.FC<OnboardingDevOrNonDevProps> = ({
         <img
           className="w-24 h-24 justify-center"
           src="/128x128.png"
-          alt="screenpipe-logo"
+          alt="thadm-logo"
         />
         <DialogTitle className="text-center text-2xl text-text-primary">
-          how do you prefer to use screenpipe?
+          how do you prefer to use thadm?
         </DialogTitle>
       </DialogHeader>
       <div className="flex w-full justify-around mt-12">

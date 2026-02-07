@@ -142,7 +142,7 @@ export function AccountSection() {
         : "$20/mo",
       features: settings.user?.cloud_subscribed
         ? [
-            "unlimited screenpipe cloud",
+            "unlimited thadm cloud",
             "priority support",
             <a
               key="portal"
@@ -163,7 +163,7 @@ export function AccountSection() {
             </a>,
           ]
         : [
-            "unlimited screenpipe cloud",
+            "unlimited thadm cloud",
             "priority support",
             isAnnual ? "17% discount applied" : "switch to annual for 17% off",
           ],
@@ -275,7 +275,7 @@ export function AccountSection() {
           <Card className="p-4 space-y-3 bg-secondary/5">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              <h4 className="font-medium">screenpipe cloud ai</h4>
+              <h4 className="font-medium">thadm cloud ai</h4>
             </div>
             <div className="grid gap-2 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">
