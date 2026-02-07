@@ -81,12 +81,14 @@ const settingsGroups = [
         icon: <SettingsIcon className="h-4 w-4" />,
         description: "Auto-start, theme, data directory, and system",
       },
+      /* AI Settings - hidden for now, in-app chat replaced by Claude Desktop MCP
       {
         id: "ai" as const,
         label: "AI Settings",
         icon: <Brain className="h-4 w-4" />,
         description: "AI models and processing options",
       },
+      */
       {
         id: "shortcuts" as const,
         label: "Shortcuts",

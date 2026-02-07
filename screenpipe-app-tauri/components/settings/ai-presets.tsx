@@ -534,6 +534,7 @@ const AISection = ({
             onClick={() => handleAiProviderChange("openai")}
           />
 
+          {/* Screenpipe Cloud provider - hidden for now, may be replaced with own proxy
           <AIProviderCard
             type="screenpipe-cloud"
             title="thadm Cloud"
@@ -550,6 +551,7 @@ const AISection = ({
                 : "50/day"
             }
           />
+          */}
 
           <AIProviderCard
             type="native-ollama"
