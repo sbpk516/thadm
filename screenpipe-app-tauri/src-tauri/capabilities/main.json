@@ -150,7 +150,7 @@
       "allow": [
         {
           "name": "screenpipe",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": true,
           "sidecar": true
         }
@@ -174,7 +174,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-list",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "list",
@@ -190,7 +190,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-download",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "download",
@@ -209,7 +209,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-enable",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "enable",
@@ -226,7 +226,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-disable",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "disable",
@@ -243,7 +243,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-update",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "update",
@@ -263,7 +263,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-delete",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "delete",
@@ -281,7 +281,7 @@
       "allow": [
         {
           "name": "screenpipe-pipe-info",
-          "cmd": "screenpipe",
+          "cmd": "thadm-recorder",
           "args": [
             "pipe",
             "info",
