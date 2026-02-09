@@ -136,7 +136,7 @@ experimental = []
 debug-console = ["console-subscriber"]
 
 [[bin]]
-name = "screenpipe"
+name = "thadm-recorder"
 path = "src/bin/screenpipe-server.rs"
 
 

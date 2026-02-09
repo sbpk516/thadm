@@ -172,7 +172,7 @@ export default function PermissionRecoveryPage() {
     posthog.capture("permission_recovery_reset_fix", { permission });
     setFixingPermission(permission);
     try {
-      await commands.requestPermission(permission);
+      await commands.resetAndRequestPermission(permission);
       // The polling will detect when it's fixed
       // Add timeout fallback - if not fixed after 10s, clear the fixing state
       setTimeout(() => {
@@ -305,7 +305,8 @@ export default function PermissionRecoveryPage() {
                 <p className="font-mono text-xs text-muted-foreground">
                   tip: &quot;reset &amp; fix&quot; removes and re-requests the permission automatically.
                   <br />
-                  if that doesn&apos;t work, use &quot;manual&quot; to toggle it in system settings.
+                  if that doesn&apos;t work, use &quot;manual&quot; and add both &quot;thadm&quot; and
+                  &quot;thadm-recorder&quot; in system settings &gt; screen recording.
                 </p>
 
                 <button

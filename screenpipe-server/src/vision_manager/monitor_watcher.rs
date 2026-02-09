@@ -14,27 +14,32 @@ use super::manager::{VisionManager, VisionManagerStatus};
 
 static MONITOR_WATCHER: Lazy<Mutex<Option<JoinHandle<()>>>> = Lazy::new(|| Mutex::new(None));
 
-/// Start the monitor watcher that polls for monitor changes
-pub async fn start_monitor_watcher(vision_manager: Arc<VisionManager>) -> anyhow::Result<()> {
+/// Start the monitor watcher that polls for monitor changes.
+/// Accepts initial_monitor_ids to avoid calling list_monitors() at init,
+/// which would trigger a redundant ScreenCaptureKit dialog on macOS Sequoia.
+pub async fn start_monitor_watcher(
+    vision_manager: Arc<VisionManager>,
+    initial_monitor_ids: HashSet<u32>,
+) -> anyhow::Result<()> {
     // Stop existing watcher if any
     stop_monitor_watcher().await?;
 
-    info!("Starting monitor watcher (polling every 2 seconds)");
+    info!("Starting monitor watcher (initial delay 30s, then polling every 30s)");
 
     let handle = tokio::spawn(async move {
         // Track monitors that were disconnected (for reconnection detection)
-        let mut known_monitors: HashSet<u32> = HashSet::new();
+        // Use the cached IDs from startup instead of calling list_monitors() again
+        let mut known_monitors: HashSet<u32> = initial_monitor_ids;
 
-        // Initialize with current monitors
-        let initial_monitors = list_monitors().await;
-        for monitor in &initial_monitors {
-            known_monitors.insert(monitor.id());
-        }
+        // Wait 30 seconds before first poll to give user time to approve
+        // the ScreenCaptureKit "bypass private window picker" dialog on macOS Sequoia.
+        // This prevents flooding the user with duplicate dialogs at startup.
+        tokio::time::sleep(Duration::from_secs(30)).await;
 
         loop {
             // Only poll when running
             if vision_manager.status().await != VisionManagerStatus::Running {
-                tokio::time::sleep(Duration::from_secs(2)).await;
+                tokio::time::sleep(Duration::from_secs(30)).await;
                 continue;
             }
 
@@ -46,17 +51,19 @@ pub async fn start_monitor_watcher(vision_manager: Arc<VisionManager>) -> anyhow
             let active_ids: HashSet<u32> =
                 vision_manager.active_monitors().await.into_iter().collect();
 
-            // Detect newly connected monitors
-            for monitor_id in &current_ids {
-                if !active_ids.contains(monitor_id) {
-                    if known_monitors.contains(monitor_id) {
+            // Detect newly connected monitors — pass SafeMonitor directly
+            // to avoid get_monitor_by_id() which would call Monitor::all() again
+            for monitor in &current_monitors {
+                let monitor_id = monitor.id();
+                if !active_ids.contains(&monitor_id) {
+                    if known_monitors.contains(&monitor_id) {
                         info!("Monitor {} reconnected, resuming recording", monitor_id);
                     } else {
                         info!("New monitor {} detected, starting recording", monitor_id);
-                        known_monitors.insert(*monitor_id);
+                        known_monitors.insert(monitor_id);
                     }
 
-                    if let Err(e) = vision_manager.start_monitor(*monitor_id).await {
+                    if let Err(e) = vision_manager.start_monitor_direct(monitor_id, monitor).await {
                         warn!(
                             "Failed to start recording on monitor {}: {:?}",
                             monitor_id, e
@@ -78,8 +85,8 @@ pub async fn start_monitor_watcher(vision_manager: Arc<VisionManager>) -> anyhow
                 }
             }
 
-            // Poll every 2 seconds
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            // Poll every 30 seconds (reduced from 2s to minimize ScreenCaptureKit calls)
+            tokio::time::sleep(Duration::from_secs(30)).await;
         }
     });
 

@@ -151,6 +151,32 @@ pub async fn list_monitors() -> Vec<SafeMonitor> {
     .unwrap()
 }
 
+/// Check if screen capture permission is granted on macOS without triggering a dialog.
+/// Uses CGPreflightScreenCaptureAccess which returns a bool silently.
+#[cfg(target_os = "macos")]
+pub fn has_screen_capture_permission() -> bool {
+    #[link(name = "CoreGraphics", kind = "framework")]
+    extern "C" {
+        fn CGPreflightScreenCaptureAccess() -> bool;
+    }
+    unsafe { CGPreflightScreenCaptureAccess() }
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn has_screen_capture_permission() -> bool {
+    true
+}
+
+/// List monitors only if screen capture permission is granted.
+/// Returns empty vec if permission denied, avoiding system dialogs on macOS Sequoia.
+pub async fn list_monitors_safe() -> Vec<SafeMonitor> {
+    if !has_screen_capture_permission() {
+        tracing::warn!("screen capture permission not granted, skipping monitor enumeration");
+        return Vec::new();
+    }
+    list_monitors().await
+}
+
 pub async fn get_default_monitor() -> SafeMonitor {
     tokio::task::spawn_blocking(|| {
         SafeMonitor::new(Monitor::all().unwrap().first().unwrap().clone())
@@ -161,25 +187,27 @@ pub async fn get_default_monitor() -> SafeMonitor {
 
 #[cfg(target_os = "macos")]
 pub async fn get_monitor_by_id(id: u32) -> Option<SafeMonitor> {
-    tokio::task::spawn_blocking(move || match Monitor::all() {
-        Ok(monitors) => {
-            let monitor_count = monitors.len();
-            let monitor_ids: Vec<u32> = monitors.iter().map(|m| m.id()).collect();
+    tokio::task::spawn_blocking(move || {
+        match Monitor::all() {
+            Ok(monitors) => {
+                let monitor_count = monitors.len();
+                let monitor_ids: Vec<u32> = monitors.iter().map(|m| m.id()).collect();
 
-            tracing::debug!(
-                "Found {} monitors with IDs: {:?}",
-                monitor_count,
-                monitor_ids
-            );
+                tracing::debug!(
+                    "Found {} monitors with IDs: {:?}",
+                    monitor_count,
+                    monitor_ids
+                );
 
-            monitors
-                .into_iter()
-                .find(|m| m.id() == id)
-                .map(SafeMonitor::new)
-        }
-        Err(e) => {
-            tracing::error!("Failed to list monitors: {}", e);
-            None
+                monitors
+                    .into_iter()
+                    .find(|m| m.id() == id)
+                    .map(SafeMonitor::new)
+            }
+            Err(e) => {
+                tracing::error!("Failed to list monitors: {}", e);
+                None
+            }
         }
     })
     .await

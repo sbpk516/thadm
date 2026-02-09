@@ -37,7 +37,7 @@
       "assets/*"
     ],
     "macOS": {
-      "signingIdentity": "-",
+      "signingIdentity": "Developer ID Application: Balaji Sachidanandam (KVLNE2Y696)",
       "entitlements": "entitlements.plist",
       "hardenedRuntime": false
     }

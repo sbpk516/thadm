@@ -799,18 +799,23 @@ async fn main() -> anyhow::Result<()> {
         // Use VisionManager for dynamic monitor detection
         let vm_clone = vm.clone();
         let shutdown_tx_clone2 = shutdown_tx_clone.clone();
+        // Pass cached monitors to avoid redundant ScreenCaptureKit calls
+        // (each call triggers a "bypass private window picker" dialog on macOS Sequoia)
+        let cached_monitors = all_monitors.clone();
+        let initial_monitor_ids: std::collections::HashSet<u32> =
+            all_monitors.iter().map(|m| m.id()).collect();
         let runtime = &tokio::runtime::Handle::current();
         runtime.spawn(async move {
             let mut shutdown_rx = shutdown_tx_clone2.subscribe();
 
-            // Start VisionManager
-            if let Err(e) = vm_clone.start().await {
+            // Start VisionManager with cached monitors (no ScreenCaptureKit call)
+            if let Err(e) = vm_clone.start_with_monitors(cached_monitors).await {
                 error!("Failed to start VisionManager: {:?}", e);
                 return;
             }
 
-            // Start MonitorWatcher for dynamic detection
-            if let Err(e) = start_monitor_watcher(vm_clone.clone()).await {
+            // Start MonitorWatcher with cached IDs (no ScreenCaptureKit call at init)
+            if let Err(e) = start_monitor_watcher(vm_clone.clone(), initial_monitor_ids).await {
                 error!("Failed to start monitor watcher: {:?}", e);
             }
 

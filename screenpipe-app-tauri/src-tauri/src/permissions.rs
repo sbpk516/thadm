@@ -47,9 +47,12 @@ pub async fn request_permission(permission: OSPermission) {
         match permission {
             OSPermission::ScreenRecording => {
                 use core_graphics_helmer_fork::access::ScreenCaptureAccess;
-                // Only request if not already granted
-                if !ScreenCaptureAccess.preflight() {
+                let already_granted = ScreenCaptureAccess.preflight();
+                info!("[PERM_REQUEST] ScreenRecording: already_granted={}, calling request()", already_granted);
+                if !already_granted {
                     ScreenCaptureAccess.request();
+                    let after = ScreenCaptureAccess.preflight();
+                    info!("[PERM_REQUEST] ScreenRecording: after request() = {}", after);
                 }
             }
             OSPermission::Microphone => {
@@ -64,8 +67,11 @@ pub async fn request_permission(permission: OSPermission) {
                 }
             }
             OSPermission::Accessibility => {
-                // Request accessibility permission (shows system prompt)
+                let before = accessibility::is_trusted();
+                info!("[PERM_REQUEST] Accessibility: before={}, calling request_with_prompt()", before);
                 request_accessibility_permission();
+                let after = accessibility::is_trusted();
+                info!("[PERM_REQUEST] Accessibility: after={}", after);
             }
         }
     }
@@ -230,7 +236,7 @@ pub async fn reset_and_request_permission(
 
         info!("resetting permission for service: {} (bundle: {})", service, bundle_id);
 
-        // Reset permission using tccutil - ONLY for this app's bundle ID
+        // Reset permission using tccutil - for this app's bundle ID
         let output = Command::new("tccutil")
             .args(["reset", service, bundle_id])
             .output()
@@ -238,11 +244,24 @@ pub async fn reset_and_request_permission(
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("tccutil reset returned non-zero: {}", stderr);
-            // Don't fail - tccutil might return non-zero even when it works
+            warn!("tccutil reset returned non-zero for {}: {}", bundle_id, stderr);
         }
 
-        info!("tccutil reset completed for {} (bundle: {}), waiting before re-request", service, bundle_id);
+        // Also reset the sidecar (thadm-recorder) which has its own TCC entry
+        if matches!(&permission, OSPermission::ScreenRecording) {
+            let sidecar_output = Command::new("tccutil")
+                .args(["reset", service, "thadm-recorder"])
+                .output()
+                .map_err(|e| format!("failed to run tccutil for sidecar: {}", e))?;
+
+            if !sidecar_output.status.success() {
+                let stderr = String::from_utf8_lossy(&sidecar_output.stderr);
+                warn!("tccutil reset returned non-zero for thadm-recorder: {}", stderr);
+            }
+            info!("tccutil reset completed for both {} and thadm-recorder", bundle_id);
+        } else {
+            info!("tccutil reset completed for {} (bundle: {})", service, bundle_id);
+        }
 
         // Wait for TCC database to update
         sleep(Duration::from_millis(500)).await;
@@ -309,18 +328,24 @@ pub fn do_permissions_check(initial_check: bool) -> OSPermissionsCheck {
             }
         }
 
+        let screen_result = {
+            use core_graphics_helmer_fork::access::ScreenCaptureAccess;
+            let result = ScreenCaptureAccess.preflight();
+            info!("[PERM_CHECK] ScreenCaptureAccess.preflight() = {}, initial_check = {}", result, initial_check);
+            match (result, initial_check) {
+                (true, _) => OSPermissionStatus::Granted,
+                (false, true) => OSPermissionStatus::Empty,
+                (false, false) => OSPermissionStatus::Denied,
+            }
+        };
+        let mic_result = check_av_permission(AVMediaType::Audio);
+        let accessibility_result = check_accessibility_permission();
+        info!("[PERM_CHECK] screen={:?}, mic={:?}, accessibility={:?}", screen_result, mic_result, accessibility_result);
+
         OSPermissionsCheck {
-            screen_recording: {
-                use core_graphics_helmer_fork::access::ScreenCaptureAccess;
-                let result = ScreenCaptureAccess.preflight();
-                match (result, initial_check) {
-                    (true, _) => OSPermissionStatus::Granted,
-                    (false, true) => OSPermissionStatus::Empty,
-                    (false, false) => OSPermissionStatus::Denied,
-                }
-            },
-            microphone: check_av_permission(AVMediaType::Audio),
-            accessibility: check_accessibility_permission(),
+            screen_recording: screen_result,
+            microphone: mic_result,
+            accessibility: accessibility_result,
         }
     }
 
@@ -365,6 +390,8 @@ pub async fn start_permission_monitor(app: tauri::AppHandle) {
         let screen_ok = perms.screen_recording.permitted();
         let mic_ok = perms.microphone.permitted();
         let accessibility_ok = perms.accessibility.permitted();
+        info!("[PERM_MONITOR] screen_ok={}, mic_ok={}, accessibility_ok={}, screen_fails={}, mic_fails={}, acc_fails={}",
+            screen_ok, mic_ok, accessibility_ok, screen_fail_count, mic_fail_count, accessibility_fail_count);
 
         // Update consecutive failure counts
         if screen_ok {

@@ -239,13 +239,13 @@ if (platform == 'linux') {
 	// Copy screenpipe binary as thadm-recorder
 	console.log('copying thadm-recorder binary for linux...');
 	const potentialPaths = [
-		path.join(__dirname, '..', '..', '..', '..', 'target', 'release', 'screenpipe'),
-		path.join(__dirname, '..', '..', '..', '..', 'target', 'x86_64-unknown-linux-gnu', 'release', 'screenpipe'),
-		path.join(__dirname, '..', '..', 'target', 'x86_64-unknown-linux-gnu', 'release', 'screenpipe'),
-		path.join(__dirname, '..', '..', '..', 'target', 'release', 'screenpipe'),
-		path.join(__dirname, '..', '..', 'target', 'release', 'screenpipe'),
-		path.join(__dirname, '..', 'target', 'release', 'screenpipe'),
-		'/home/runner/work/screenpipe/screenpipe/target/release/screenpipe',
+		path.join(__dirname, '..', '..', '..', '..', 'target', 'release', 'thadm-recorder'),
+		path.join(__dirname, '..', '..', '..', '..', 'target', 'x86_64-unknown-linux-gnu', 'release', 'thadm-recorder'),
+		path.join(__dirname, '..', '..', 'target', 'x86_64-unknown-linux-gnu', 'release', 'thadm-recorder'),
+		path.join(__dirname, '..', '..', '..', 'target', 'release', 'thadm-recorder'),
+		path.join(__dirname, '..', '..', 'target', 'release', 'thadm-recorder'),
+		path.join(__dirname, '..', 'target', 'release', 'thadm-recorder'),
+		'/home/runner/work/screenpipe/screenpipe/target/release/thadm-recorder',
 	];
 
 	let copied = false;
@@ -297,11 +297,11 @@ if (platform == 'windows') {
 	console.log('Copying thadm-recorder binary...');
 
 	const potentialPaths = [
-		path.join(__dirname, '..', '..', 'target', 'release', 'screenpipe.exe'),
-		path.join(__dirname, '..', '..', 'target', 'x86_64-pc-windows-msvc', 'release', 'screenpipe.exe'),
-		path.join(__dirname, '..', 'target', 'release', 'screenpipe.exe'),
-		path.join(__dirname, '..', '..', 'target', 'release', 'screenpipe.exe'),
-		'D:\\a\\screenpipe\\screenpipe\\target\\release\\screenpipe.exe',
+		path.join(__dirname, '..', '..', 'target', 'release', 'thadm-recorder.exe'),
+		path.join(__dirname, '..', '..', 'target', 'x86_64-pc-windows-msvc', 'release', 'thadm-recorder.exe'),
+		path.join(__dirname, '..', 'target', 'release', 'thadm-recorder.exe'),
+		path.join(__dirname, '..', '..', 'target', 'release', 'thadm-recorder.exe'),
+		'D:\\a\\screenpipe\\screenpipe\\target\\release\\thadm-recorder.exe',
 	];
 
 	let copied = false;
@@ -374,27 +374,27 @@ if (platform == 'macos') {
 		console.log(`Setting up thadm-recorder bin for ${arch}...`);
 		if (arch === 'arm64') {
 			const paths = [
-				"../../target/aarch64-apple-darwin/release/screenpipe",
-				"../../target/release/screenpipe"
+				"../../target/aarch64-apple-darwin/release/thadm-recorder",
+				"../../target/release/thadm-recorder"
 			];
 			const mostRecentPath = await getMostRecentBinaryPath('arm64', paths);
 			if (mostRecentPath) {
 				await $`cp ${mostRecentPath} thadm-recorder-aarch64-apple-darwin`;
 				console.log(`Copied most recent arm64 binary from ${mostRecentPath}`);
 			} else {
-				console.error("No suitable arm64 screenpipe binary found");
+				console.error("No suitable arm64 thadm-recorder binary found");
 			}
 		} else if (arch === 'x86_64') {
 			const paths = [
-				"../../target/x86_64-apple-darwin/release/screenpipe",
-				"../../target/release/screenpipe"
+				"../../target/x86_64-apple-darwin/release/thadm-recorder",
+				"../../target/release/thadm-recorder"
 			];
 			const mostRecentPath = await getMostRecentBinaryPath('x86_64', paths);
 			if (mostRecentPath) {
 				await $`cp ${mostRecentPath} thadm-recorder-x86_64-apple-darwin`;
 				console.log(`Copied most recent x86_64 binary from ${mostRecentPath}`);
 			} else {
-				console.error("No suitable x86_64 screenpipe binary found");
+				console.error("No suitable x86_64 thadm-recorder binary found");
 			}
 		}
 		console.log(`thadm-recorder for ${arch} set up successfully.`);

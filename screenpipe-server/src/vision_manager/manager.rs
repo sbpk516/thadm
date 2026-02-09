@@ -4,7 +4,7 @@ use anyhow::Result;
 use dashmap::DashMap;
 use screenpipe_core::Language;
 use screenpipe_db::DatabaseManager;
-use screenpipe_vision::monitor::{get_monitor_by_id, list_monitors};
+use screenpipe_vision::monitor::{get_monitor_by_id, list_monitors, SafeMonitor};
 use screenpipe_vision::OcrEngine;
 use std::sync::Arc;
 use std::time::Duration;
@@ -93,6 +93,110 @@ impl VisionManager {
                 );
             }
         }
+
+        Ok(())
+    }
+
+    /// Start recording using a pre-fetched monitor list.
+    /// Avoids calling list_monitors()/get_monitor_by_id() which would trigger
+    /// redundant ScreenCaptureKit dialogs on macOS Sequoia.
+    pub async fn start_with_monitors(&self, monitors: Vec<SafeMonitor>) -> Result<()> {
+        let mut status = self.status.write().await;
+        if *status == VisionManagerStatus::Running {
+            debug!("VisionManager already running");
+            return Ok(());
+        }
+
+        info!("Starting VisionManager with {} cached monitors", monitors.len());
+        *status = VisionManagerStatus::Running;
+        drop(status);
+
+        for monitor in monitors {
+            let monitor_id = monitor.id();
+            if let Err(e) = self.start_monitor_direct(monitor_id, &monitor).await {
+                warn!(
+                    "Failed to start recording on monitor {}: {:?}",
+                    monitor_id, e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Start recording on a monitor using pre-fetched monitor info.
+    /// Avoids calling get_monitor_by_id() which would trigger ScreenCaptureKit.
+    pub async fn start_monitor_direct(&self, monitor_id: u32, monitor: &SafeMonitor) -> Result<()> {
+        if self.recording_tasks.contains_key(&monitor_id) {
+            debug!("Monitor {} is already recording", monitor_id);
+            return Ok(());
+        }
+
+        info!(
+            "Starting vision recording for monitor {} ({}x{})",
+            monitor_id,
+            monitor.width(),
+            monitor.height()
+        );
+
+        let db = self.db.clone();
+        let output_path = Arc::new(self.config.output_path.clone());
+        let fps = self.config.fps;
+        let video_chunk_duration = self.config.video_chunk_duration;
+        let ocr_engine = self.config.ocr_engine.clone();
+        let use_pii_removal = self.config.use_pii_removal;
+        let ignored_windows = self.config.ignored_windows.clone();
+        let included_windows = self.config.included_windows.clone();
+        let ignored_urls = self.config.ignored_urls.clone();
+        let languages = self.config.languages.clone();
+        let capture_unfocused_windows = self.config.capture_unfocused_windows;
+        let realtime_vision = self.config.realtime_vision;
+
+        let handle = self.vision_handle.spawn(async move {
+            // On macOS Sequoia, delay the first frame capture to give the user time
+            // to approve the ScreenCaptureKit "bypass private window picker" dialog.
+            // capture_image() calls Monitor::all() per frame, and each call can trigger
+            // a hidden dialog before the user approves. 15s is enough time to click "Allow".
+            #[cfg(target_os = "macos")]
+            {
+                info!("Monitor {} waiting 15s for SCK approval before recording", monitor_id);
+                tokio::time::sleep(Duration::from_secs(15)).await;
+            }
+
+            loop {
+                match record_video(
+                    db.clone(),
+                    output_path.clone(),
+                    fps,
+                    ocr_engine.clone(),
+                    monitor_id,
+                    use_pii_removal,
+                    &ignored_windows,
+                    &included_windows,
+                    &ignored_urls,
+                    video_chunk_duration,
+                    languages.clone(),
+                    capture_unfocused_windows,
+                    realtime_vision,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        info!("Monitor {} recording completed normally", monitor_id);
+                        break;
+                    }
+                    Err(e) => {
+                        error!(
+                            "Monitor {} recording error: {:?}, restarting in 1s...",
+                            monitor_id, e
+                        );
+                        tokio::time::sleep(Duration::from_secs(1)).await;
+                    }
+                }
+            }
+        });
+
+        self.recording_tasks.insert(monitor_id, handle);
 
         Ok(())
     }

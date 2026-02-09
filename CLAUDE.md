@@ -31,8 +31,26 @@ screenpipe (MIT licensed). All data stays local on device.
 - ALWAYS run tests after any code change
 - NEVER skip tests to save time
 
+## Build Process — MANDATORY
+
+**NEVER run manual build commands (cargo build, bun tauri build, cp, etc.) directly.**
+**ALWAYS use `./build.sh [command]` from the project root.**
+
+| Command | What it does | When to use |
+|---------|-------------|-------------|
+| `./build.sh sidecar` | Compiles the recorder binary only | Testing changes to screenpipe-server, audio, or vision |
+| `./build.sh dev` | Compiles sidecar + launches full app in dev mode | Testing with the UI + hot reload |
+| `./build.sh release` | Compiles sidecar + builds signed .app bundle | Creating installable app for /Applications |
+| `./build.sh clean` | Removes all artifacts + full release build | When builds are broken or stale |
+
+The app has TWO binaries:
+- **thadm** (main UI app) — compiled automatically by `bun tauri build`
+- **thadm-recorder** (sidecar recorder) — must be compiled separately via `build.sh`
+
+The build script handles compiling the sidecar, copying it to the right location, and running Tauri. Never do these steps manually.
+
 ## macOS Dev Builds
-- Dev builds are signed with a developer certificate for consistent permissions
+- Signing identity: `Developer ID Application: Balaji Sachidanandam (KVLNE2Y696)`
 - Config: `screenpipe-app-tauri/src-tauri/tauri.conf.json` > `bundle.macOS.signingIdentity`
 - This ensures macOS TCC recognizes the app across rebuilds (permissions persist)
 - Other devs without the cert will see permission issues - onboarding has "continue anyway" button after 5s
@@ -69,6 +87,7 @@ screenpipe (MIT licensed). All data stays local on device.
 - Delete or rename existing functions without approval
 - Use "git add ." — always add specific files
 - Make architectural decisions without asking
+- Run manual build commands (cargo build, bun tauri build, cp sidecar) — ALWAYS use `./build.sh`
 
 ## Feature Development Process
 1. Create a git branch for each feature

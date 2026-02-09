@@ -107,62 +107,46 @@ pub fn parse_audio_device(name: &str) -> Result<AudioDevice> {
     AudioDevice::from_name(name)
 }
 
-/// Attempts an operation with exponential backoff retry
+/// Gets the ScreenCaptureKit host with cooldown after failure.
+/// On macOS Sequoia, each ScreenCaptureKit call can trigger a "bypass private
+/// window picker" dialog. To avoid flooding the user with dialogs, we:
+/// - Try only once (no retries) to minimize dialog triggers
+/// - Cooldown for 30 seconds after failure before trying again
 #[cfg(target_os = "macos")]
-async fn with_retry<T, F, Fut>(operation: F, max_retries: usize) -> Result<T>
-where
-    F: Fn() -> Fut,
-    Fut: std::future::Future<Output = Result<T>>,
-{
-    let mut retries = 0;
-    let mut delay_ms = 10; // Start with 10ms delay
+async fn get_screen_capture_host() -> Result<cpal::Host> {
+    use std::sync::Mutex;
+    use std::time::Instant;
 
-    loop {
-        match operation().await {
-            Ok(value) => return Ok(value),
-            Err(e) => {
-                if retries >= max_retries {
-                    return Err(anyhow!("Max retries reached: {}", e));
-                }
+    static LAST_FAILURE: Mutex<Option<Instant>> = Mutex::new(None);
 
-                // Add some jitter to prevent synchronized retries
-                use rand::{rng, Rng};
-                let jitter = rng().random_range(0..=10) as u64;
-                let delay = std::time::Duration::from_millis(delay_ms + jitter);
-
-                tracing::warn!(
-                    "ScreenCaptureKit host error, retrying in {}ms: {}",
-                    delay_ms + jitter,
-                    e
-                );
-                tokio::time::sleep(delay).await;
-
-                retries += 1;
-                delay_ms = std::cmp::min(delay_ms * 2, 1000); // Exponential backoff, max 1s
+    // If SCK failed recently, don't try again (avoids dialog flood)
+    {
+        let guard = LAST_FAILURE.lock().unwrap();
+        if let Some(last) = *guard {
+            if last.elapsed() < std::time::Duration::from_secs(30) {
+                return Err(anyhow!("ScreenCaptureKit failed recently, cooling down"));
             }
         }
     }
-}
 
-/// Gets the ScreenCaptureKit host with retry mechanism
-#[cfg(target_os = "macos")]
-async fn get_screen_capture_host() -> Result<cpal::Host> {
-    // necessary hack because this is unreliable
-    // Also catch panics from cpal when Screen Recording permission is not granted
-    with_retry(
-        || async {
-            let result = std::panic::catch_unwind(|| {
-                cpal::host_from_id(cpal::HostId::ScreenCaptureKit)
-            });
-            match result {
-                Ok(Ok(host)) => Ok(host),
-                Ok(Err(e)) => Err(anyhow!("Failed to get ScreenCaptureKit host: {}", e)),
-                Err(_) => Err(anyhow!("ScreenCaptureKit panicked - Screen Recording permission may not be granted")),
-            }
-        },
-        3,
-    )
-    .await
+    let result = std::panic::catch_unwind(|| {
+        cpal::host_from_id(cpal::HostId::ScreenCaptureKit)
+    });
+    match result {
+        Ok(Ok(host)) => {
+            // Success — clear any previous failure
+            *LAST_FAILURE.lock().unwrap() = None;
+            Ok(host)
+        }
+        Ok(Err(e)) => {
+            *LAST_FAILURE.lock().unwrap() = Some(Instant::now());
+            Err(anyhow!("Failed to get ScreenCaptureKit host: {}", e))
+        }
+        Err(_) => {
+            *LAST_FAILURE.lock().unwrap() = Some(Instant::now());
+            Err(anyhow!("ScreenCaptureKit panicked - Screen Recording permission may not be granted"))
+        }
+    }
 }
 
 pub async fn get_cpal_device_and_config(
