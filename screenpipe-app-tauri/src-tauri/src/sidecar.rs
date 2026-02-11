@@ -136,30 +136,39 @@ pub async fn stop_screenpipe(
     {
         let mut manager = state.0.lock().await;
         if let Some(manager) = manager.as_mut() {
-            if let Some(child) = manager.child.take() {
-                if let Err(e) = child.kill() {
-                    error!("Failed to kill child process: {}", e);
-                }
-            }
+            let _ = manager.child.take();
         }
-        // Use pgrep + kill instead of pkill -f to avoid killing thadm
-        // -x matches exact process name, so "screenpipe" won't match "thadm"
-        let command = "pgrep -x thadm-recorder | xargs -r kill -9 2>/dev/null || true";
-        match tokio::process::Command::new("sh")
+        drop(manager); // Release lock before waiting
+
+        // SIGTERM first — allows sidecar to close TCP socket cleanly (avoids TIME_WAIT on port 3030)
+        let _ = tokio::process::Command::new("sh")
             .arg("-c")
-            .arg(command)
+            .arg("pgrep -x thadm-recorder | xargs kill -15 2>/dev/null || true")
             .output()
-            .await
-        {
-            Ok(_) => {
-                debug!("Successfully killed screenpipe sidecar processes");
-                Ok(())
-            }
-            Err(e) => {
-                error!("Failed to kill screenpipe processes: {}", e);
-                Err(format!("Failed to kill screenpipe processes: {}", e))
+            .await;
+
+        // Wait up to 3s for graceful exit
+        let mut exited = false;
+        for _ in 0..6 {
+            tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+            if !is_sidecar_process_alive().await {
+                exited = true;
+                break;
             }
         }
+
+        // SIGKILL fallback if still alive
+        if !exited {
+            warn!("Sidecar did not exit after SIGTERM, sending SIGKILL");
+            let _ = tokio::process::Command::new("sh")
+                .arg("-c")
+                .arg("pgrep -x thadm-recorder | xargs kill -9 2>/dev/null || true")
+                .output()
+                .await;
+        }
+
+        debug!("Successfully stopped screenpipe sidecar processes");
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]
@@ -607,8 +616,25 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
                         .emit("sidecar_log", format!("ERROR: {}", log_line))
                         .unwrap();
                 }
+                CommandEvent::Terminated(payload) => {
+                    warn!(
+                        "Sidecar process terminated: code={:?}, signal={:?}",
+                        payload.code, payload.signal
+                    );
+                }
+                CommandEvent::Error(err) => {
+                    error!("Sidecar event error: {}", err);
+                }
                 _ => {}
             }
+        }
+        // Process exited — clear stale child handle so future spawn() calls work
+        info!("Sidecar event channel closed, clearing child handle");
+        let state = app_handle.state::<SidecarState>();
+        let mut guard = state.0.lock().await;
+        if let Some(manager) = guard.as_mut() {
+            let _ = manager.child.take();
+            info!("Cleared stale sidecar child handle after process exit");
         }
     });
 
@@ -634,8 +660,14 @@ impl SidecarManager {
 
         // Check if sidecar is already running
         if self.child.is_some() {
-            info!("Sidecar already running, skipping spawn");
-            return Ok(());
+            // Verify the process is actually alive — CommandChild doesn't track OS process state
+            if is_sidecar_process_alive().await {
+                info!("Sidecar already running (verified alive), skipping spawn");
+                return Ok(());
+            }
+            warn!("Sidecar child handle exists but process is dead, clearing stale handle");
+            let _ = self.child.take();
+            // Fall through to spawn
         }
 
         // Update settings from store first to get audio settings
@@ -680,5 +712,31 @@ impl SidecarManager {
         *self.dev_mode.lock().await = dev_mode;
 
         Ok(())
+    }
+}
+
+/// Check if the thadm-recorder process is actually running at the OS level.
+async fn is_sidecar_process_alive() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        match tokio::process::Command::new("tasklist")
+            .args(["/FI", "IMAGENAME eq thadm-recorder.exe", "/NH"])
+            .output()
+            .await
+        {
+            Ok(output) => String::from_utf8_lossy(&output.stdout).contains("thadm-recorder"),
+            Err(_) => false,
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        match tokio::process::Command::new("pgrep")
+            .args(["-x", "thadm-recorder"])
+            .output()
+            .await
+        {
+            Ok(output) => output.status.success(),
+            Err(_) => false,
+        }
     }
 }

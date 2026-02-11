@@ -19,6 +19,21 @@ use tauri_plugin_opener::OpenerExt;
 
 use tracing::{debug, error, info};
 
+fn show_notification(app: &AppHandle, title: &str, body: &str) {
+    // Guard: app.emit() crashes with objc_id null pointer when webview is inactive
+    // (window hidden via LSUIElement). Only emit if a webview window exists and is visible.
+    if let Some(window) = app.get_webview_window("main") {
+        if window.is_visible().unwrap_or(false) {
+            let _ = app.emit("notification-requested", serde_json::json!({
+                "title": title,
+                "body": body,
+            }));
+            return;
+        }
+    }
+    info!("{}: {}", title, body);
+}
+
 // Track last known state to avoid unnecessary updates
 static LAST_MENU_STATE: Lazy<Mutex<MenuState>> = Lazy::new(|| Mutex::new(MenuState::default()));
 
@@ -170,10 +185,54 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             show_main_window(app_handle, false);
         }
         "start_recording" => {
-            let _ = app_handle.emit("shortcut-start-recording", ());
+            info!("[TRAY_START] start_recording menu item clicked");
+            let app = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                info!("[TRAY_START] async task started, getting SidecarState...");
+                if let Some(sidecar_state) = app.try_state::<SidecarState>() {
+                    info!("[TRAY_START] SidecarState found, calling spawn_screenpipe...");
+                    match crate::sidecar::spawn_screenpipe(
+                        sidecar_state,
+                        app.clone(),
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("[TRAY_START] spawn_screenpipe returned Ok");
+                            show_notification(&app, "thadm", "Recording started");
+                        }
+                        Err(e) => {
+                            error!("[TRAY_START] spawn_screenpipe returned Err: {}", e);
+                            show_notification(&app, "thadm", &format!("Failed to start: {}", e));
+                        }
+                    }
+                } else {
+                    error!("[TRAY_START] SidecarState NOT found in app state!");
+                }
+            });
         }
         "stop_recording" => {
-            let _ = app_handle.emit("shortcut-stop-recording", ());
+            let app = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Some(sidecar_state) = app.try_state::<SidecarState>() {
+                    match crate::sidecar::stop_screenpipe(
+                        sidecar_state,
+                        app.clone(),
+                    )
+                    .await
+                    {
+                        Ok(_) => {
+                            info!("Recording stopped from tray menu");
+                            show_notification(&app, "thadm", "Recording stopped");
+                        }
+                        Err(e) => {
+                            error!("Failed to stop recording from tray: {}", e);
+                            show_notification(&app, "thadm", &format!("Failed to stop: {}", e));
+                        }
+                    }
+                }
+            });
         }
         "update_now" => {
             // For source builds, show info dialog about updates
