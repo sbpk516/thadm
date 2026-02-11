@@ -149,7 +149,7 @@
       "identifier": "shell:allow-execute",
       "allow": [
         {
-          "name": "screenpipe",
+          "name": "thadm-recorder",
           "cmd": "thadm-recorder",
           "args": true,
           "sidecar": true

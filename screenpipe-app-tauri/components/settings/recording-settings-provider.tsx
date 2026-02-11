@@ -45,8 +45,11 @@ interface RecordingSettingsContextValue {
   availableMonitors: MonitorDevice[];
   availableAudioDevices: AudioDevice[];
   isMacOS: boolean;
+  isWindows: boolean;
+  deviceLoadError: string | null;
   handleSettingsChange: (newSettings: Partial<Settings>, restart?: boolean) => void;
   handleUpdate: () => Promise<void>;
+  retryLoadDevices: () => void;
   getValidationStatus: () => { variant: "destructive" | "secondary" | "default"; message: string };
 }
 
@@ -73,6 +76,8 @@ export function RecordingSettingsProvider({ children }: { children: React.ReactN
   const [availableMonitors, setAvailableMonitors] = useState<MonitorDevice[]>([]);
   const [availableAudioDevices, setAvailableAudioDevices] = useState<AudioDevice[]>([]);
   const [isMacOS, setIsMacOS] = useState(false);
+  const [isWindows, setIsWindows] = useState(false);
+  const [deviceLoadError, setDeviceLoadError] = useState<string | null>(null);
 
   const debouncedValidateSettings = useMemo(
     () => debounce((newSettings: Partial<SettingsStore>) => {
@@ -210,11 +215,17 @@ export function RecordingSettingsProvider({ children }: { children: React.ReactN
   }, [validationErrors, hasUnsavedChanges]);
 
   useEffect(() => {
-    const currentPlatform = platform();
-    setIsMacOS(currentPlatform === "macos");
+    try {
+      const currentPlatform = platform();
+      setIsMacOS(currentPlatform === "macos");
+      setIsWindows(currentPlatform === "windows");
+    } catch {
+      setIsMacOS(false);
+      setIsWindows(false);
+    }
   }, []);
 
-  useEffect(() => {
+  const loadDevices = useCallback(async () => {
     const loadMonitors = async (): Promise<MonitorDevice[]> => {
       try {
         const monitorCommand = TauriCommand.sidecar("thadm-recorder", [
@@ -251,54 +262,66 @@ export function RecordingSettingsProvider({ children }: { children: React.ReactN
       }
     };
 
-    const loadDevices = async () => {
-      // Load monitors and audio devices independently so one failure doesn't block the other
-      const [monitors, audioDevices] = await Promise.all([
-        loadMonitors(),
-        loadAudioDevices(),
-      ]);
+    // Load monitors and audio devices independently so one failure doesn't block the other
+    const [monitors, audioDevices] = await Promise.all([
+      loadMonitors(),
+      loadAudioDevices(),
+    ]);
 
-      setAvailableMonitors(monitors);
-      setAvailableAudioDevices(audioDevices);
+    setAvailableMonitors(monitors);
+    setAvailableAudioDevices(audioDevices);
 
-      const updates: Partial<typeof settings> = {};
+    // Track whether device loading failed
+    if (monitors.length === 0 && audioDevices.length === 0) {
+      setDeviceLoadError("Could not detect monitors or audio devices. The recorder may not be running.");
+    } else if (monitors.length === 0) {
+      setDeviceLoadError("Could not detect monitors. The recorder may not be running.");
+    } else {
+      setDeviceLoadError(null);
+    }
 
-      if (monitors.length > 0) {
-        const availableMonitorIds = monitors.map((monitor) => monitor.id.toString());
-        let updatedMonitorIds = settings.monitorIds.filter((id) =>
-          id === "default" || availableMonitorIds.includes(id)
-        );
-        if (updatedMonitorIds.length === 0) {
-          updatedMonitorIds = [
-            monitors.find((monitor) => monitor.is_default)!.id!.toString(),
-          ];
-        }
-        updates.monitorIds = updatedMonitorIds;
+    const updates: Partial<typeof settings> = {};
+
+    if (monitors.length > 0) {
+      const availableMonitorIds = monitors.map((monitor) => monitor.id.toString());
+      const defaultMonitorId = monitors.find((m) => m.is_default)?.id?.toString()
+        ?? monitors[0].id.toString();
+
+      // Resolve "default" to the actual default monitor ID
+      let updatedMonitorIds = settings.monitorIds
+        .map((id) => (id === "default" ? defaultMonitorId : id))
+        .filter((id) => availableMonitorIds.includes(id));
+
+      if (updatedMonitorIds.length === 0) {
+        updatedMonitorIds = [defaultMonitorId];
       }
+      updates.monitorIds = updatedMonitorIds;
+    }
 
-      if (audioDevices.length > 0) {
-        const availableAudioDeviceNames = audioDevices.map((device) => device.name);
-        let updatedAudioDevices = settings.audioDevices.filter((device) =>
-          availableAudioDeviceNames.includes(device)
-        );
-        if (
-          updatedAudioDevices.length === 0 ||
-          (settings.audioDevices.length === 1 &&
-            settings.audioDevices[0] === "default" &&
-            audioDevices.length > 0)
-        ) {
-          updatedAudioDevices = audioDevices
-            .filter((device) => device.is_default)
-            .map((device) => device.name);
-        }
-        updates.audioDevices = updatedAudioDevices;
+    if (audioDevices.length > 0) {
+      const availableAudioDeviceNames = audioDevices.map((device) => device.name);
+      let updatedAudioDevices = settings.audioDevices.filter((device) =>
+        availableAudioDeviceNames.includes(device)
+      );
+      if (
+        updatedAudioDevices.length === 0 ||
+        (settings.audioDevices.length === 1 &&
+          settings.audioDevices[0] === "default" &&
+          audioDevices.length > 0)
+      ) {
+        updatedAudioDevices = audioDevices
+          .filter((device) => device.is_default)
+          .map((device) => device.name);
       }
+      updates.audioDevices = updatedAudioDevices;
+    }
 
-      if (Object.keys(updates).length > 0) {
-        handleSettingsChange(updates, false);
-      }
-    };
+    if (Object.keys(updates).length > 0) {
+      handleSettingsChange(updates, false);
+    }
+  }, [handleSettingsChange, settings.monitorIds, settings.audioDevices]);
 
+  useEffect(() => {
     loadDevices();
   }, []);
 
@@ -312,8 +335,11 @@ export function RecordingSettingsProvider({ children }: { children: React.ReactN
     availableMonitors,
     availableAudioDevices,
     isMacOS,
+    isWindows,
+    deviceLoadError,
     handleSettingsChange,
     handleUpdate,
+    retryLoadDevices: loadDevices,
     getValidationStatus,
   }), [
     settings,
@@ -325,8 +351,11 @@ export function RecordingSettingsProvider({ children }: { children: React.ReactN
     availableMonitors,
     availableAudioDevices,
     isMacOS,
+    isWindows,
+    deviceLoadError,
     handleSettingsChange,
     handleUpdate,
+    loadDevices,
     getValidationStatus,
   ]);
 

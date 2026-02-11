@@ -14,6 +14,7 @@ import {
   HelpCircle,
   Monitor,
   AlertCircle,
+  RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
@@ -25,7 +26,8 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { Separator } from "@/components/ui/separator";
-import { platform } from "@tauri-apps/plugin-os";
+import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { useRecordingSettings, RecordingSettingsBanner } from "./recording-settings-provider";
 
 export function ScreenSettings() {
@@ -34,7 +36,10 @@ export function ScreenSettings() {
     validationErrors,
     availableMonitors,
     isMacOS,
+    isWindows,
+    deviceLoadError,
     handleSettingsChange,
+    retryLoadDevices,
   } = useRecordingSettings();
 
   const handleFpsChange = useCallback((value: number[]) => {
@@ -110,59 +115,63 @@ export function ScreenSettings() {
         </div>
 
         {/* Monitor Selection */}
-        {!settings.useAllMonitors && (
-          <div className="flex flex-col space-y-2">
-            <Label htmlFor="monitors" className="flex items-center space-x-2">
-              <span>Monitors</span>
-              <TooltipProvider>
-                <Tooltip>
-                  <TooltipTrigger>
-                    <HelpCircle className="h-4 w-4 cursor-default" />
-                  </TooltipTrigger>
-                  <TooltipContent side="right">
-                    <p>
-                      Select which monitors to record from. Multiple monitors can be selected.
-                    </p>
-                  </TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
-            </Label>
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-              {/* Default Monitor Option */}
-              <div
-                className={cn(
-                  "flex items-center space-x-3 rounded-lg border p-3 cursor-pointer transition-colors",
-                  settings.monitorIds.includes("default")
-                    ? "border-primary bg-primary/5"
-                    : "border-border hover:bg-accent"
-                )}
-                onClick={() => {
-                  const isDefaultSelected = settings.monitorIds.includes("default");
-                  if (isDefaultSelected) {
-                    handleSettingsChange({
-                      monitorIds: settings.monitorIds.filter(id => id !== "default")
-                    }, true);
-                  } else {
-                    handleSettingsChange({ monitorIds: ["default"] }, true);
-                  }
-                }}
-              >
-                <div className="flex-1">
-                  <p className="font-medium">Default Monitor</p>
-                  <p className="text-sm text-muted-foreground">
-                    Automatically use the system&apos;s default monitor
+        <div className="flex flex-col space-y-2">
+          <Label htmlFor="monitors" className="flex items-center space-x-2">
+            <span>Monitors</span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger>
+                  <HelpCircle className="h-4 w-4 cursor-default" />
+                </TooltipTrigger>
+                <TooltipContent side="right">
+                  <p>
+                    {settings.useAllMonitors
+                      ? "Recording all detected monitors."
+                      : "Select which monitors to record from. Multiple monitors can be selected."}
                   </p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          </Label>
+          {deviceLoadError && availableMonitors.length === 0 && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription className="flex items-center justify-between">
+                <span>{deviceLoadError}</span>
+                <Button
+                  onClick={retryLoadDevices}
+                  size="sm"
+                  variant="outline"
+                  className="ml-2 shrink-0"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  Retry
+                </Button>
+              </AlertDescription>
+            </Alert>
+          )}
+          {settings.useAllMonitors ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+              {availableMonitors.map((monitor) => (
+                <div
+                  key={monitor.id}
+                  className="flex items-center space-x-3 rounded-lg border border-primary bg-primary/5 p-3"
+                >
+                  <div className="flex-1">
+                    <p className="font-medium">
+                      {monitor.name}
+                      {isMacOS && (monitor.is_default ? " (Built-in)" : " (External)")}
+                    </p>
+                    <p className="text-sm text-muted-foreground">
+                      {monitor.width}x{monitor.height}
+                    </p>
+                  </div>
+                  <Check className="h-4 w-4 opacity-100" />
                 </div>
-                <Check
-                  className={cn(
-                    "h-4 w-4",
-                    settings.monitorIds.includes("default")
-                      ? "opacity-100"
-                      : "opacity-0"
-                  )}
-                />
-              </div>
-
+              ))}
+            </div>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
               {availableMonitors.map((monitor) => (
                 <div
                   key={monitor.id}
@@ -173,19 +182,20 @@ export function ScreenSettings() {
                       : "border-border hover:bg-accent"
                   )}
                   onClick={() => {
-                    const currentIds = settings.monitorIds.filter(id => id !== "default");
                     const monitorId = monitor.id.toString();
-                    const updatedIds = currentIds.includes(monitorId)
-                      ? currentIds.filter(id => id !== monitorId)
-                      : [...currentIds, monitorId];
+                    const updatedIds = settings.monitorIds.includes(monitorId)
+                      ? settings.monitorIds.filter(id => id !== monitorId)
+                      : [...settings.monitorIds, monitorId];
                     handleSettingsChange({ monitorIds: updatedIds }, true);
                   }}
                 >
                   <div className="flex-1">
-                    <p className="font-medium">{monitor.name}</p>
+                    <p className="font-medium">
+                      {monitor.name}
+                      {isMacOS && (monitor.is_default ? " (Built-in)" : " (External)")}
+                    </p>
                     <p className="text-sm text-muted-foreground">
                       {monitor.width}x{monitor.height}
-                      {monitor.is_default && " (Default)"}
                     </p>
                   </div>
                   <Check
@@ -199,8 +209,8 @@ export function ScreenSettings() {
                 </div>
               ))}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* OCR Engine */}
         <div className="flex flex-col space-y-2">
@@ -229,8 +239,8 @@ export function ScreenSettings() {
             </SelectTrigger>
             <SelectContent>
               {isMacOS && <SelectItem value="apple-native">Apple Native</SelectItem>}
-              {!isMacOS && platform() === "windows" && <SelectItem value="windows-native">Windows Native</SelectItem>}
-              {!isMacOS && platform() !== "windows" && <SelectItem value="tesseract">Tesseract</SelectItem>}
+              {isWindows && <SelectItem value="windows-native">Windows Native</SelectItem>}
+              {!isMacOS && !isWindows && <SelectItem value="tesseract">Tesseract</SelectItem>}
             </SelectContent>
           </Select>
         </div>
