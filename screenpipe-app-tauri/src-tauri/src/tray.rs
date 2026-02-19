@@ -204,7 +204,14 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
                         }
                         Err(e) => {
                             error!("[TRAY_START] spawn_screenpipe returned Err: {}", e);
-                            show_notification(&app, "thadm", &format!("Failed to start: {}", e));
+                            // If permission error, open the permission recovery window
+                            if e.contains("permission") {
+                                if let Err(show_err) = ShowRewindWindow::PermissionRecovery.show(&app) {
+                                    error!("[TRAY_START] Failed to show permission recovery: {}", show_err);
+                                }
+                            } else {
+                                show_notification(&app, "thadm", &format!("Failed to start: {}", e));
+                            }
                         }
                     }
                 } else {

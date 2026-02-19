@@ -258,9 +258,9 @@ export default function PermissionRecoveryPage() {
               className="w-full max-w-md space-y-6"
             >
               <div className="text-center space-y-2">
-                <h2 className="font-mono text-lg">recording paused</h2>
+                <h2 className="font-mono text-lg">permissions needed</h2>
                 <p className="font-mono text-xs text-muted-foreground">
-                  some permissions were revoked. this can happen after macos updates.
+                  thadm needs these permissions to record your screen and audio.
                 </p>
               </div>
 
