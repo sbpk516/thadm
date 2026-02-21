@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef } from "react";
 import { Monitor, Mic, Keyboard, Check, AlertTriangle, RefreshCw, ExternalLink, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { commands, type OSPermission, type OSPermissionsCheck } from "@/lib/utils/tauri";
@@ -82,6 +82,7 @@ export default function PermissionRecoveryPage() {
   const [fixingPermission, setFixingPermission] = useState<OSPermission | null>(null);
   const [justFixed, setJustFixed] = useState<Set<string>>(new Set());
   const { isMac: isMacOS } = usePlatform();
+  const isRestartingRef = useRef(false);
 
   // Check permissions
   const checkPermissions = useCallback(async () => {
@@ -132,7 +133,9 @@ export default function PermissionRecoveryPage() {
     }
 
     // Close window and restart thadm if all critical permissions are granted
-    if (screenOk && micOk) {
+    // Guard: only fire the restart once (polling creates new useEffect calls every 500ms)
+    if (screenOk && micOk && !isRestartingRef.current) {
+      isRestartingRef.current = true;
       // Wait a moment to show success state, then restart thadm
       setTimeout(async () => {
         try {
@@ -146,6 +149,7 @@ export default function PermissionRecoveryPage() {
           await commands.closeWindow("PermissionRecovery");
         } catch (error) {
           console.error("Failed to restart thadm:", error);
+          isRestartingRef.current = false;
           // Still close the modal even if restart fails
           try {
             await commands.closeWindow("PermissionRecovery");

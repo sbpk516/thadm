@@ -16,6 +16,8 @@ SIDECAR_BIN="thadm-recorder"
 TAURI_DIR="$PROJECT_ROOT/screenpipe-app-tauri"
 SIDECAR_DEST="$TAURI_DIR/src-tauri/${SIDECAR_BIN}-aarch64-apple-darwin"
 
+cd "$PROJECT_ROOT"
+
 show_help() {
     echo ""
     echo "Thadm Build Script"
@@ -46,12 +48,14 @@ show_help() {
 }
 
 build_sidecar_debug() {
+    echo "==> Building from: $(pwd)"
     echo "==> Building sidecar (debug)..."
     cargo build --bin "$SIDECAR_BIN"
     echo "==> Sidecar built: target/debug/$SIDECAR_BIN"
 }
 
 build_sidecar_release() {
+    echo "==> Building from: $(pwd)"
     echo "==> Building sidecar (release)..."
     cargo build --release --bin "$SIDECAR_BIN"
     echo "==> Sidecar built: target/release/$SIDECAR_BIN"

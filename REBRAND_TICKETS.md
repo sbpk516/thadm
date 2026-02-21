@@ -32,7 +32,7 @@ Change the app name, bundle identifier, and descriptions in Tauri config.
 ```json
 {
   "productName": "Thadm",
-  "identifier": "com.thadm.app",
+  "identifier": "com.thadm.desktop",
   "bundle": {
     "shortDescription": "Your ADHD-friendly memory assistant",
     "longDescription": "Automatic, searchable memory for your desktop. Built for ADHD minds. 100% local."

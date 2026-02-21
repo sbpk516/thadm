@@ -418,13 +418,14 @@ pub async fn start_permission_monitor(app: tauri::AppHandle) {
         let mic_confirmed_lost = mic_fail_count == REQUIRED_CONSECUTIVE_FAILURES;
         let accessibility_confirmed_lost = accessibility_fail_count == REQUIRED_CONSECUTIVE_FAILURES;
 
-        if screen_confirmed_lost || mic_confirmed_lost || accessibility_confirmed_lost {
+        // Only emit permission-lost for critical permissions (screen recording or microphone).
+        // Accessibility is optional (keyboard shortcuts only) and should not trigger the recovery window.
+        if screen_confirmed_lost || mic_confirmed_lost {
             warn!(
-                "permission confirmed lost after {} consecutive failures - screen: {} (fails: {}), mic: {} (fails: {}), accessibility: {} (fails: {})",
+                "critical permission confirmed lost after {} consecutive failures - screen: {} (fails: {}), mic: {} (fails: {})",
                 REQUIRED_CONSECUTIVE_FAILURES,
                 screen_ok, screen_fail_count,
                 mic_ok, mic_fail_count,
-                accessibility_ok, accessibility_fail_count
             );
 
             // Emit event to frontend
@@ -435,6 +436,11 @@ pub async fn start_permission_monitor(app: tauri::AppHandle) {
             })) {
                 error!("failed to emit permission-lost event: {}", e);
             }
+        } else if accessibility_confirmed_lost {
+            info!(
+                "accessibility permission lost (non-critical, not showing recovery window) - fails: {}",
+                accessibility_fail_count
+            );
         }
 
         last_screen_ok = screen_ok;

@@ -24,7 +24,7 @@ use tokio::sync::broadcast;
 use tokio::sync::mpsc;
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::{DefaultMakeSpan, TraceLayer};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[derive(Clone, serde::Serialize, serde::Deserialize)]
 struct LogEntry {
@@ -377,7 +377,7 @@ async fn set_window_size(
 async fn start_sidecar(
     State(state): State<ServerState>,
 ) -> Result<Json<ApiResponse>, (StatusCode, String)> {
-    info!("received request to start sidecar");
+    warn!("[SPAWN_TRACE] server.rs start_sidecar() HTTP endpoint called");
 
     let app_handle = state.app_handle.clone();
     match crate::sidecar::spawn_screenpipe(
@@ -404,7 +404,7 @@ async fn start_sidecar(
 async fn stop_sidecar(
     State(state): State<ServerState>,
 ) -> Result<Json<ApiResponse>, (StatusCode, String)> {
-    info!("received request to stop sidecar");
+    warn!("[STOP_TRACE] server.rs stop_sidecar() HTTP endpoint called");
 
     let app_handle = state.app_handle.clone();
     match crate::sidecar::stop_screenpipe(

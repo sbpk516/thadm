@@ -130,17 +130,21 @@ pub async fn stop_screenpipe(
     state: State<'_, SidecarState>,
     _app: tauri::AppHandle,
 ) -> Result<(), String> {
-    debug!("Killing screenpipe");
+    warn!("[STOP_TRACE] stop_screenpipe() CALLED");
 
     #[cfg(target_os = "macos")]
     {
         let mut manager = state.0.lock().await;
         if let Some(manager) = manager.as_mut() {
+            warn!("[STOP_TRACE] taking child handle (dropping CommandChild)");
             let _ = manager.child.take();
+        } else {
+            warn!("[STOP_TRACE] no SidecarManager in state");
         }
         drop(manager); // Release lock before waiting
 
         // SIGTERM first — allows sidecar to close TCP socket cleanly (avoids TIME_WAIT on port 3030)
+        warn!("[STOP_TRACE] sending SIGTERM via pgrep/kill");
         let _ = tokio::process::Command::new("sh")
             .arg("-c")
             .arg("pgrep -x thadm-recorder | xargs kill -15 2>/dev/null || true")
@@ -159,7 +163,7 @@ pub async fn stop_screenpipe(
 
         // SIGKILL fallback if still alive
         if !exited {
-            warn!("Sidecar did not exit after SIGTERM, sending SIGKILL");
+            warn!("[STOP_TRACE] Sidecar did not exit after SIGTERM, sending SIGKILL");
             let _ = tokio::process::Command::new("sh")
                 .arg("-c")
                 .arg("pgrep -x thadm-recorder | xargs kill -9 2>/dev/null || true")
@@ -167,7 +171,7 @@ pub async fn stop_screenpipe(
                 .await;
         }
 
-        debug!("Successfully stopped screenpipe sidecar processes");
+        warn!("[STOP_TRACE] stop_screenpipe() DONE");
         Ok(())
     }
 
@@ -252,6 +256,7 @@ pub async fn spawn_screenpipe(
     app: tauri::AppHandle,
     override_args: Option<Vec<String>>,
 ) -> Result<(), String> {
+    warn!("[SPAWN_TRACE] spawn_screenpipe() CALLED (tauri command entry)");
     // Check permissions before spawning
     let permissions_check = do_permissions_check(false);
     let store = app.state::<SettingsStore>();
@@ -270,15 +275,17 @@ pub async fn spawn_screenpipe(
     }
     
     info!("Screen recording permission granted for manual spawn. Audio disabled: {}, microphone permission: {:?}", disable_audio, permissions_check.microphone);
-    
+
     let mut manager = state.0.lock().await;
     if manager.is_none() {
+        warn!("[SPAWN_TRACE] SidecarManager is None, creating new one");
         *manager = Some(SidecarManager::new());
     }
     if let Some(manager) = manager.as_mut() {
+        warn!("[SPAWN_TRACE] delegating to SidecarManager::spawn()");
         manager.spawn(&app, override_args).await
     } else {
-        debug!("Sidecar already running");
+        warn!("[SPAWN_TRACE] manager is None after creation?? (should be unreachable)");
         Ok(())
     }
 }
@@ -599,9 +606,12 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
     }
 
     let (mut rx, child) = result.unwrap();
+    let child_pid = child.pid();
+    warn!("[SPAWN_TRACE] sidecar process spawned with PID={}", child_pid);
     let app_handle = app.app_handle().clone();
 
     tauri::async_runtime::spawn(async move {
+        warn!("[EVENT_TRACE] event receiver task started for sidecar PID={}", child_pid);
         while let Some(event) = rx.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
@@ -618,27 +628,27 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
                 }
                 CommandEvent::Terminated(payload) => {
                     warn!(
-                        "Sidecar process terminated: code={:?}, signal={:?}",
-                        payload.code, payload.signal
+                        "[EVENT_TRACE] Sidecar PID={} TERMINATED: code={:?}, signal={:?}",
+                        child_pid, payload.code, payload.signal
                     );
                 }
                 CommandEvent::Error(err) => {
-                    error!("Sidecar event error: {}", err);
+                    error!("[EVENT_TRACE] Sidecar PID={} event error: {}", child_pid, err);
                 }
                 _ => {}
             }
         }
         // Process exited — clear stale child handle so future spawn() calls work
-        info!("Sidecar event channel closed, clearing child handle");
+        warn!("[EVENT_TRACE] Sidecar PID={} event channel CLOSED, clearing child handle", child_pid);
         let state = app_handle.state::<SidecarState>();
         let mut guard = state.0.lock().await;
         if let Some(manager) = guard.as_mut() {
             let _ = manager.child.take();
-            info!("Cleared stale sidecar child handle after process exit");
+            warn!("[EVENT_TRACE] Cleared stale child handle for PID={}", child_pid);
         }
     });
 
-    info!("Spawned sidecar with args: {:?}", args);
+    warn!("[SPAWN_TRACE] spawn_sidecar() returning child PID={}, args: {:?}", child_pid, args);
 
     Ok(child)
 }
@@ -656,16 +666,18 @@ impl SidecarManager {
     }
 
     pub async fn spawn(&mut self, app: &tauri::AppHandle, override_args: Option<Vec<String>>) -> Result<(), String> {
-        info!("Spawning sidecar with override args: {:?}", override_args);
+        warn!("[SPAWN_TRACE] SidecarManager::spawn() ENTERED, child.is_some()={}", self.child.is_some());
 
         // Check if sidecar is already running
         if self.child.is_some() {
             // Verify the process is actually alive — CommandChild doesn't track OS process state
-            if is_sidecar_process_alive().await {
-                info!("Sidecar already running (verified alive), skipping spawn");
+            let alive = is_sidecar_process_alive().await;
+            warn!("[SPAWN_TRACE] child handle exists, process alive={}", alive);
+            if alive {
+                warn!("[SPAWN_TRACE] sidecar already running, skipping spawn");
                 return Ok(());
             }
-            warn!("Sidecar child handle exists but process is dead, clearing stale handle");
+            warn!("[SPAWN_TRACE] child handle exists but process is dead, clearing stale handle (dropping CommandChild)");
             let _ = self.child.take();
             // Fall through to spawn
         }
@@ -693,7 +705,9 @@ impl SidecarManager {
         info!("Screen recording permission granted, proceeding with sidecar spawn. Audio disabled: {}, microphone permission: {:?}", disable_audio, permissions_check.microphone);
 
         // Spawn the sidecar
+        warn!("[SPAWN_TRACE] calling spawn_sidecar() now...");
         let child = spawn_sidecar(app, override_args).await?;
+        warn!("[SPAWN_TRACE] spawn_sidecar() returned child, storing in self.child");
         self.child = Some(child);
 
         Ok(())
