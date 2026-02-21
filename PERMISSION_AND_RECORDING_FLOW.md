@@ -10,14 +10,16 @@
 
 1. [The Two Binaries](#the-two-binaries)
 2. [How macOS Screen Recording Permission Works](#how-macos-screen-recording-permission-works)
-3. [The Permission Check Journey (Code Trace)](#the-permission-check-journey-code-trace)
-4. [Why Permission Shows "Denied" Even After Granting](#why-permission-shows-denied-even-after-granting)
-5. [The "Reset & Fix" Button Flow](#the-reset--fix-button-flow)
-6. [The Permission Recovery Window Flow](#the-permission-recovery-window-flow)
-7. [All 21 Recording Start/Stop Entry Points](#all-21-recording-startstop-entry-points)
-8. [The Crash Loop Bug (Found & Fixed)](#the-crash-loop-bug-found--fixed)
-9. [Known Bugs & Gaps](#known-bugs--gaps)
-10. [How to Debug Permission Issues](#how-to-debug-permission-issues)
+3. [The Full Identity Chain](#the-full-identity-chain)
+4. [The Permission Check Journey (Code Trace)](#the-permission-check-journey-code-trace)
+5. [Why Permission Shows "Denied" Even After Granting](#why-permission-shows-denied-even-after-granting)
+6. [Launch Services Cache Poisoning (Root Cause Found 2026-02-20)](#launch-services-cache-poisoning-root-cause-found-2026-02-20)
+7. [The "Reset & Fix" Button Flow](#the-reset--fix-button-flow)
+8. [The Permission Recovery Window Flow](#the-permission-recovery-window-flow)
+9. [All 21 Recording Start/Stop Entry Points](#all-21-recording-startstop-entry-points)
+10. [The Crash Loop Bug (Found & Fixed)](#the-crash-loop-bug-found--fixed)
+11. [Known Bugs & Gaps](#known-bugs--gaps)
+12. [How to Debug Permission Issues](#how-to-debug-permission-issues)
 
 ---
 
@@ -198,6 +200,72 @@ Layer 2: ScreenCaptureKit Bypass Dialog
 
 CGPreflightScreenCaptureAccess() only checks Layer 1.
 ScreenCaptureKit (used by thadm-recorder) needs BOTH layers.
+```
+
+---
+
+## The Full Identity Chain
+
+Every macOS permission check follows this chain. A break at ANY point = permission denied.
+
+```
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     THE IDENTITY CHAIN                                   │
+│                                                                          │
+│  Step 1          Step 2          Step 3            Step 4                │
+│                                                                          │
+│  Info.plist  →  codesign    →  Launch Services  →  TCC Database         │
+│  (on disk)      (binary)       (cached in RAM)     (permission store)   │
+│                                                                          │
+│  CFBundle       designated     lsregister          sqlite3               │
+│  Identifier     requirement    -dump               TCC.db                │
+│                                                                          │
+│  "com.thadm     "identifier    identifier:         client:               │
+│   .desktop"      com.thadm     com.thadm           com.thadm            │
+│                  .desktop"     .desktop             .desktop              │
+│                                                                          │
+│              ↓                                                           │
+│         Step 5: Runtime API                                              │
+│         CGPreflightScreenCaptureAccess()                                │
+│         Looks up calling process in TCC via the identity chain          │
+│                                                                          │
+│  If ANY step has a DIFFERENT value → permission check fails             │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+### Diagnostic Commands for Each Step
+
+```bash
+# Step 1: What's in the app's Info.plist?
+defaults read /Applications/Thadm.app/Contents/Info.plist CFBundleIdentifier
+# Expected: com.thadm.desktop
+
+# Step 2: What does the code signature say?
+codesign -dr - /Applications/Thadm.app
+# Expected: identifier "com.thadm.desktop"
+
+# Step 3: What does Launch Services have cached?
+/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -dump | grep "identifier:" | grep "com.thadm"
+# Expected: ONLY com.thadm.desktop entries
+
+# Step 4: What's in the TCC database?
+sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+  "SELECT service, client, auth_value FROM access WHERE client LIKE '%thadm%' ORDER BY client;"
+# Expected: kTCCServiceScreenCapture|com.thadm.desktop|2
+```
+
+### Dev vs Prod: Different Identity Paths
+
+```
+PRODUCTION (installed .app):
+  Info.plist → bundle ID → TCC key = "com.thadm.desktop"
+
+DEVELOPMENT (bare executable via `bun tauri dev`):
+  No Info.plist → no bundle ID → TCC key = ABSOLUTE PATH
+  e.g., "/Users/.../target/debug/thadm"
+
+These are COMPLETELY SEPARATE TCC entries.
+Dev having permission does NOT mean prod has it.
 ```
 
 ---
@@ -410,6 +478,185 @@ Reason 5: macOS Sequoia bypass dialog not approved
 
 ---
 
+## Launch Services Cache Poisoning (Root Cause Found 2026-02-20)
+
+This was the root cause of Screen Recording appearing "Denied" even after the user
+added Thadm in System Settings and toggled it ON.
+
+### What Happened
+
+```
+TIMELINE OF THE BUG:
+
+1. During rebrand, app was built multiple times with different bundle IDs
+   before the final ID was chosen.
+
+   Early builds:  com.thadm.app     (proposed in REBRAND_TICKETS.md)
+                  executable: screenpipe-app (old name)
+
+   Final build:   com.thadm.desktop  (actually committed)
+                  executable: thadm
+
+2. Each build was installed via DMG. Each DMG mount created a
+   Launch Services entry:
+
+   /Volumes/dmg.vqKERQ/Thadm.app  → identifier: com.thadm.app
+   /Volumes/dmg.fBM3eP/Thadm.app  → identifier: com.thadm.app
+   /Volumes/dmg.eMipiW/Thadm.app  → identifier: com.thadm.app
+   /Volumes/dmg.8ClHYz/Thadm.app  → identifier: com.thadm.app
+   /Volumes/dmg.WQ1Owl/Thadm.app  → identifier: com.thadm.app
+   /Volumes/dmg.VJQEPu/Thadm.app  → identifier: com.thadm.app
+   /Volumes/dmg.tm6bjT/Thadm.app  → identifier: com.thadm.app
+   (7 stale entries!)
+
+   These persisted even after the DMGs were unmounted.
+
+3. Current app at /Applications/Thadm.app has:
+   identifier: com.thadm.desktop  (correct)
+
+4. BUT when user adds "Thadm" in System Settings → Screen Recording,
+   macOS resolves the name through Launch Services:
+
+   System Settings: "Add Thadm"
+        │
+        ▼
+   Launch Services: "Which Thadm?"
+        │
+        ├─ /Volumes/dmg.vqKERQ/Thadm.app → com.thadm.app  ← 7 entries!
+        ├─ /Volumes/dmg.fBM3eP/Thadm.app → com.thadm.app
+        ├─ ...
+        └─ /Applications/Thadm.app       → com.thadm.desktop ← 1 entry
+        │
+        ▼
+   macOS picks com.thadm.app (majority wins? first match?)
+        │
+        ▼
+   TCC stores: kTCCServiceScreenCapture | com.thadm.app | 2 (allowed)
+        │
+        ▼
+   App runs as com.thadm.desktop
+   CGPreflightScreenCaptureAccess() looks up com.thadm.desktop
+   NOT FOUND in TCC → returns false → "Denied"
+```
+
+### The Evidence
+
+```
+TCC BEFORE fix:
+  kTCCServiceScreenCapture | com.thadm.app     | 2 (allowed)   ← WRONG ID
+  kTCCServiceScreenCapture | com.thadm.desktop  | (not found)   ← REAL ID MISSING
+  kTCCServiceAccessibility | com.thadm.desktop  | 2 (allowed)   ← correct
+
+Launch Services BEFORE fix (7 stale + 1 correct):
+  identifier: com.thadm.app      (from /Volumes/dmg.vqKERQ/Thadm.app)
+  identifier: com.thadm.app      (from /Volumes/dmg.fBM3eP/Thadm.app)
+  identifier: com.thadm.app      (from /Volumes/dmg.eMipiW/Thadm.app)
+  identifier: com.thadm.app      (from /Volumes/dmg.8ClHYz/Thadm.app)
+  identifier: com.thadm.app      (from /Volumes/dmg.WQ1Owl/Thadm.app)
+  identifier: com.thadm.app      (from /Volumes/dmg.VJQEPu/Thadm.app)
+  identifier: com.thadm.app      (from /Volumes/dmg.tm6bjT/Thadm.app)
+  identifier: com.thadm.desktop  (from /Applications/Thadm.app)
+
+System Settings → Screen Recording showed ONE "Thadm" entry
+with toggle ON — but it was mapped to com.thadm.app (stale).
+```
+
+### The Fix
+
+```bash
+# Step 1: Unregister all stale DMG entries
+lsregister -u /Volumes/dmg.vqKERQ/Thadm.app
+lsregister -u /Volumes/dmg.fBM3eP/Thadm.app
+lsregister -u /Volumes/dmg.eMipiW/Thadm.app
+lsregister -u /Volumes/dmg.8ClHYz/Thadm.app
+lsregister -u /Volumes/dmg.WQ1Owl/Thadm.app
+lsregister -u /Volumes/dmg.VJQEPu/Thadm.app
+lsregister -u /Volumes/dmg.tm6bjT/Thadm.app
+
+# (lsregister path:
+#  /System/Library/Frameworks/CoreServices.framework/Frameworks/
+#  LaunchServices.framework/Support/lsregister)
+
+# Step 2: Force re-register the current app
+lsregister -f /Applications/Thadm.app
+
+# Step 3: Verify — ONLY com.thadm.desktop should remain
+lsregister -dump | grep "identifier:" | grep "com.thadm"
+
+# Step 4: In System Settings → Screen Recording:
+#   - Remove "Thadm" (click "-")
+#   - Re-add /Applications/Thadm.app (click "+")
+
+# Step 5: Verify TCC has the correct bundle ID
+sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
+  "SELECT service, client, auth_value FROM access WHERE client LIKE '%thadm%';"
+# Should show: kTCCServiceScreenCapture|com.thadm.desktop|2
+```
+
+### After Fix
+
+```
+TCC AFTER fix:
+  kTCCServiceScreenCapture | com.thadm.desktop  | 2 (allowed)   ← CORRECT
+  kTCCServiceAccessibility | com.thadm.desktop  | 2 (allowed)   ← correct
+
+Launch Services AFTER fix:
+  identifier: com.thadm.desktop  (ALL entries are now correct)
+```
+
+### Key Takeaways
+
+```
+1. DMG installs create Launch Services entries that PERSIST after unmount.
+   Each install = one entry. They accumulate silently.
+
+2. Changing bundle ID between builds creates a poisoned cache.
+   Old entries outnumber the current one → System Settings resolves
+   to the wrong bundle ID.
+
+3. System Settings UI shows ONE "Thadm" entry regardless.
+   You can't tell from the UI that it's mapped to the wrong bundle ID.
+   Only a TCC database query reveals the mismatch.
+
+4. tccutil reset CANNOT fix this.
+   - tccutil said "Successfully reset" but didn't modify system-level TCC (SIP)
+   - Even if it worked, the stale Launch Services entries would
+     re-create the wrong TCC entry on next add
+
+5. The ONLY reliable fix is:
+   - Clean Launch Services (lsregister -u stale paths)
+   - Remove + re-add in System Settings
+   - Verify with TCC query
+
+6. PREVENTION: After changing a bundle ID, always run:
+   lsregister -dump | grep "identifier:" | grep "<app_name>"
+   to verify no stale entries exist.
+```
+
+### tccutil Limitations on macOS Sequoia
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│  tccutil behavior on Sequoia (15.x)                                  │
+│                                                                      │
+│  Permission        │ TCC Level    │ tccutil works? │ Verified?       │
+│  ──────────────────┼──────────────┼────────────────┼──────────────── │
+│  Microphone        │ User-level   │ YES            │ Tested ✓        │
+│  Screen Recording  │ System-level │ NO (SIP)       │ Tested ✓        │
+│  Accessibility     │ System-level │ Likely NO      │ Not tested      │
+│                                                                      │
+│  IMPORTANT: tccutil reports "Successfully reset" even when           │
+│  SIP blocks the actual modification. Always verify with a            │
+│  TCC database query after running tccutil.                           │
+│                                                                      │
+│  Direct sqlite3 writes are also blocked:                             │
+│    sudo sqlite3 TCC.db "DELETE..." → "attempt to write a readonly   │
+│    database" even with sudo. SIP protects the system TCC database.  │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
 ## The "Reset & Fix" Button Flow
 
 ### What it SHOULD do vs what it ACTUALLY does
@@ -434,25 +681,29 @@ WHAT THE BUTTON SHOULD DO:
 │ File: permissions.rs:219-280          │
 └───────────────────────────────────────┘
 
-WHAT THE BUTTON ACTUALLY DOES:
+WHAT THE BUTTON ACTUALLY DOES (after fix 2026-02-20):
 ┌───────────────────────────────────────┐
-│ 1. CGRequestScreenCaptureAccess()     │
-│    (show dialog, NO tccutil reset)    │
+│ 1. tccutil reset <service> <bundle>   │
+│ 2. Wait 500ms                         │
+│ 3. Re-request permission              │
 │                                       │
-│ That's it. No reset. No cleanup.      │
+│ Function: resetAndRequestPermission() │
+│ File: permissions.rs:219-280          │
 │                                       │
-│ Function: requestPermission()         │
-│ File: permissions.rs:43-78            │
+│ WORKS FOR: Microphone (user-level TCC)│
+│ DOES NOT WORK FOR: Screen Recording   │
+│   on Sequoia (system-level TCC,       │
+│   tccutil blocked by SIP)             │
 └───────────────────────────────────────┘
 
-WHY: permission-recovery/page.tsx:179 calls
-     commands.requestPermission("screenRecording")
-     instead of
-     commands.resetAndRequestPermission("screenRecording")
+WHAT IT USED TO DO (before fix):
+  permission-recovery/page.tsx:179 called
+  commands.requestPermission() (just shows dialog, no reset)
+  instead of commands.resetAndRequestPermission()
 
-This was changed in a previous session because
-resetAndRequestPermission wasn't in the generated
-TypeScript types. The fix broke the reset flow.
+FIX (2026-02-20):
+  1. Added TypeScript binding for resetAndRequestPermission in tauri.ts
+  2. Changed page.tsx:179 to call resetAndRequestPermission
 ```
 
 ### Additional bug in `resetAndRequestPermission`
@@ -693,11 +944,13 @@ Fix: Added useRef guard (isRestartingRef) so restart fires only ONCE.
 ### Bug: "Reset & Fix" doesn't actually reset
 
 ```
-Status: OPEN
-File:   permission-recovery/page.tsx:179
-Issue:  Calls requestPermission() instead of resetAndRequestPermission()
-        The tccutil reset step is skipped entirely.
-Impact: Stale TCC entries are never cleared.
+Status: FIXED (2026-02-20)
+File:   permission-recovery/page.tsx:179, lib/utils/tauri.ts
+Fix:    Added TypeScript binding for resetAndRequestPermission.
+        Changed page.tsx to call resetAndRequestPermission instead of requestPermission.
+        Now calls tccutil reset before re-requesting.
+Note:   Works for Microphone (user-level TCC).
+        Still does NOT work for Screen Recording on Sequoia (tccutil blocked by SIP).
 ```
 
 ### Bug: tccutil uses invalid identifier for sidecar
@@ -711,13 +964,18 @@ Issue:  tccutil reset ScreenCapture "thadm-recorder"
 Impact: Sidecar TCC entry is never actually reset.
 ```
 
-### Bug: tccutil may not work for Screen Recording on Sequoia
+### Bug: tccutil does NOT work for Screen Recording on Sequoia
 
 ```
-Status: UNVERIFIED
+Status: VERIFIED (2026-02-20)
 Issue:  Screen Recording is in SYSTEM-level TCC database.
-        tccutil may only modify USER-level database.
-Impact: Even with correct bundle ID, reset may silently fail.
+        tccutil only modifies USER-level database.
+        SIP blocks both tccutil and direct sqlite3 writes to system TCC.
+        tccutil reports "Successfully reset" but does NOTHING.
+Impact: "Reset & Fix" for Screen Recording is fundamentally broken on Sequoia.
+        The only fix is manual: clean Launch Services + remove/re-add in System Settings.
+Tested: tccutil reset ScreenCapture com.thadm.app → "Successfully reset"
+        but TCC entry remained unchanged. Confirmed with sqlite3 query.
 ```
 
 ### Gap: Main app gates on permission that sidecar needs
@@ -746,12 +1004,12 @@ Impact: Redundant work, confusing code flow.
 ### Gap: We never verified system-level TCC database
 
 ```
-Status: INVESTIGATION NEEDED
-Issue:  All TCC queries went to user-level database.
-        Screen Recording is in system-level database.
-Command to check:
-  sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
-    "SELECT client, auth_value FROM access WHERE service='kTCCServiceScreenCapture';"
+Status: RESOLVED (2026-02-20)
+Findings:
+  - System TCC had com.thadm.app (stale, from old DMG builds)
+  - com.thadm.desktop was MISSING from system TCC
+  - Root cause: Launch Services cache poisoning (see section above)
+  - After cleaning Launch Services + re-adding app: com.thadm.desktop|2 (allowed)
 ```
 
 ---
@@ -808,7 +1066,9 @@ tccutil reset ScreenCapture com.thadm.desktop
 
 ---
 
-## Files Changed (2026-02-19)
+## Files Changed
+
+### 2026-02-19
 
 | File | Change | Status |
 |------|--------|--------|
@@ -817,3 +1077,13 @@ tccutil reset ScreenCapture com.thadm.desktop
 | `sidecar.rs` | Added `[SPAWN_TRACE]`, `[STOP_TRACE]`, `[EVENT_TRACE]` logging | Done |
 | `server.rs` | Added `[SPAWN_TRACE]`, `[STOP_TRACE]` to HTTP endpoints | Done |
 | `build.sh` | Added `cd "$PROJECT_ROOT"` fix from previous session | Done |
+
+### 2026-02-20
+
+| File | Change | Status |
+|------|--------|--------|
+| `permission-recovery/page.tsx:179` | Changed `requestPermission` → `resetAndRequestPermission` | Done |
+| `lib/utils/tauri.ts` | Added missing `resetAndRequestPermission` TypeScript binding | Done |
+| `REBRAND_TICKETS.md` | Fixed stale `com.thadm.app` → `com.thadm.desktop` | Done |
+| Launch Services (system) | Removed 7 stale DMG entries via `lsregister -u` | Done |
+| TCC database (system) | `com.thadm.desktop` now registered for ScreenCapture | Done |
