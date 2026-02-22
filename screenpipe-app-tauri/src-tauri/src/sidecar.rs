@@ -413,6 +413,28 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
     println!("user: {:?}", user);
     println!("audio_chunk_duration: {}", audio_chunk_duration);
 
+    // Read license fields from LIVE store.bin (not frozen app.state)
+    let license = read_license_fields(app);
+    let read_only_mode = {
+        let is_licensed = license.license_key.is_some() && {
+            license.license_validated_at.as_ref().map_or(false, |v| {
+                chrono::DateTime::parse_from_rfc3339(v)
+                    .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
+                    .unwrap_or(false)
+            })
+        };
+        let trial_expired = license.first_seen_at.as_ref().map_or(false, |v| {
+            chrono::DateTime::parse_from_rfc3339(v)
+                .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() > 15)
+                .unwrap_or(false)
+        });
+        !is_licensed && trial_expired
+    };
+
+    if read_only_mode {
+        info!("[LICENSE] Trial expired, spawning sidecar in read-only mode");
+    }
+
     let port_str = port.to_string();
     let mut args = vec!["--port", port_str.as_str()];
     let fps_str = fps.to_string();
@@ -493,7 +515,7 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
         args.push("--use-pii-removal");
     }
 
-    if disable_audio {
+    if disable_audio || read_only_mode {
         args.push("--disable-audio");
     }
 
@@ -569,7 +591,7 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
     let disable_vision = store
         .disable_vision;
 
-    if disable_vision {
+    if disable_vision || read_only_mode {
         args.push("--disable-vision");
     }
 
