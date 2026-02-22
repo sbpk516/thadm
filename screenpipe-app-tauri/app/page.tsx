@@ -1,6 +1,7 @@
 "use client";
 
 import { getStore, useSettings } from "@/lib/hooks/use-settings";
+import { useLicenseStatus } from "@/lib/hooks/use-license-status";
 
 import React, { useEffect, useState, useRef } from "react";
 import NotificationHandler from "@/components/notification-handler";
@@ -11,6 +12,7 @@ import { BreakingChangesInstructionsDialog } from "@/components/breaking-changes
 import { useHealthCheck } from "@/lib/hooks/use-health-check";
 
 import { commands } from "@/lib/utils/tauri";
+import { open as openUrl } from "@tauri-apps/plugin-shell";
 import localforage from "localforage";
 import { LoginDialog } from "../components/login-dialog";
 import { ModelDownloadTracker } from "../components/model-download-tracker";
@@ -28,6 +30,7 @@ export default function Home() {
   const { onboardingData } = useOnboarding();
   const { isServerDown, isLoading: isHealthLoading } = useHealthCheck();
   const { isMac } = usePlatform();
+  const licenseStatus = useLicenseStatus();
   const [isRestarting, setIsRestarting] = useState(false);
   const isProcessingRef = useRef(false);
 
@@ -219,6 +222,17 @@ export default function Home() {
                   )}
                 </div>
               </div>
+            </div>
+          )}
+          {licenseStatus.status === "trial_expiring" && (
+            <div className="fixed bottom-0 left-0 right-0 bg-primary/10 border-t px-4 py-2 text-center text-sm z-50">
+              Trial ends in {licenseStatus.daysRemaining} days{" · "}
+              <button
+                onClick={() => openUrl("https://kalam-plus.com/thadm")}
+                className="text-primary hover:underline"
+              >
+                Buy Thadm
+              </button>
             </div>
           )}
         </>
