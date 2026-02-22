@@ -60,3 +60,9 @@ app.py
 __pycache__/
 
 screenpipe-app-tauri/src-tauri/.next/
+
+# Sidecar binaries (built by build.sh)
+screenpipe-app-tauri/src-tauri/thadm-recorder-*
+
+# Temporary working files
+tmp/
