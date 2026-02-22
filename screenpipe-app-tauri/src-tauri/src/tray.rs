@@ -133,7 +133,7 @@ fn create_dynamic_menu(
     // Check license/trial state from live store
     let license = read_license_fields(app);
     let read_only_mode = {
-        let is_licensed = license.license_key.is_some() && {
+        let is_licensed = license.license_key.as_ref().map_or(false, |k| !k.is_empty()) && {
             license.license_validated_at.as_ref().map_or(false, |v| {
                 chrono::DateTime::parse_from_rfc3339(v)
                     .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
@@ -362,7 +362,7 @@ async fn update_menu_if_needed(
     // Check license state so menu updates when trial expires or license activates
     let license = read_license_fields(app);
     let read_only_mode = {
-        let is_licensed = license.license_key.is_some() && {
+        let is_licensed = license.license_key.as_ref().map_or(false, |k| !k.is_empty()) && {
             license.license_validated_at.as_ref().map_or(false, |v| {
                 chrono::DateTime::parse_from_rfc3339(v)
                     .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)

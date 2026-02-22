@@ -77,6 +77,11 @@ export function useLicenseStatus(): LicenseStatus {
 			trialStart = new Date(settings.firstSeenAt);
 		}
 
+		if (isNaN(trialStart.getTime())) {
+			// Invalid date in firstSeenAt — don't lock the user out
+			return;
+		}
+
 		const ageDays = Math.floor(
 			(Date.now() - trialStart.getTime()) / 86400000
 		);

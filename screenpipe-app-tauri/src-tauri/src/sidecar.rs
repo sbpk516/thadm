@@ -416,7 +416,7 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
     // Read license fields from LIVE store.bin (not frozen app.state)
     let license = read_license_fields(app);
     let read_only_mode = {
-        let is_licensed = license.license_key.is_some() && {
+        let is_licensed = license.license_key.as_ref().map_or(false, |k| !k.is_empty()) && {
             license.license_validated_at.as_ref().map_or(false, |v| {
                 chrono::DateTime::parse_from_rfc3339(v)
                     .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
