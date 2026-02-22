@@ -224,9 +224,12 @@ export function AccountSection() {
             : result.error === "network"
               ? "Can't verify right now. Please check your internet connection."
               : "Invalid license key. Please check and try again.";
+        posthog.capture("license_validation_failed", { status: result.status, error: result.error });
         toast({ title: "activation failed", description: msg, variant: "destructive", duration: 5000 });
         return;
       }
+
+      posthog.capture("license_activated", { plan: result.plan });
 
       await updateSettings({
         licenseKey: licenseKeyInput.trim(),

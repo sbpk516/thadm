@@ -4,7 +4,7 @@ import { getStore, useSettings } from "@/lib/hooks/use-settings";
 import { useLicenseStatus } from "@/lib/hooks/use-license-status";
 import { validateLicense } from "@/lib/actions/validate-license";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import NotificationHandler from "@/components/notification-handler";
 import { useToast } from "@/components/ui/use-toast";
 import { useOnboarding } from "@/lib/hooks/use-onboarding";
@@ -25,6 +25,7 @@ import { RefreshCw, AlertTriangle, Loader2 } from "lucide-react";
 import { PermissionButtons } from "@/components/status/permission-buttons";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import SplashScreen from "@/components/splash-screen";
+import posthog from "posthog-js";
 
 export default function Home() {
   const { settings, updateSettings, loadUser, reloadStore, isSettingsLoaded, loadingError } = useSettings();
@@ -36,6 +37,19 @@ export default function Home() {
   const [isRestarting, setIsRestarting] = useState(false);
   const [isActivating, setIsActivating] = useState(false);
   const [keyInput, setKeyInput] = useState("");
+  const lastTrackedStatus = useRef<string | null>(null);
+
+  // Track trial/license status changes (fire once per transition)
+  useEffect(() => {
+    const s = licenseStatus.status;
+    if (s === "loading" || s === lastTrackedStatus.current) return;
+    lastTrackedStatus.current = s;
+    if (s === "trial_expiring") {
+      posthog.capture("trial_expiring", { days_remaining: licenseStatus.daysRemaining });
+    } else if (s === "expired") {
+      posthog.capture("trial_expired");
+    }
+  }, [licenseStatus.status, licenseStatus.daysRemaining]);
 
   // Load onboarding status on mount
   useEffect(() => {
@@ -146,9 +160,12 @@ export default function Home() {
             : result.error === "network"
               ? "Can't verify right now. Please check your internet connection."
               : "Invalid license key. Please check and try again.";
+        posthog.capture("license_validation_failed", { status: result.status, error: result.error });
         toast({ title: "activation failed", description: msg, variant: "destructive", duration: 5000 });
         return;
       }
+
+      posthog.capture("license_activated", { plan: result.plan });
 
       // Valid — save to settings (Rust reads live store.bin on next spawn)
       await updateSettings({

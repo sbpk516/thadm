@@ -312,6 +312,7 @@ function createSettingsStore() {
 		if (!settings.firstSeenAt) {
 			settings.firstSeenAt = new Date().toISOString();
 			needsUpdate = true;
+			posthog.capture("trial_started");
 		}
 		if (settings.licenseKey === undefined) {
 			settings.licenseKey = null;

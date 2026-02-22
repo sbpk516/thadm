@@ -23,6 +23,26 @@ pub struct LiveLicenseFields {
     pub first_seen_at: Option<String>,
 }
 
+impl LiveLicenseFields {
+    /// Returns `true` when trial has expired AND no valid license is present.
+    /// "Valid license" = non-empty key + validated within the last 7 days.
+    pub fn is_read_only_mode(&self) -> bool {
+        let is_licensed = self.license_key.as_ref().map_or(false, |k| !k.is_empty()) && {
+            self.license_validated_at.as_ref().map_or(false, |v| {
+                chrono::DateTime::parse_from_rfc3339(v)
+                    .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
+                    .unwrap_or(false)
+            })
+        };
+        let trial_expired = self.first_seen_at.as_ref().map_or(false, |v| {
+            chrono::DateTime::parse_from_rfc3339(v)
+                .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() > 15)
+                .unwrap_or(false)
+        });
+        !is_licensed && trial_expired
+    }
+}
+
 /// Read license fields from LIVE store.bin via the store plugin.
 /// This bypasses the frozen `app.state::<SettingsStore>()` which is cloned
 /// once at startup and never updated.
@@ -415,21 +435,7 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
 
     // Read license fields from LIVE store.bin (not frozen app.state)
     let license = read_license_fields(app);
-    let read_only_mode = {
-        let is_licensed = license.license_key.as_ref().map_or(false, |k| !k.is_empty()) && {
-            license.license_validated_at.as_ref().map_or(false, |v| {
-                chrono::DateTime::parse_from_rfc3339(v)
-                    .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
-                    .unwrap_or(false)
-            })
-        };
-        let trial_expired = license.first_seen_at.as_ref().map_or(false, |v| {
-            chrono::DateTime::parse_from_rfc3339(v)
-                .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() > 15)
-                .unwrap_or(false)
-        });
-        !is_licensed && trial_expired
-    };
+    let read_only_mode = license.is_read_only_mode();
 
     if read_only_mode {
         info!("[LICENSE] Trial expired, spawning sidecar in read-only mode");
