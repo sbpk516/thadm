@@ -99,11 +99,11 @@ fn create_dynamic_menu(
         .and_then(|v| v.as_str().map(String::from))
         .unwrap_or_else(|| default_shortcut.to_string());
 
-    // Show thadm
+    // Search History
     menu_builder = menu_builder.item(
         &MenuItemBuilder::with_id(
             "show",
-            format!("Show thadm               {}", format_shortcut(&show_shortcut)),
+            format!("Search History            {}", format_shortcut(&show_shortcut)),
         )
         .build(app)?,
     );

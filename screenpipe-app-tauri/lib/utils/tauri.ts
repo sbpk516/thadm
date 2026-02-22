@@ -11,10 +11,6 @@ async openPermissionSettings(permission: OSPermission) : Promise<void> {
 async requestPermission(permission: OSPermission) : Promise<void> {
     await TAURI_INVOKE("request_permission", { permission });
 },
-/**
- * Reset a permission using tccutil and re-request it.
- * Works for microphone (user-level TCC). Does not work for screen recording on Sequoia (system-level TCC).
- */
 async resetAndRequestPermission(permission: OSPermission) : Promise<void> {
     await TAURI_INVOKE("reset_and_request_permission", { permission });
 },

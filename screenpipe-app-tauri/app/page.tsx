@@ -162,9 +162,9 @@ export default function Home() {
                       <AlertTriangle className="w-8 h-8 text-destructive" />
                     </div>
                     <div>
-                      <h2 className="text-2xl font-bold">Server Not Active</h2>
+                      <h2 className="text-2xl font-bold">Can&apos;t Search Right Now</h2>
                       <p className="text-muted-foreground mt-2">
-                        The thadm server is not running. Start the server or check permissions to continue.
+                        The recorder needs to be running to search your history. Start recording to continue.
                       </p>
                     </div>
                   </div>
@@ -176,9 +176,9 @@ export default function Home() {
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div>
-                        <h3 className="font-semibold">Server Control</h3>
+                        <h3 className="font-semibold">Recorder</h3>
                         <p className="text-sm text-muted-foreground">
-                          Start or restart the thadm server
+                          Start the recorder to search your history
                         </p>
                       </div>
                       <Button
@@ -187,7 +187,7 @@ export default function Home() {
                         className="flex items-center gap-2"
                       >
                         <RefreshCw className={`h-4 w-4 ${isRestarting ? 'animate-spin' : ''}`} />
-                        {isRestarting ? "Starting..." : "Start Server"}
+                        {isRestarting ? "Starting..." : "Start Recording"}
                       </Button>
                     </div>
                   </div>

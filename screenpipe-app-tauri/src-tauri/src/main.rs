@@ -879,14 +879,14 @@ async fn main() {
             {
                 use tauri::menu::{MenuBuilder, SubmenuBuilder, PredefinedMenuItem, MenuItemBuilder};
 
-                let app_submenu = SubmenuBuilder::new(app, "screenpipe")
-                    .item(&PredefinedMenuItem::about(app, Some("About screenpipe"), None)?)
+                let app_submenu = SubmenuBuilder::new(app, "thadm")
+                    .item(&PredefinedMenuItem::about(app, Some("About thadm"), None)?)
                     .separator()
                     .item(&MenuItemBuilder::with_id("settings", "Settings...")
                         .accelerator("CmdOrCtrl+,")
                         .build(app)?)
                     .separator()
-                    .item(&PredefinedMenuItem::quit(app, Some("Quit screenpipe"))?)
+                    .item(&PredefinedMenuItem::quit(app, Some("Quit thadm"))?)
                     .build()?;
 
                 let edit_submenu = SubmenuBuilder::new(app, "Edit")

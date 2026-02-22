@@ -24,8 +24,8 @@ const ShortcutSection = () => {
         <ShortcutRow
           type="global"
           shortcut="showScreenpipeShortcut"
-          title="toggle thadm overlay"
-          description="global shortcut to show/hide the main interface"
+          title="search history"
+          description="global shortcut to show/hide the search interface"
           value={settings.showScreenpipeShortcut}
         />
 

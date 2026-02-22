@@ -27,22 +27,16 @@
 
 ## Issue 2: Menu Bar Icon Missing on Built-in Display
 
-**Status**: Not started
+**Status**: Diagnosed — macOS limitation, no code fix
 **Priority**: P1
 
-**Symptom**: When using the laptop alone (no external monitor), the Thadm menu bar icon does NOT appear. When an external monitor is connected, the icon appears on BOTH displays.
+**Root cause**: macOS notch menu bar overflow. With 14+ menu bar icons on a notched MacBook Pro (M4 Pro), macOS silently hides the lowest-priority NSStatusItems behind the notch. No API exists to control priority or detect overflow. When an external monitor is connected, the wider menu bar has enough space for all icons.
 
-**Questions to investigate**:
-- Is this a macOS tray icon positioning issue?
-- Is the icon being placed off-screen or behind the notch?
-- Does `LSUIElement=true` affect tray icon visibility?
-- Is this related to `ActivationPolicy::Accessory`?
-- Does the icon appear if the menu bar is full vs empty?
+**Confirmed**: 2026-02-21 — removing 5-6 third-party icons made Thadm icon appear immediately.
 
-**Files to check**:
-- `screenpipe-app-tauri/src-tauri/src/tray.rs` — tray icon setup
-- `screenpipe-app-tauri/src-tauri/tauri.conf.json` — tray config
-- `screenpipe-app-tauri/src-tauri/src/main.rs` — activation policy
+**Decision**: Accept the limitation. Do NOT add a dock icon as fallback — contradicts Thadm's design as an invisible background utility. Document the limitation in onboarding/README. Existing `Cmd+Ctrl+S` shortcut provides fallback access.
+
+**See**: `specs/SPEC-menu-bar-icon.md` for full investigation and decision log
 
 ---
 

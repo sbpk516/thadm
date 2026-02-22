@@ -268,10 +268,9 @@ export function AccountSection() {
         </div>
       </div>
 
-      {/* Cloud features info - only show for non-subscribers */}
+      {/* THADM-HIDDEN: cloud features (cloud ai + cloud transcription) — uncomment when cloud services are available
       {!settings.user?.cloud_subscribed && (
         <div className="space-y-4">
-          {/* AI tier */}
           <Card className="p-4 space-y-3 bg-secondary/5">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
@@ -294,7 +293,6 @@ export function AccountSection() {
             </div>
           </Card>
 
-          {/* Cloud transcription */}
           <Card className="p-4 space-y-3 bg-secondary/5">
             <div className="flex items-center gap-2">
               <Zap className="h-5 w-5 text-primary" />
@@ -321,7 +319,9 @@ export function AccountSection() {
           </Card>
         </div>
       )}
+      */}
 
+      {/* THADM-HIDDEN: subscription plans — uncomment when pricing is available
       <div className="space-y-8">
         <div className="space-y-6">
           <div className="grid gap-4">
@@ -357,11 +357,8 @@ export function AccountSection() {
             </div>
           </div>
         </div>
-
-
-
-
       </div>
+      */}
     </div>
   );
 }
