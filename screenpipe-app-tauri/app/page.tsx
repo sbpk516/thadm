@@ -2,8 +2,9 @@
 
 import { getStore, useSettings } from "@/lib/hooks/use-settings";
 import { useLicenseStatus } from "@/lib/hooks/use-license-status";
+import { validateLicense } from "@/lib/actions/validate-license";
 
-import React, { useEffect, useState, useRef } from "react";
+import React, { useEffect, useState } from "react";
 import NotificationHandler from "@/components/notification-handler";
 import { useToast } from "@/components/ui/use-toast";
 import { useOnboarding } from "@/lib/hooks/use-onboarding";
@@ -20,7 +21,7 @@ import Timeline from "@/components/rewind/timeline";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import { RefreshCw, AlertTriangle } from "lucide-react";
+import { RefreshCw, AlertTriangle, Loader2 } from "lucide-react";
 import { PermissionButtons } from "@/components/status/permission-buttons";
 import { usePlatform } from "@/lib/hooks/use-platform";
 import SplashScreen from "@/components/splash-screen";
@@ -33,8 +34,8 @@ export default function Home() {
   const { isMac } = usePlatform();
   const licenseStatus = useLicenseStatus();
   const [isRestarting, setIsRestarting] = useState(false);
+  const [isActivating, setIsActivating] = useState(false);
   const [keyInput, setKeyInput] = useState("");
-  const isProcessingRef = useRef(false);
 
   // Load onboarding status on mount
   useEffect(() => {
@@ -131,12 +132,53 @@ export default function Home() {
     }
   };
 
-  const handleActivate = () => {
-    toast({
-      title: "coming soon",
-      description: "license activation coming soon.",
-      duration: 3000,
-    });
+  const handleActivate = async () => {
+    if (!keyInput.trim()) return;
+    setIsActivating(true);
+    try {
+      const result = await validateLicense(keyInput);
+
+      if (!result.valid) {
+        setIsActivating(false);
+        const msg =
+          result.status === "expired"
+            ? "This license has expired. Please renew at kalam-plus.com/thadm."
+            : result.error === "network"
+              ? "Can't verify right now. Please check your internet connection."
+              : "Invalid license key. Please check and try again.";
+        toast({ title: "activation failed", description: msg, variant: "destructive", duration: 5000 });
+        return;
+      }
+
+      // Valid — save to settings (Rust reads live store.bin on next spawn)
+      await updateSettings({
+        licenseKey: keyInput.trim(),
+        licensePlan: result.plan,
+        licenseValidatedAt: new Date().toISOString(),
+      });
+
+      // Restart sidecar so Rust re-reads live store and spawns in full mode
+      await commands.stopScreenpipe();
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      await commands.spawnScreenpipe(null);
+
+      // Poll health check until sidecar is up (max 10s)
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline) {
+        try {
+          const res = await fetch("http://localhost:3030/health");
+          if (res.ok) break;
+        } catch { /* sidecar not ready yet */ }
+        await new Promise(resolve => setTimeout(resolve, 500));
+      }
+
+      toast({ title: "license activated", description: "Recording has resumed.", duration: 3000 });
+    } catch (error) {
+      console.error("license activation failed:", error);
+      toast({ title: "activation failed", description: "Something went wrong. Please try again.", variant: "destructive", duration: 5000 });
+    } finally {
+      setIsActivating(false);
+    }
   };
 
   return (
@@ -152,35 +194,42 @@ export default function Home() {
           <BreakingChangesInstructionsDialog />
           <LoginDialog />
           <ModelDownloadTracker />
-          {licenseStatus.status === "expired" && (
-            <div className="bg-destructive/5 border-b px-6 py-4 w-full">
-              <div className="max-w-2xl mx-auto space-y-3">
-                <div>
-                  <h3 className="font-medium">Your 15-day trial has ended</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Recording is paused. Search still works for your existing data.
-                  </p>
-                </div>
-                <div className="flex gap-2">
-                  <Input
-                    placeholder="THADM-XXXX-XXXX-XXXX-XXXX"
-                    value={keyInput}
-                    onChange={(e) => setKeyInput(e.target.value)}
-                  />
-                  <Button onClick={handleActivate}>Activate</Button>
-                </div>
-                <p className="text-sm">
-                  <button
-                    onClick={() => openUrl("https://kalam-plus.com/thadm")}
-                    className="text-primary hover:underline"
-                  >
-                    Buy Thadm — Annual $29/yr · Lifetime $49
-                  </button>
-                </p>
-              </div>
+          {isActivating ? (
+            <div className="flex items-center justify-center gap-2 py-8 w-full">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <span>Activating license...</span>
             </div>
-          )}
-          {!isServerDown ? (
+          ) : (
+            <>
+              {licenseStatus.status === "expired" && (
+                <div className="bg-destructive/5 border-b px-6 py-4 w-full">
+                  <div className="max-w-2xl mx-auto space-y-3">
+                    <div>
+                      <h3 className="font-medium">Your 15-day trial has ended</h3>
+                      <p className="text-sm text-muted-foreground">
+                        Recording is paused. Search still works for your existing data.
+                      </p>
+                    </div>
+                    <div className="flex gap-2">
+                      <Input
+                        placeholder="THADM-XXXX-XXXX-XXXX-XXXX"
+                        value={keyInput}
+                        onChange={(e) => setKeyInput(e.target.value)}
+                      />
+                      <Button onClick={handleActivate} disabled={!keyInput.trim() || isActivating}>Activate</Button>
+                    </div>
+                    <p className="text-sm">
+                      <button
+                        onClick={() => openUrl("https://kalam-plus.com/thadm")}
+                        className="text-primary hover:underline"
+                      >
+                        Buy Thadm — Annual $29/yr · Lifetime $49
+                      </button>
+                    </p>
+                  </div>
+                </div>
+              )}
+              {!isServerDown ? (
             <div className="w-full scrollbar-hide bg-background relative">
               {/* Show connecting overlay while health check is loading */}
               {isHealthLoading && (
@@ -261,6 +310,8 @@ export default function Home() {
                 </div>
               </div>
             </div>
+          )}
+            </>
           )}
           {licenseStatus.status === "trial_expiring" && (
             <div className="fixed bottom-0 left-0 right-0 bg-primary/10 border-t px-4 py-2 text-center text-sm z-50">
