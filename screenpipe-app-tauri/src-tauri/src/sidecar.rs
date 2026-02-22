@@ -13,6 +13,60 @@ use tracing::{debug, error, info, warn};
 
 pub struct SidecarState(pub Arc<tokio::sync::Mutex<Option<SidecarManager>>>);
 
+/// License-related fields read from LIVE store.bin (not frozen app.state).
+/// Must be read fresh each time because the frontend can update these
+/// at any point (e.g., during license activation).
+#[derive(Debug, Clone)]
+pub struct LiveLicenseFields {
+    pub license_key: Option<String>,
+    pub license_validated_at: Option<String>,
+    pub first_seen_at: Option<String>,
+}
+
+/// Read license fields from LIVE store.bin via the store plugin.
+/// This bypasses the frozen `app.state::<SettingsStore>()` which is cloned
+/// once at startup and never updated.
+///
+/// Settings are stored as a single JSON object under the "settings" key
+/// in store.bin (matching the frontend's `store.set("settings", {...})`).
+pub fn read_license_fields(app: &tauri::AppHandle) -> LiveLicenseFields {
+    let store = match get_store(app, None) {
+        Ok(s) => s,
+        Err(e) => {
+            warn!("[LICENSE] Failed to read live store.bin: {}, defaulting to no license", e);
+            return LiveLicenseFields {
+                license_key: None,
+                license_validated_at: None,
+                first_seen_at: None,
+            };
+        }
+    };
+
+    // All settings live under the "settings" key as a single JSON object
+    let settings = match store.get("settings") {
+        Some(v) => v,
+        None => {
+            debug!("[LICENSE] No 'settings' key in store.bin");
+            return LiveLicenseFields {
+                license_key: None,
+                license_validated_at: None,
+                first_seen_at: None,
+            };
+        }
+    };
+
+    // Field names match the camelCase convention used by all other settings
+    // fields in store.bin (e.g., "disableAudio", "devMode", etc.)
+    LiveLicenseFields {
+        license_key: settings.get("licenseKey")
+            .and_then(|v| v.as_str().map(String::from)),
+        license_validated_at: settings.get("licenseValidatedAt")
+            .and_then(|v| v.as_str().map(String::from)),
+        first_seen_at: settings.get("firstSeenAt")
+            .and_then(|v| v.as_str().map(String::from)),
+    }
+}
+
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UserCredits {
     #[serde(rename = "user.credits.amount")]

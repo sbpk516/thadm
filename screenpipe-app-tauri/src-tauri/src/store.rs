@@ -195,6 +195,14 @@ pub struct SettingsStore {
     /// Unique device ID for AI usage tracking (generated on first launch)
     #[serde(rename = "deviceId", default = "generate_device_id")]
     pub device_id: String,
+    #[serde(rename = "licenseKey", default)]
+    pub license_key: Option<String>,
+    #[serde(rename = "licenseValidatedAt", default)]
+    pub license_validated_at: Option<String>,
+    #[serde(rename = "licensePlan", default)]
+    pub license_plan: Option<String>,
+    #[serde(rename = "firstSeenAt", default)]
+    pub first_seen_at: Option<String>,
 }
 
 fn generate_device_id() -> String {
@@ -467,6 +475,10 @@ impl Default for SettingsStore {
             enable_realtime_vision: true,
             show_shortcut_overlay: true,
             device_id: uuid::Uuid::new_v4().to_string(),
+            license_key: None,
+            license_validated_at: None,
+            license_plan: None,
+            first_seen_at: None,
         }
     }
 }

@@ -82,6 +82,10 @@ export type Settings = SettingsStore & {
 	updateChannel?: UpdateChannel;
 	chatHistory?: ChatHistoryStore;
 	ignoredUrls?: string[];
+	licenseKey?: string | null;
+	licenseValidatedAt?: string | null;
+	licensePlan?: "annual" | "lifetime" | null;
+	firstSeenAt?: string | null;
 }
 
 export const DEFAULT_PROMPT = `Rules:
@@ -224,6 +228,10 @@ let DEFAULT_SETTINGS: Settings = {
 				activeConversationId: null,
 				historyEnabled: true,
 			},
+			licenseKey: null,
+			licenseValidatedAt: null,
+			licensePlan: null,
+			firstSeenAt: null,
 		};
 
 export function createDefaultSettingsObject(): Settings {
@@ -296,6 +304,25 @@ function createSettingsStore() {
 				activeConversationId: null,
 				historyEnabled: true,
 			};
+			needsUpdate = true;
+		}
+
+		// Migration: Add license fields for existing users upgrading
+		// firstSeenAt = now gives existing users a fresh 15-day trial from upgrade date
+		if (!settings.firstSeenAt) {
+			settings.firstSeenAt = new Date().toISOString();
+			needsUpdate = true;
+		}
+		if (settings.licenseKey === undefined) {
+			settings.licenseKey = null;
+			needsUpdate = true;
+		}
+		if (settings.licenseValidatedAt === undefined) {
+			settings.licenseValidatedAt = null;
+			needsUpdate = true;
+		}
+		if (settings.licensePlan === undefined) {
+			settings.licensePlan = null;
 			needsUpdate = true;
 		}
 
