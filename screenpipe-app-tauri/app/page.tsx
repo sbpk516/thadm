@@ -18,6 +18,7 @@ import { LoginDialog } from "../components/login-dialog";
 import { ModelDownloadTracker } from "../components/model-download-tracker";
 import Timeline from "@/components/rewind/timeline";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw, AlertTriangle } from "lucide-react";
 import { PermissionButtons } from "@/components/status/permission-buttons";
@@ -32,6 +33,7 @@ export default function Home() {
   const { isMac } = usePlatform();
   const licenseStatus = useLicenseStatus();
   const [isRestarting, setIsRestarting] = useState(false);
+  const [keyInput, setKeyInput] = useState("");
   const isProcessingRef = useRef(false);
 
   // Load onboarding status on mount
@@ -129,6 +131,14 @@ export default function Home() {
     }
   };
 
+  const handleActivate = () => {
+    toast({
+      title: "coming soon",
+      description: "license activation coming soon.",
+      duration: 3000,
+    });
+  };
+
   return (
     <div className="flex flex-col items-center flex-1 mx-auto relative scrollbar-hide">
       {/* Transparent titlebar area - no drag region to prevent accidental window moves */}
@@ -142,6 +152,34 @@ export default function Home() {
           <BreakingChangesInstructionsDialog />
           <LoginDialog />
           <ModelDownloadTracker />
+          {licenseStatus.status === "expired" && (
+            <div className="bg-destructive/5 border-b px-6 py-4 w-full">
+              <div className="max-w-2xl mx-auto space-y-3">
+                <div>
+                  <h3 className="font-medium">Your 15-day trial has ended</h3>
+                  <p className="text-sm text-muted-foreground">
+                    Recording is paused. Search still works for your existing data.
+                  </p>
+                </div>
+                <div className="flex gap-2">
+                  <Input
+                    placeholder="THADM-XXXX-XXXX-XXXX-XXXX"
+                    value={keyInput}
+                    onChange={(e) => setKeyInput(e.target.value)}
+                  />
+                  <Button onClick={handleActivate}>Activate</Button>
+                </div>
+                <p className="text-sm">
+                  <button
+                    onClick={() => openUrl("https://kalam-plus.com/thadm")}
+                    className="text-primary hover:underline"
+                  >
+                    Buy Thadm — Annual $29/yr · Lifetime $49
+                  </button>
+                </p>
+              </div>
+            </div>
+          )}
           {!isServerDown ? (
             <div className="w-full scrollbar-hide bg-background relative">
               {/* Show connecting overlay while health check is loading */}
