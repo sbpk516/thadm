@@ -1,6 +1,7 @@
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { useSettings } from "./use-settings";
 import { getStartDate } from "../actions/get-start-date";
+import { validateLicense } from "../actions/validate-license";
 
 export type LicenseStatus = {
 	status: "loading" | "trial" | "trial_expiring" | "expired" | "licensed";
@@ -26,14 +27,17 @@ function daysSince(isoString: string | null | undefined): number {
 }
 
 export function useLicenseStatus(): LicenseStatus {
-	const { settings } = useSettings();
+	const { settings, updateSettings } = useSettings();
 	const [status, setStatus] = useState<LicenseStatus>(LOADING_STATUS);
+	const revalidatingRef = useRef(false);
 
 	const check = useCallback(async () => {
-		// Step 1: Check license (cached validation only — online re-validation is Task 2.4)
+		// Step 1: Check license
 		if (settings.licenseKey) {
 			const cacheAge = daysSince(settings.licenseValidatedAt);
-			if (cacheAge < 7) {
+
+			// Fresh cache (< 24h) — trust it, no online check
+			if (cacheAge < 1) {
 				setStatus({
 					status: "licensed",
 					daysRemaining: null,
@@ -43,7 +47,61 @@ export function useLicenseStatus(): LicenseStatus {
 				});
 				return;
 			}
-			// Cache older than 7 days and no online re-validation yet → expired
+
+			// Cache 1-7 days old — show licensed, re-validate in background
+			if (cacheAge < 7) {
+				setStatus({
+					status: "licensed",
+					daysRemaining: null,
+					plan: (settings.licensePlan as "annual" | "lifetime") ?? null,
+					isRecordingAllowed: true,
+					isSearchAllowed: true,
+				});
+				// Background re-validation (non-blocking, skip if already running)
+				if (!revalidatingRef.current) {
+					revalidatingRef.current = true;
+					validateLicense(settings.licenseKey).then(async (result) => {
+						if (result.valid) {
+							await updateSettings({ licenseValidatedAt: new Date().toISOString() });
+						} else if (result.status === "expired") {
+							await updateSettings({ licenseKey: null, licenseValidatedAt: null, licensePlan: null });
+						}
+						// Network error with fresh-enough cache — do nothing, keep licensed
+					}).finally(() => { revalidatingRef.current = false; });
+				}
+				return;
+			}
+
+			// Cache >= 7 days — attempt online re-validation before declaring expired
+			if (revalidatingRef.current) {
+				// Another check() is already re-validating — don't flash expired
+				return;
+			}
+			revalidatingRef.current = true;
+			try {
+				const result = await validateLicense(settings.licenseKey);
+				if (result.valid) {
+					await updateSettings({ licenseValidatedAt: new Date().toISOString() });
+					setStatus({
+						status: "licensed",
+						daysRemaining: null,
+						plan: (settings.licensePlan as "annual" | "lifetime") ?? null,
+						isRecordingAllowed: true,
+						isSearchAllowed: true,
+					});
+					return;
+				}
+				if (result.status === "expired") {
+					await updateSettings({ licenseKey: null, licenseValidatedAt: null, licensePlan: null });
+				}
+				// License invalid or expired — fall through to expired
+			} catch {
+				// Network error — fall through to expired (cache too old)
+			} finally {
+				revalidatingRef.current = false;
+			}
+
+			// Cache stale + re-validation failed or license expired
 			setStatus({
 				status: "expired",
 				daysRemaining: 0,
@@ -111,7 +169,7 @@ export function useLicenseStatus(): LicenseStatus {
 				isSearchAllowed: true,
 			});
 		}
-	}, [settings.licenseKey, settings.licenseValidatedAt, settings.licensePlan, settings.firstSeenAt]);
+	}, [settings.licenseKey, settings.licenseValidatedAt, settings.licensePlan, settings.firstSeenAt, updateSettings]);
 
 	useEffect(() => {
 		check();
