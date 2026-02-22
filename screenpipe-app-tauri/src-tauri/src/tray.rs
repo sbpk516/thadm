@@ -1,6 +1,6 @@
 use crate::commands::show_main_window;
 use crate::health::{get_recording_status, RecordingStatus};
-use crate::sidecar::SidecarState;
+use crate::sidecar::{read_license_fields, SidecarState};
 use crate::store::{get_store, OnboardingStore};
 use crate::updates::is_source_build;
 use crate::window_api::ShowRewindWindow;
@@ -42,6 +42,7 @@ struct MenuState {
     shortcuts: HashMap<String, String>,
     recording_status: Option<RecordingStatus>,
     onboarding_completed: bool,
+    read_only_mode: bool,
 }
 
 pub fn setup_tray(app: &AppHandle, update_item: &tauri::menu::MenuItem<Wry>) -> Result<()> {
@@ -128,17 +129,41 @@ fn create_dynamic_menu(
         .get("devMode")
         .and_then(|v| v.as_bool())
         .unwrap_or(false);
+
+    // Check license/trial state from live store
+    let license = read_license_fields(app);
+    let read_only_mode = {
+        let is_licensed = license.license_key.is_some() && {
+            license.license_validated_at.as_ref().map_or(false, |v| {
+                chrono::DateTime::parse_from_rfc3339(v)
+                    .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
+                    .unwrap_or(false)
+            })
+        };
+        let trial_expired = license.first_seen_at.as_ref().map_or(false, |v| {
+            chrono::DateTime::parse_from_rfc3339(v)
+                .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() > 15)
+                .unwrap_or(false)
+        });
+        !is_licensed && trial_expired
+    };
+
     if !dev_mode {
         menu_builder = menu_builder
             .item(&PredefinedMenuItem::separator(app)?);
-        match recording_status {
-            RecordingStatus::Recording => {
-                menu_builder = menu_builder
-                    .item(&MenuItemBuilder::with_id("stop_recording", "Stop Recording").build(app)?);
-            }
-            _ => {
-                menu_builder = menu_builder
-                    .item(&MenuItemBuilder::with_id("start_recording", "Start Recording").build(app)?);
+        if read_only_mode {
+            menu_builder = menu_builder
+                .item(&MenuItemBuilder::with_id("trial_expired", "Trial Expired — Buy Thadm").build(app)?);
+        } else {
+            match recording_status {
+                RecordingStatus::Recording => {
+                    menu_builder = menu_builder
+                        .item(&MenuItemBuilder::with_id("stop_recording", "Stop Recording").build(app)?);
+                }
+                _ => {
+                    menu_builder = menu_builder
+                        .item(&MenuItemBuilder::with_id("start_recording", "Start Recording").build(app)?);
+                }
             }
         }
     }
@@ -241,6 +266,9 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
                 }
             });
         }
+        "trial_expired" => {
+            let _ = app_handle.opener().open_url("https://kalam-plus.com/thadm", None::<&str>);
+        }
         "update_now" => {
             // For source builds, show info dialog about updates
             if is_source_build(app_handle) {
@@ -331,10 +359,29 @@ async fn update_menu_if_needed(
         .map(|o| o.is_completed)
         .unwrap_or(false);
 
+    // Check license state so menu updates when trial expires or license activates
+    let license = read_license_fields(app);
+    let read_only_mode = {
+        let is_licensed = license.license_key.is_some() && {
+            license.license_validated_at.as_ref().map_or(false, |v| {
+                chrono::DateTime::parse_from_rfc3339(v)
+                    .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() < 7)
+                    .unwrap_or(false)
+            })
+        };
+        let trial_expired = license.first_seen_at.as_ref().map_or(false, |v| {
+            chrono::DateTime::parse_from_rfc3339(v)
+                .map(|dt| chrono::Utc::now().signed_duration_since(dt).num_days() > 15)
+                .unwrap_or(false)
+        });
+        !is_licensed && trial_expired
+    };
+
     let new_state = MenuState {
         shortcuts: get_current_shortcuts(app)?,
         recording_status: Some(get_recording_status()),
         onboarding_completed,
+        read_only_mode,
     };
 
     // Compare with last state
