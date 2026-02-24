@@ -33,6 +33,7 @@
       "icons/icon.ico",
       "icons/thadm-tray-failed.png"
     ],
+    "createUpdaterArtifacts": "v2Compatible",
     "resources": [
       "assets/*"
     ],
@@ -44,8 +45,11 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": [],
-      "pubkey": ""
+      "active": true,
+      "endpoints": [
+        "https://github.com/sbpk516/thadm/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBQ0NDQkQyQzU5RkE3QjUKUldTMXA1L0Ywc3ZNNm9DcUI3QlQ0b3hZd2NibU5jaDlKbHNwTzZubGV4Rm11eGd5MldTOVkzNEUK"
     },
     "deep-link": {
       "desktop": {

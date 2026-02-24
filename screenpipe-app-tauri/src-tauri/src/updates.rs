@@ -37,7 +37,7 @@ impl UpdatesManager {
         let menu_text = if is_source_build(app) {
             "auto-updates unavailable (source build)"
         } else {
-            "screenpipe is up to date"
+            "thadm is up to date"
         };
 
         Ok(Self {
@@ -92,7 +92,7 @@ impl UpdatesManager {
             {
                 self.update_menu_item.set_enabled(false)?;
                 self.update_menu_item
-                    .set_text("downloading latest version of screenpipe")?;
+                    .set_text("downloading latest version of thadm")?;
             }
 
             if let Some(tray) = self.app.tray_by_id("thadm_main") {
@@ -128,7 +128,7 @@ impl UpdatesManager {
                     .app
                     .dialog()
                     .message("update available")
-                    .title("screenpipe update")
+                    .title("thadm update")
                     .buttons(MessageDialogButtons::OkCancelCustom(
                         "update now".to_string(),
                         "later".to_string(),
@@ -144,7 +144,7 @@ impl UpdatesManager {
 
                         self.update_menu_item.set_enabled(false)?;
                         self.update_menu_item
-                            .set_text("downloading latest version of screenpipe")?;
+                            .set_text("downloading latest version of thadm")?;
 
                         if let Err(err) =
                             stop_screenpipe(self.app.state::<SidecarState>(), self.app.clone())
@@ -214,10 +214,10 @@ impl UpdatesManager {
         let clicked_download = rx.await?;
         if clicked_download {
             // Open download page
-            let _ = self.app.opener().open_url("https://screenpi.pe/download", None::<&str>);
+            let _ = self.app.opener().open_url("https://github.com/sbpk516/thadm/releases/latest", None::<&str>);
         } else {
             // Open GitHub releases
-            let _ = self.app.opener().open_url("https://github.com/mediar-ai/screenpipe/releases", None::<&str>);
+            let _ = self.app.opener().open_url("https://github.com/sbpk516/thadm/releases", None::<&str>);
         }
 
         Ok(())

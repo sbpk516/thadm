@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "screenpipe",
-  "identifier": "screenpi.pe",
+  "productName": "Thadm",
+  "identifier": "com.thadm.desktop",
   "build": {
     "beforeDevCommand": "bun run dev",
     "beforeBuildCommand": "bun run build",
@@ -9,11 +9,11 @@
     "devUrl": "http://localhost:3000"
   },
   "bundle": {
-    "createUpdaterArtifacts": true,
+    "createUpdaterArtifacts": "v2Compatible",
     "active": true,
     "category": "DeveloperTool",
-    "shortDescription": "24/7 memory for your desktop",
-    "longDescription": "24/7 memory for your desktop. 100% local. You own your data.",
+    "shortDescription": "Your personal memory assistant",
+    "longDescription": "Automatic, searchable memory for your desktop. Never forget what you were working on. 100% local.",
     "copyright": "",
     "targets": [
       "app",
@@ -38,22 +38,22 @@
       "assets/*"
     ],
     "macOS": {
+      "signingIdentity": "Developer ID Application: Balaji Sachidanandam (KVLNE2Y696)",
       "entitlements": "entitlements.plist"
     }
   },
   "plugins": {
     "updater": {
       "active": true,
-      "dialog": true,
       "endpoints": [
-        "https://cdn.crabnebula.app/update/mediar/screenpipe/{{target}}-{{arch}}/{{current_version}}"
+        "https://github.com/sbpk516/thadm/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIyQjQ2RkQzMUNBOUFDMTcKUldRWHJLa2MwMiswSWl3RlBGUW5zYUE0Zm0vNFFRRTltNUZZTUVxR2FxUDNtSWdUSHgyL3JNcmcK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBQ0NDQkQyQzU5RkE3QjUKUldTMXA1L0Ywc3ZNNm9DcUI3QlQ0b3hZd2NibU5jaDlKbHNwTzZubGV4Rm11eGd5MldTOVkzNEUK"
     },
     "deep-link": {
       "desktop": {
         "schemes": [
-          "screenpipe"
+          "thadm"
         ]
       },
       "mobile": [

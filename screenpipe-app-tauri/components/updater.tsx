@@ -2,39 +2,21 @@ import { check } from "@tauri-apps/plugin-updater";
 import { ask, message } from "@tauri-apps/plugin-dialog";
 import { relaunch } from "@tauri-apps/plugin-process";
 import { invoke } from "@tauri-apps/api/core";
-import { platform, arch } from "@tauri-apps/plugin-os";
-import type { UpdateChannel } from "@/lib/hooks/use-settings";
-
-const UPDATE_ENDPOINTS = {
-  stable: "https://cdn.crabnebula.app/update/mediar/screenpipe",
-  beta: "https://cdn.crabnebula.app/update/mediar/screenpipe-beta",
-} as const;
+import { platform } from "@tauri-apps/plugin-os";
 
 export async function checkForAppUpdates({
   toast,
-  channel = "stable"
 }: {
   toast: any;
-  channel?: UpdateChannel;
 }) {
   const os = platform();
-  const cpuArch = arch();
 
-  // Build the endpoint URL for the selected channel
-  const baseEndpoint = UPDATE_ENDPOINTS[channel];
-  const target = os === "macos" ? "darwin" : os;
-  const endpoint = `${baseEndpoint}/${target}-${cpuArch}/{{current_version}}`;
-
-  // @ts-ignore - endpoints option may not be in type definitions but is supported
-  const update = await check({
-    endpoints: [endpoint],
-  } as any);
+  const update = await check();
 
   if (update?.available) {
-    const channelLabel = channel === "beta" ? " (Beta)" : "";
     const yes = await ask(
       `
-Update to ${update.version}${channelLabel} is available!
+Update to ${update.version} is available!
 Release notes: ${update.body}
         `,
       {
@@ -46,14 +28,13 @@ Release notes: ${update.body}
     );
 
     if (yes) {
-      // on windows only - TODO shouldnt be necessary
       if (os === "windows") {
         await invoke("stop_screenpipe");
       }
 
       const toastId = toast({
         title: "Updating...",
-        description: `Downloading and installing ${channel} update`,
+        description: "Downloading and installing update",
         duration: Infinity,
       });
 
