@@ -33,7 +33,7 @@
       "icons/icon.ico",
       "icons/thadm-tray-failed.png"
     ],
-    "createUpdaterArtifacts": "v2Compatible",
+    "createUpdaterArtifacts": true,
     "resources": [
       "assets/*"
     ],

@@ -9,7 +9,7 @@
     "devUrl": "http://localhost:3000"
   },
   "bundle": {
-    "createUpdaterArtifacts": "v2Compatible",
+    "createUpdaterArtifacts": true,
     "active": true,
     "category": "DeveloperTool",
     "shortDescription": "Your personal memory assistant",

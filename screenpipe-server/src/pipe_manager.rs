@@ -1,5 +1,5 @@
 use anyhow::Result;
-use screenpipe_core::{constants::DATA_DIR_NAME, download_pipe, download_pipe_private, PipeState};
+use screenpipe_core::{download_pipe, download_pipe_private, PipeState};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::HashMap;
