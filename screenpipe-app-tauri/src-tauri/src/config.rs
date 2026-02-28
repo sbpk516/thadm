@@ -7,7 +7,7 @@ pub fn get_base_dir(
 ) -> anyhow::Result<PathBuf> {
     let default_path = app.path().local_data_dir()
         .map_err(|e| anyhow::anyhow!("Could not get local data directory: {}", e))?
-        .join("screenpipe");
+        .join(crate::constants::APP_SUPPORT_DIR_NAME);
 
     let local_data_dir = custom_path.map(PathBuf::from).unwrap_or(default_path);
 

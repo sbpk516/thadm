@@ -180,7 +180,7 @@ pub struct Cli {
     #[arg(short = 'r', long)]
     pub realtime_audio_device: Vec<String>,
 
-    /// Data directory. Default to $HOME/.screenpipe
+    /// Data directory. Default to $HOME/.screenpipe (see constants::DATA_DIR_NAME)
     #[arg(long, value_hint = ValueHint::DirPath)]
     pub data_dir: Option<String>,
 
@@ -349,7 +349,7 @@ pub enum Command {
     Add {
         /// Path to folder containing video files
         path: String,
-        /// Data directory. Default to $HOME/.screenpipe
+        /// Data directory. Default to $HOME/.screenpipe (see constants::DATA_DIR_NAME)
         #[arg(long, value_hint = ValueHint::DirPath)]
         data_dir: Option<String>,
         /// Output format
@@ -379,7 +379,7 @@ pub enum Command {
         /// The name of the migration to run
         #[arg(long, default_value = "ocr_text_to_frames")]
         migration_name: String,
-        /// Data directory. Default to $HOME/.screenpipe
+        /// Data directory. Default to $HOME/.screenpipe (see constants::DATA_DIR_NAME)
         #[arg(long, value_hint = ValueHint::DirPath)]
         data_dir: Option<String>,
         /// The subcommand for data migration
@@ -535,7 +535,7 @@ pub enum PipeCommand {
 pub enum McpCommand {
     /// Setup MCP server configuration
     Setup {
-        /// Directory to save MCP files (default: $HOME/.screenpipe/mcp)
+        /// Directory to save MCP files (default: $HOME/.screenpipe/mcp, see constants::DATA_DIR_NAME)
         #[arg(long, value_hint = ValueHint::DirPath)]
         directory: Option<String>,
         /// Output format

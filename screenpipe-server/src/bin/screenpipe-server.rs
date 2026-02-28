@@ -12,6 +12,7 @@ use screenpipe_audio::{
         default_input_device, default_output_device, list_audio_devices, parse_audio_device,
     },
 };
+use screenpipe_core::constants::DATA_DIR_NAME;
 use screenpipe_core::find_ffmpeg_path;
 use screenpipe_db::{
     create_migration_worker, DatabaseManager, MigrationCommand, MigrationConfig, MigrationStatus,
@@ -134,7 +135,7 @@ struct GitHubContent {
 fn get_base_dir(custom_path: &Option<String>) -> anyhow::Result<PathBuf> {
     let default_path = home_dir()
         .ok_or_else(|| anyhow::anyhow!("failed to get home directory"))?
-        .join(".screenpipe");
+        .join(DATA_DIR_NAME);
 
     let base_dir = custom_path
         .as_ref()

@@ -59,6 +59,7 @@ pub use icons::*;
 pub use store::get_store;
 
 mod config;
+mod constants;
 pub use config::get_base_dir;
 
 pub use commands::set_tray_health_icon;
@@ -420,7 +421,7 @@ fn get_data_dir(app: &tauri::AppHandle) -> anyhow::Result<PathBuf> {
 
     let store = get_store(app, None)?;
 
-    let default_path = app.path().home_dir().unwrap().join(".screenpipe");
+    let default_path = app.path().home_dir().unwrap().join(constants::DATA_DIR_NAME);
 
     let data_dir = store
         .get("dataDir")
@@ -435,7 +436,7 @@ fn get_data_dir(app: &tauri::AppHandle) -> anyhow::Result<PathBuf> {
 }
 
 fn get_screenpipe_data_dir(app: &tauri::AppHandle) -> anyhow::Result<PathBuf> {
-    let default_path = app.path().home_dir().unwrap().join(".screenpipe");
+    let default_path = app.path().home_dir().unwrap().join(constants::DATA_DIR_NAME);
     Ok(default_path)
 }
 
@@ -662,7 +663,7 @@ async fn main() {
 
     // Check if telemetry is disabled via store setting (analyticsEnabled)
     let telemetry_disabled = dirs::data_local_dir()
-        .map(|dir| dir.join("screenpipe").join("store.bin"))
+        .map(|dir| dir.join(constants::APP_SUPPORT_DIR_NAME).join("store.bin"))
         .and_then(|path| std::fs::read_to_string(&path).ok())
         .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok())
         .and_then(|data| data.get("analyticsEnabled").and_then(|v| v.as_bool()))
@@ -923,7 +924,7 @@ async fn main() {
                     eprintln!("Failed to get base dir, using fallback: {}", e);
                     dirs::home_dir()
                         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                        .join(".screenpipe")
+                        .join(constants::DATA_DIR_NAME)
                 });
 
             // Set up rolling file appender
@@ -931,7 +932,7 @@ async fn main() {
                 .unwrap_or_else(|_| {
                     dirs::home_dir()
                         .unwrap_or_else(|| std::path::PathBuf::from("/tmp"))
-                        .join(".screenpipe")
+                        .join(constants::DATA_DIR_NAME)
                 });
             let file_appender = RollingFileAppender::builder()
                 .rotation(Rotation::DAILY)

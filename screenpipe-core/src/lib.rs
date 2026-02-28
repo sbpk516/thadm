@@ -20,6 +20,7 @@ pub use mistral::*;
 pub mod llama;
 #[cfg(feature = "llm")]
 pub use llama::*;
+pub mod constants;
 pub mod pipes;
 pub use pipes::*;
 mod language;

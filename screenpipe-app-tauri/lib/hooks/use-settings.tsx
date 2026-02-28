@@ -7,6 +7,7 @@ import posthog from "posthog-js";
 import localforage from "localforage";
 import { User } from "../utils/tauri";
 import { SettingsStore } from "../utils/tauri";
+import { DATA_DIR_NAME } from "../constants";
 export type VadSensitivity = "low" | "medium" | "high";
 
 export type AIProviderType =
@@ -466,7 +467,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 		)
 			return settings.dataDir;
 
-		return `${homeDirPath}/.screenpipe`;
+		return `${homeDirPath}/${DATA_DIR_NAME}`;
 	};
 
 	const loadUser = async (token: string, forceReload = false) => {

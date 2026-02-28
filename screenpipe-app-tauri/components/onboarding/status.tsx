@@ -9,6 +9,7 @@ import { useSettings, DEFAULT_PROMPT } from "@/lib/hooks/use-settings";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { homeDir, join } from "@tauri-apps/api/path";
+import { DATA_DIR_NAME } from "@/lib/constants";
 import { TimelineAIDemo } from "./timeline-ai-demo";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { getVersion } from "@tauri-apps/api/app";
@@ -334,7 +335,7 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
   const openLogsFolder = async () => {
     try {
       const home = await homeDir();
-      const screenpipeDir = await join(home, ".screenpipe");
+      const screenpipeDir = await join(home, DATA_DIR_NAME);
       await revealItemInDir(screenpipeDir);
     } catch (error) {
       console.error("Failed to open logs folder:", error);

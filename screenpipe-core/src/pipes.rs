@@ -1042,7 +1042,7 @@ fn download_github_folder(
                 manager: CACacheManager {
                     path: home_dir()
                         .unwrap()
-                        .join(".screenpipe")
+                        .join(crate::constants::DATA_DIR_NAME)
                         .join(".http-cacache"),
                 },
                 options: HttpCacheOptions::default(),

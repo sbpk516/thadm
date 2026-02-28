@@ -268,7 +268,7 @@ pub async fn get_disk_usage(
     force_refresh: Option<bool>,
 ) -> Result<serde_json::Value, String> {
     let screenpipe_dir_path = get_data_dir(&app_handle)
-        .unwrap_or_else(|_| dirs::home_dir().unwrap().join(".screenpipe"));
+        .unwrap_or_else(|_| dirs::home_dir().unwrap().join(crate::constants::DATA_DIR_NAME));
     match crate::disk_usage::disk_usage(&screenpipe_dir_path, force_refresh.unwrap_or(false)).await {
         Ok(Some(disk_usage)) => match serde_json::to_value(&disk_usage) {
             Ok(json_value) => Ok(json_value),
