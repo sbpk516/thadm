@@ -19,7 +19,7 @@ async fn setup_test_env() -> Result<Arc<DatabaseManager>> {
         DatabaseManager::new(
             home_dir()
                 .unwrap()
-                .join(".screenpipe")
+                .join(".thadm")
                 .join("db.sqlite")
                 .to_str()
                 .unwrap(),

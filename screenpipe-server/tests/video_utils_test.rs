@@ -20,7 +20,7 @@ async fn setup_test_env() -> Result<()> {
 async fn create_test_video() -> Result<PathBuf> {
     let screenpipe_dir = dirs::home_dir()
         .expect("couldn't find home dir")
-        .join(".screenpipe")
+        .join(".thadm")
         .join("data");
 
     info!("looking for monitor video in {}", screenpipe_dir.display());

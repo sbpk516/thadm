@@ -15,7 +15,7 @@ async fn setup_test_env() -> Result<(FrameCache, Arc<DatabaseManager>)> {
 
     let screenpipe_dir = home_dir()
         .expect("couldn't find home dir")
-        .join(".screenpipe")
+        .join(".thadm")
         .join("data");
 
     debug!("using real screenpipe data dir: {:?}", screenpipe_dir);
@@ -24,7 +24,7 @@ async fn setup_test_env() -> Result<(FrameCache, Arc<DatabaseManager>)> {
         DatabaseManager::new(
             home_dir()
                 .unwrap()
-                .join(".screenpipe")
+                .join(".thadm")
                 .join("db.sqlite")
                 .to_str()
                 .unwrap(),

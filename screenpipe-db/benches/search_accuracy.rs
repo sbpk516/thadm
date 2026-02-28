@@ -11,7 +11,7 @@ use std::collections::HashSet;
 use std::time::Duration;
 use tokio::runtime::Runtime;
 
-const DB_PATH: &str = "~/.screenpipe/db.sqlite";
+const DB_PATH: &str = "~/.thadm/db.sqlite";
 
 /// Split camelCase and number boundaries for better tokenization
 /// "ActivityPerformance" -> "Activity Performance"

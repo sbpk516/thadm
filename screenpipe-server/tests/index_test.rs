@@ -26,10 +26,10 @@ async fn setup_test_db() -> Result<(tempfile::TempDir, Arc<DatabaseManager>)> {
 }
 
 async fn copy_test_video(temp_dir: &Path) -> Result<PathBuf> {
-    // Find a small video file from .screenpipe
+    // Find a small video file from .thadm
     let screenpipe_dir = home_dir()
         .expect("couldn't find home dir")
-        .join(".screenpipe")
+        .join(".thadm")
         .join("data");
 
     let mut entries = fs::read_dir(&screenpipe_dir).await?;

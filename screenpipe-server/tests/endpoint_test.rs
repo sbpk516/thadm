@@ -719,7 +719,7 @@ mod tests {
     async fn test_recent_tasks_no_bleeding_production_db() {
         // Get home directory safely
         let home = std::env::var("HOME").expect("HOME environment variable not set");
-        let db_path = format!("{}/.screenpipe/db.sqlite", home);
+        let db_path = format!("{}/.thadm/db.sqlite", home);
 
         // Open database in read-only mode for safety
         let db = Arc::new(
