@@ -11,14 +11,14 @@ Pull relevant screen history for a specific topic, project, or task.
 ## Database Location
 
 ```
-~/.screenpipe/db.sqlite
+~/.thadm/db.sqlite
 ```
 
 ## Query Patterns
 
 ```bash
 # Search for topic across all time
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT
     date(f.timestamp) as day,
     o.app_name,
@@ -32,7 +32,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Get window titles related to topic
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT DISTINCT
     o.app_name,
     o.window_name,
@@ -45,7 +45,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Timeline of when topic was worked on
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT
     date(f.timestamp) as day,
     COUNT(*) as frames,
@@ -59,7 +59,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Extract code snippets related to topic
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, substr(o.text, 1, 500)
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id

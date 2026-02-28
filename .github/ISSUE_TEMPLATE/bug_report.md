@@ -17,6 +17,6 @@ brief description of the bug.
 **additional context**
 add any other context, screenshots, or error logs here.
 
-- you can find logs in `~/.screenpipe` on macOS/Linux, and `%APPDATA%\.screenpipe` on Windows.
+- you can find logs in `~/.thadm` on macOS/Linux, and `%APPDATA%\.thadm` on Windows.
 - you can get app logs by right clicking in the app background and clicking the console tab.
 

@@ -16,10 +16,10 @@ bunx @screenpipe/sync
 bunx @screenpipe/sync --output ~/Documents/brain/context --git
 
 # Sync raw SQLite database to remote (full history!)
-bunx @screenpipe/sync --db --remote user@host:~/.screenpipe/
+bunx @screenpipe/sync --db --remote user@host:~/.thadm/
 
 # Full sync: DB + daily summary
-bunx @screenpipe/sync --db -r clawdbot:~/.screenpipe && bunx @screenpipe/sync -o ~/context -g
+bunx @screenpipe/sync --db -r clawdbot:~/.thadm && bunx @screenpipe/sync -o ~/context -g
 ```
 
 ## What It Extracts
@@ -124,13 +124,13 @@ bunx @screenpipe/sync --hours 168 --json > week.json
 5. **Sync** - Optionally git pushes or SCPs to remote
 
 ### DB Sync Mode (`--db`)
-1. **Copy** - Copies `~/.screenpipe/db.sqlite` (your full history)
+1. **Copy** - Copies `~/.thadm/db.sqlite` (your full history)
 2. **Sync** - Uses rsync/scp to transfer to remote
 3. **Query** - Remote can query SQLite directly
 
 ```bash
 # On remote, query your full history:
-sqlite3 ~/.screenpipe/db.sqlite "SELECT text FROM ocr_text WHERE text LIKE '%meeting%' LIMIT 10;"
+sqlite3 ~/.thadm/db.sqlite "SELECT text FROM ocr_text WHERE text LIKE '%meeting%' LIMIT 10;"
 ```
 
 ## Requirements

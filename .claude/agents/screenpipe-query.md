@@ -46,7 +46,7 @@ which screenpipe || where screenpipe
 screenpipe query "SELECT * FROM ocr_text LIMIT 10"
 
 # Or query the database directly with sqlite3
-sqlite3 ~/.screenpipe/db.sqlite "SELECT * FROM ocr_text ORDER BY frame_id DESC LIMIT 10"
+sqlite3 ~/.thadm/db.sqlite "SELECT * FROM ocr_text ORDER BY frame_id DESC LIMIT 10"
 ```
 
 ## Database Schema Reference

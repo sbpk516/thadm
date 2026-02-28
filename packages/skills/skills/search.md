@@ -11,14 +11,14 @@ Full-text search across all screen recordings using SQLite FTS5.
 ## Database Location
 
 ```
-~/.screenpipe/db.sqlite
+~/.thadm/db.sqlite
 ```
 
 ## Query Patterns
 
 ```bash
 # Full-text search (FTS5)
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, o.app_name, o.window_name, snippet(ocr_text_fts, 1, '>>>', '<<<', '...', 30) as match
   FROM ocr_text_fts
   JOIN ocr_text o ON ocr_text_fts.frame_id = o.frame_id
@@ -29,7 +29,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Search with multiple terms
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, o.app_name, substr(o.text, 1, 300)
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -39,7 +39,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Search in specific app
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, o.window_name, substr(o.text, 1, 200)
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -49,7 +49,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Count occurrences by day
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT date(f.timestamp) as day, COUNT(*) as mentions
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id

@@ -52,4 +52,4 @@ log "Checking for crashes and expected behavior"
 .github/scripts/check_logs.sh
 
 log "Checking final storage usage"
-du -ha ~/.screenpipe/data
+du -ha ~/.thadm/data

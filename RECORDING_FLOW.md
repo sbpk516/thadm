@@ -472,7 +472,7 @@ SettingsStore → CLI Arguments Conversion:
   │  ocr_engine                 │  --ocr-engine        │  apple-native      │
   │  audio_transcription_engine │  --audio-transcription-engine │ whisper.. │
   │  use_pii_removal            │  --use-pii-removal   │  (flag)            │
-  │  data_dir                   │  --data-dir          │  ~/.screenpipe     │
+  │  data_dir                   │  --data-dir          │  ~/.thadm          │
   │  languages[]                │  --language          │  english, spanish  │
   │  vad_sensitivity            │  --vad-sensitivity   │  high              │
   │  ...                        │  ...                 │  ...               │
@@ -671,7 +671,7 @@ Spawn and Log Forwarding:
   │                                                                          │
   │                           ┌──────────────────┐                          │
   │                           │  SQLite Database │                          │
-  │                           │  ~/.screenpipe/  │                          │
+  │                           │  ~/.thadm/       │                          │
   │                           │  db.sqlite       │                          │
   │                           └──────────────────┘                          │
   └─────────────────────────────────────────────────────────────────────────┘

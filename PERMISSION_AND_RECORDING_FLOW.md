@@ -1020,7 +1020,7 @@ Findings:
 
 ```bash
 # Look at the latest permission check results in the log:
-grep "PERM_CHECK" ~/.screenpipe/thadm.$(date +%Y-%m-%d).log | tail -5
+grep "PERM_CHECK" ~/.thadm/thadm.$(date +%Y-%m-%d).log | tail -5
 ```
 
 ### Step 2: Check the SYSTEM TCC database (requires sudo)
@@ -1039,10 +1039,10 @@ sudo sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" \
 ```bash
 # Spawn/stop trace:
 grep -E '\[SPAWN_TRACE\]|\[STOP_TRACE\]|\[EVENT_TRACE\]' \
-  ~/.screenpipe/thadm.$(date +%Y-%m-%d).log | tail -20
+  ~/.thadm/thadm.$(date +%Y-%m-%d).log | tail -20
 
 # Permission monitor:
-grep 'PERM_MONITOR' ~/.screenpipe/thadm.$(date +%Y-%m-%d).log | tail -10
+grep 'PERM_MONITOR' ~/.thadm/thadm.$(date +%Y-%m-%d).log | tail -10
 ```
 
 ### Step 4: Manually test the sidecar

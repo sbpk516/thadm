@@ -11,14 +11,14 @@ Generate summaries of screen activity from the SQLite database.
 ## Database Location
 
 ```
-~/.screenpipe/db.sqlite
+~/.thadm/db.sqlite
 ```
 
 ## Query Patterns
 
 ```bash
 # App usage breakdown for today
-sqlite3 -header -column ~/.screenpipe/db.sqlite "
+sqlite3 -header -column ~/.thadm/db.sqlite "
   SELECT
     o.app_name,
     COUNT(*) as frames,
@@ -32,7 +32,7 @@ sqlite3 -header -column ~/.screenpipe/db.sqlite "
 "
 
 # Timeline of app switches
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT
     strftime('%H:%M', f.timestamp) as time,
     o.app_name,
@@ -45,7 +45,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Sample of content from each app today
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT o.app_name, substr(o.text, 1, 200) as sample
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -55,7 +55,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # First and last activity
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT
     MIN(f.timestamp) as first_activity,
     MAX(f.timestamp) as last_activity

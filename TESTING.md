@@ -249,8 +249,8 @@ report any failures or unexpected behavior to https://github.com/mediar-ai/scree
 - **database errors**: check disk space, verify file permissions
 
 ### log locations
-- macos: ~/.screenpipe
-- windows: %USERPROFILE%\.screenpipe
-- linux: ~/.screenpipe
+- macos: ~/.thadm
+- windows: %USERPROFILE%\.thadm
+- linux: ~/.thadm
 
 

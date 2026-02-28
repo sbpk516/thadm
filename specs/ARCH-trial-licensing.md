@@ -146,7 +146,7 @@ read-only mode. This takes ~5 seconds and happens once.
 ## 4. Data Flow Diagram
 
 ```
-store.bin                    SQLite DB (~/.screenpipe/db.sqlite)
+store.bin                    SQLite DB (~/.thadm/db.sqlite)
 ┌───────────────────┐        ┌──────────────────────────┐
 │ first_seen_at     │        │ frames.timestamp (MIN)   │
 │ license_key       │        │ audio_transcriptions     │

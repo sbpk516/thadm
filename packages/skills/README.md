@@ -36,7 +36,7 @@ bunx @screenpipe/skills list
 
 ```bash
 # 1. Sync your screen data to the agent
-bunx @screenpipe/sync --daemon --remote clawdbot:~/.screenpipe/
+bunx @screenpipe/sync --daemon --remote clawdbot:~/.thadm/
 
 # 2. Install skills
 bunx @screenpipe/skills install --remote clawdbot

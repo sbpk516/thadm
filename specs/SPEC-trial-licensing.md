@@ -128,7 +128,7 @@ status from the **actual data in the screenpipe database**.
 | Change system clock forward | Trial expires early (hurts attacker) |
 | Change system clock backward | New data still has real timestamps from DB writes |
 | Delete the database | Loses ALL their data — strong deterrent, resets trial |
-| Reinstall app | DB at ~/.screenpipe persists — trial still detected |
+| Reinstall app | DB at ~/.thadm persists — trial still detected |
 | Delete DB + reinstall | Fresh trial, but all data gone — acceptable tradeoff |
 
 ### Edge Cases
@@ -387,7 +387,7 @@ Read the full spec at specs/SPEC-trial-licensing.md first.
 Context:
 - Thadm is a Tauri + Next.js desktop app (see CLAUDE.md for build rules)
 - Settings are stored in store.bin via @tauri-apps/plugin-store
-- The screenpipe SQLite DB is at ~/.screenpipe/db.sqlite
+- The screenpipe SQLite DB is at ~/.thadm/db.sqlite
 - Earliest timestamp query exists in lib/actions/get-start-date.ts
 - License validation is via LemonSqueezy REST API (no SDK needed)
 - The sidecar (thadm-recorder) is spawned in src-tauri/src/sidecar.rs

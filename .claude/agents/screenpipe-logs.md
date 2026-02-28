@@ -13,18 +13,18 @@ You are a specialized agent for retrieving and analyzing Screenpipe logs. Use th
 
 ## Log Locations
 
-All logs are stored in `~/.screenpipe/`:
+All logs are stored in `~/.thadm/`:
 
 | Log Type | Pattern | Description |
 |----------|---------|-------------|
-| CLI/Backend | `~/.screenpipe/screenpipe.YYYY-MM-DD.log` | Core recording engine logs (OCR, audio, frames) |
-| Desktop App | `~/.screenpipe/screenpipe-app.YYYY-MM-DD.log` | Tauri app logs (UI, settings, pipes) |
+| CLI/Backend | `~/.thadm/screenpipe.YYYY-MM-DD.log` | Core recording engine logs (OCR, audio, frames) |
+| Desktop App | `~/.thadm/screenpipe-app.YYYY-MM-DD.log` | Tauri app logs (UI, settings, pipes) |
 
 ## Common Commands
 
 ### List Available Logs
 ```bash
-ls -lht ~/.screenpipe/*.log | head -20
+ls -lht ~/.thadm/*.log | head -20
 ```
 
 ### Get Today's Logs
@@ -33,53 +33,53 @@ ls -lht ~/.screenpipe/*.log | head -20
 TODAY=$(date +%Y-%m-%d)
 
 # CLI logs (last 100 lines)
-tail -100 ~/.screenpipe/screenpipe.$TODAY.log
+tail -100 ~/.thadm/screenpipe.$TODAY.log
 
 # App logs (last 100 lines)
-tail -100 ~/.screenpipe/screenpipe-app.$TODAY.log
+tail -100 ~/.thadm/screenpipe-app.$TODAY.log
 ```
 
 ### Find Errors
 ```bash
 # Errors in CLI logs
-grep -i "error\|failed\|panic" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -50
+grep -i "error\|failed\|panic" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -50
 
 # Errors in app logs
-grep -i "error\|failed\|panic" ~/.screenpipe/screenpipe-app.$(date +%Y-%m-%d).log | tail -50
+grep -i "error\|failed\|panic" ~/.thadm/screenpipe-app.$(date +%Y-%m-%d).log | tail -50
 ```
 
 ### Search for Specific Issues
 ```bash
 # Search for text in recent logs
-grep -i "SEARCH_TERM" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log
+grep -i "SEARCH_TERM" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log
 
 # Search with context (5 lines before/after)
-grep -i -B5 -A5 "SEARCH_TERM" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log
+grep -i -B5 -A5 "SEARCH_TERM" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log
 ```
 
 ### Filter by Time
 ```bash
 # Get logs from specific hour (e.g., 14:00-14:59)
-grep "^2026-01-22T14:" ~/.screenpipe/screenpipe.2026-01-22.log
+grep "^2026-01-22T14:" ~/.thadm/screenpipe.2026-01-22.log
 
 # Get logs from last N minutes
 SINCE=$(date -v-30M +%Y-%m-%dT%H:%M)
-awk -v since="$SINCE" '$0 >= since' ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -100
+awk -v since="$SINCE" '$0 >= since' ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -100
 ```
 
 ### Log Analysis
 ```bash
 # Count errors by type
-grep -io "error[^:]*:" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | sort | uniq -c | sort -rn
+grep -io "error[^:]*:" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | sort | uniq -c | sort -rn
 
 # Check recording status
-grep -i "recording\|started\|stopped" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -20
+grep -i "recording\|started\|stopped" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -20
 
 # Check OCR processing
-grep -i "ocr\|frame" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -20
+grep -i "ocr\|frame" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -20
 
 # Check audio processing
-grep -i "audio\|transcription\|whisper" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -20
+grep -i "audio\|transcription\|whisper" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -20
 ```
 
 ## Log Format
@@ -101,27 +101,27 @@ Fields:
 
 ### Recording Issues
 ```bash
-grep -i "capture\|monitor\|screen\|permission" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | grep -i "error\|fail\|denied"
+grep -i "capture\|monitor\|screen\|permission" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | grep -i "error\|fail\|denied"
 ```
 
 ### Audio Issues
 ```bash
-grep -i "audio\|microphone\|device\|whisper" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | grep -i "error\|fail"
+grep -i "audio\|microphone\|device\|whisper" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | grep -i "error\|fail"
 ```
 
 ### Database Issues
 ```bash
-grep -i "sqlite\|database\|db\|insert\|query" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | grep -i "error\|fail\|lock"
+grep -i "sqlite\|database\|db\|insert\|query" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | grep -i "error\|fail\|lock"
 ```
 
 ### Memory/Performance
 ```bash
-grep -i "memory\|oom\|killed\|slow" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log
+grep -i "memory\|oom\|killed\|slow" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log
 ```
 
 ### Pipe Issues
 ```bash
-grep -i "pipe\|plugin" ~/.screenpipe/screenpipe-app.$(date +%Y-%m-%d).log | grep -i "error\|fail"
+grep -i "pipe\|plugin" ~/.thadm/screenpipe-app.$(date +%Y-%m-%d).log | grep -i "error\|fail"
 ```
 
 ## Response Guidelines

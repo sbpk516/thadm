@@ -27,7 +27,7 @@ this single command:
 
 ```bash
 # step 1: sync data
-bunx @screenpipe/sync --daemon --remote user@your-server:~/.screenpipe/
+bunx @screenpipe/sync --daemon --remote user@your-server:~/.thadm/
 
 # step 2: install skills
 bunx @screenpipe/skills install --remote user@your-server
@@ -51,13 +51,13 @@ tools:
 
 # screenpipe skill
 
-query the user's screen history via SQLite at ~/.screenpipe/db.sqlite.
+query the user's screen history via SQLite at ~/.thadm/db.sqlite.
 
 ## search content
 
 ```bash
 # full-text search
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, o.app_name, substr(o.text, 1, 200)
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -67,7 +67,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # app usage today
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT o.app_name, COUNT(*) as frames
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -151,7 +151,7 @@ once configured, message Moltbot from any chat app:
 
 **no results from queries?**
 - verify screenpipe is running locally: `curl http://localhost:3030/health`
-- check data exists: `sqlite3 ~/.screenpipe/db.sqlite "SELECT COUNT(*) FROM ocr_text;"`
+- check data exists: `sqlite3 ~/.thadm/db.sqlite "SELECT COUNT(*) FROM ocr_text;"`
 - ensure screenpipe has screen recording permissions
 
 ## packages

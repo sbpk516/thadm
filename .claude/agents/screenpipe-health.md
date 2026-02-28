@@ -30,19 +30,19 @@ curl -s http://localhost:3030/health | jq '.frame_status, .audio_status' 2>/dev/
 ### 3. Check Disk Usage
 ```bash
 # Screenpipe data directory size
-du -sh ~/.screenpipe/
+du -sh ~/.thadm/
 
 # Database size
-ls -lh ~/.screenpipe/db.sqlite* 2>/dev/null
+ls -lh ~/.thadm/db.sqlite* 2>/dev/null
 
 # Video/audio cache
-du -sh ~/.screenpipe/data/ 2>/dev/null
+du -sh ~/.thadm/data/ 2>/dev/null
 ```
 
 ### 4. Check Recent Logs for Errors
 ```bash
 # Last 10 errors from today
-grep -i "error" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log 2>/dev/null | tail -10
+grep -i "error" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log 2>/dev/null | tail -10
 ```
 
 ## Detailed Diagnostics
@@ -78,13 +78,13 @@ curl -s http://localhost:3030/vision/list
 ### Database Health
 ```bash
 # Check database integrity
-sqlite3 ~/.screenpipe/db.sqlite "PRAGMA integrity_check;" 2>/dev/null
+sqlite3 ~/.thadm/db.sqlite "PRAGMA integrity_check;" 2>/dev/null
 
 # Database size and tables
-sqlite3 ~/.screenpipe/db.sqlite "SELECT name, (SELECT COUNT(*) FROM main WHERE name=t.name) FROM sqlite_master t WHERE type='table';" 2>/dev/null
+sqlite3 ~/.thadm/db.sqlite "SELECT name, (SELECT COUNT(*) FROM main WHERE name=t.name) FROM sqlite_master t WHERE type='table';" 2>/dev/null
 
 # Recent frame count
-sqlite3 ~/.screenpipe/db.sqlite "SELECT COUNT(*) as frames_today FROM frames WHERE timestamp > datetime('now', '-1 day');" 2>/dev/null
+sqlite3 ~/.thadm/db.sqlite "SELECT COUNT(*) as frames_today FROM frames WHERE timestamp > datetime('now', '-1 day');" 2>/dev/null
 ```
 
 ### Permissions Check (macOS)
@@ -114,7 +114,7 @@ open /Applications/screenpipe.app
 1. Check screen recording permission in System Preferences
 2. Check logs for permission errors:
 ```bash
-grep -i "permission\|denied\|cg\|capture" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -20
+grep -i "permission\|denied\|cg\|capture" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -20
 ```
 
 ### Issue: No audio transcription
@@ -122,7 +122,7 @@ grep -i "permission\|denied\|cg\|capture" ~/.screenpipe/screenpipe.$(date +%Y-%m
 2. Check audio device selection:
 ```bash
 curl -s http://localhost:3030/audio/list
-grep -i "audio\|device\|whisper" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log | tail -20
+grep -i "audio\|device\|whisper" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log | tail -20
 ```
 
 ### Issue: High CPU/Memory
@@ -131,13 +131,13 @@ grep -i "audio\|device\|whisper" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log 
 top -l 1 -s 0 | grep -i screenpipe
 
 # Check for memory leaks in logs
-grep -i "memory\|oom" ~/.screenpipe/screenpipe.$(date +%Y-%m-%d).log
+grep -i "memory\|oom" ~/.thadm/screenpipe.$(date +%Y-%m-%d).log
 ```
 
 ### Issue: Database locked
 ```bash
 # Check for lock
-fuser ~/.screenpipe/db.sqlite 2>/dev/null
+fuser ~/.thadm/db.sqlite 2>/dev/null
 
 # Check for multiple processes
 pgrep -c screenpipe

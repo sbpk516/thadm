@@ -55,7 +55,7 @@ jobs:
       run: .github/scripts/check_logs.sh
 
     - name: Check final storage usage
-      run: du -ha ~/.screenpipe/data
+      run: du -ha ~/.thadm/data
 
     - name: Upload logs
       uses: actions/upload-artifact@v4
@@ -70,7 +70,7 @@ jobs:
       with:
         name: screenpipe-data
         path: |
-          ~/.screenpipe/data/
+          ~/.thadm/data/
     
     - name: Upload test image
       uses: actions/upload-artifact@v4

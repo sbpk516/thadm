@@ -15,7 +15,7 @@ below is the detailed cli reference for screenpipe's core functionality.
 - **port** (`\-p, --port <INT>`): port to run the server on
   - default: `3030`
 - **data-dir** (`--data-dir <PATH>`): data directory
-  - default: `$HOME/.screenpipe`
+  - default: `$HOME/.thadm`
 - **debug** (`--debug`): enable debug logging
   - default: `false`
 
@@ -200,7 +200,7 @@ by default, screenpipe extracts metadata (fps, duration, creation time) directly
 mkdir -p $HOME/Downloads/tmpvideos
 
 # copy 3 videos with random names
-find $HOME/.screenpipe/data -type f -name "*monitor*.mp4" | head -n 3 | while read -r file; do
+find $HOME/.thadm/data -type f -name "*monitor*.mp4" | head -n 3 | while read -r file; do
     case $RANDOM in
         [0-9][0-9][0-9][0-9])
             cp "$file" "$HOME/Downloads/tmpvideos/video1.mp4"

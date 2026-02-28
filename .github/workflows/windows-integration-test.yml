@@ -99,7 +99,7 @@ jobs:
         }
         Write-Host "CLI ran successfully without crashing"
         
-        $capturedFiles = Get-ChildItem -Path "$env:USERPROFILE\.screenpipe\data" -Recurse
+        $capturedFiles = Get-ChildItem -Path "$env:USERPROFILE\.thadm\data" -Recurse
         if ($capturedFiles.Count -eq 0) {
           Write-Host "No data was captured"
           exit 1
@@ -131,4 +131,4 @@ jobs:
         name: screenpipe-data
         include-hidden-files: true
         path: |
-          ~/.screenpipe/*
+          ~/.thadm/*

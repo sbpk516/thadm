@@ -361,17 +361,17 @@ if you encounter errors with missing migrations (e.g., `migration XXXXXXXXXX was
 
 ```bash
 # remove specific migration
-sqlite3 ~/.screenpipe/db.sqlite "DELETE FROM _sqlx_migrations WHERE version = XXXXXXXXXX;"
+sqlite3 ~/.thadm/db.sqlite "DELETE FROM _sqlx_migrations WHERE version = XXXXXXXXXX;"
 
 # verify migrations
-sqlite3 ~/.screenpipe/db.sqlite "SELECT * FROM _sqlx_migrations;"
+sqlite3 ~/.thadm/db.sqlite "SELECT * FROM _sqlx_migrations;"
 
 # if issues persist, you can take the nuclear approach:
 # 1. backup your database
-cp ~/.screenpipe/db.sqlite ~/.screenpipe/db.sqlite.backup
+cp ~/.thadm/db.sqlite ~/.thadm/db.sqlite.backup
 
 # 2. reset migrations table
-sqlite3 ~/.screenpipe/db.sqlite "DROP TABLE _sqlx_migrations;"
+sqlite3 ~/.thadm/db.sqlite "DROP TABLE _sqlx_migrations;"
 ```
 
 ### set up azure ubuntu vm with display & audio

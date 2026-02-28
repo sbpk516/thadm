@@ -11,14 +11,14 @@ Query the local Screenpipe SQLite database to recall what was on screen at a spe
 ## Database Location
 
 ```
-~/.screenpipe/db.sqlite
+~/.thadm/db.sqlite
 ```
 
 ## Query Patterns
 
 ```bash
 # Get screen content from a specific hour
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, o.text, o.app_name, o.window_name
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -28,7 +28,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Get content from time range
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT f.timestamp, o.app_name, substr(o.text, 1, 200) as text_preview
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -38,7 +38,7 @@ sqlite3 ~/.screenpipe/db.sqlite "
 "
 
 # Get today's activity by app
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT o.app_name, COUNT(*) as frames
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id

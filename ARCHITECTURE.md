@@ -285,4 +285,4 @@ Permits from city          =    TCC permissions
 | React components | `screenpipe-app-tauri/components/` |
 | Next.js pages | `screenpipe-app-tauri/app/` |
 | Backend server | `screenpipe-server/src/` |
-| Database | `~/.screenpipe/db.sqlite` |
+| Database | `~/.thadm/db.sqlite` |

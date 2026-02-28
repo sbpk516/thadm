@@ -236,7 +236,7 @@ jobs:
         name: windows-screenpipe-data
         include-hidden-files: true
         path: |
-          ~/.screenpipe/*
+          ~/.thadm/*
   linux-e2e-test:
     name: Linux E2E Tests
     runs-on: ubuntu-latest
@@ -395,4 +395,4 @@ jobs:
         name: linux-screenpipe-data
         include-hidden-files: true
         path: |
-          ~/.screenpipe/*
+          ~/.thadm/*

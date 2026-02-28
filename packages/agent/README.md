@@ -88,7 +88,7 @@ Good morning! Here's your briefing:
 ```
 Your Computer                    Your Agent Server
 ┌─────────────┐                  ┌─────────────────┐
-│  Screenpipe │ ──sync daemon──▶ │ ~/.screenpipe/  │
+│  Screenpipe │ ──sync daemon──▶ │ ~/.thadm/  │
 │  (records)  │    (hourly)      │   db.sqlite     │
 └─────────────┘                  └────────┬────────┘
                                           │
