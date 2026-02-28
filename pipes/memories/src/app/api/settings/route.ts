@@ -12,7 +12,7 @@ const DEFAULT_INTERVAL_MINUTES = 5;
 
 async function updateCronSchedule(intervalMinutes: number) {
   try {
-    const screenpipeDir = process.env.SCREENPIPE_DIR || process.cwd();
+    const screenpipeDir = process.env.THADM_DIR || process.env.SCREENPIPE_DIR || process.cwd();
     const pipeConfigPath = path.join(
       screenpipeDir,
       "pipes",
@@ -84,7 +84,7 @@ export async function GET() {
     }
 
     // Load persisted settings if they exist
-    const screenpipeDir = process.env.SCREENPIPE_DIR || process.cwd();
+    const screenpipeDir = process.env.THADM_DIR || process.env.SCREENPIPE_DIR || process.cwd();
     const settingsPath = path.join(
       screenpipeDir,
       "pipes",

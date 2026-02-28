@@ -11,7 +11,7 @@ export default async function updatePipeConfig(
   }
 
   let cronSchedule = "";
-  const screenpipeDir = process.env.SCREENPIPE_DIR || process.cwd();
+  const screenpipeDir = process.env.THADM_DIR || process.env.SCREENPIPE_DIR || process.cwd();
   const pipeConfigPath = path.join(
     screenpipeDir,
     "pipes",

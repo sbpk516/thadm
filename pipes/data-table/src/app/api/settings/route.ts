@@ -18,8 +18,9 @@ export async function GET() {
 
     // Load persisted settings if they exist
     const screenpipeDir =
+      process.env.THADM_DIR ||
       process.env.SCREENPIPE_DIR ||
-      (homeDir && path.join(homeDir, ".screenpipe")) ||
+      (homeDir && path.join(homeDir, ".thadm")) ||
       process.cwd();
     const settingsPath = path.join(
       screenpipeDir,

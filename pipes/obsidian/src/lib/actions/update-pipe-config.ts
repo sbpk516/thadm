@@ -5,8 +5,9 @@ import path from "path";
 export async function updatePipeConfig(intervalMinutes: number) {
   try {
     const screenpipeDir =
+      process.env.THADM_DIR ||
       process.env.SCREENPIPE_DIR ||
-      (process.env.HOME && path.join(process.env.HOME, ".screenpipe")) ||
+      (process.env.HOME && path.join(process.env.HOME, ".thadm")) ||
       process.cwd();
     const pipeConfigPath = path.join(
       screenpipeDir,

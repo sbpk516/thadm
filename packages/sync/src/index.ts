@@ -70,7 +70,7 @@ function parseArgs(): Config {
     format: "markdown",
     verbose: false,
     dbSync: false,
-    dbPath: process.env.SCREENPIPE_DB || `${home}/.thadm/db.sqlite`,
+    dbPath: process.env.THADM_DB || process.env.SCREENPIPE_DB || `${home}/.thadm/db.sqlite`,
     daemon: false,
     daemonInterval: 3600,
     daemonStop: false,
@@ -157,7 +157,7 @@ OPTIONS:
 
 ENVIRONMENT:
   SCREENPIPE_URL        Screenpipe API URL (default: http://localhost:3030)
-  SCREENPIPE_DB         Path to Screenpipe database
+  THADM_DB              Path to Thadm database (also reads SCREENPIPE_DB)
 
 AI SUMMARIZATION:
   Uses Claude Code CLI if available (claude --print)
@@ -618,7 +618,7 @@ async function syncDatabase(config: Config) {
     await fs.access(config.dbPath);
   } catch {
     console.error(`[error] Database not found at ${config.dbPath}`);
-    console.error(`        Set --db-path or SCREENPIPE_DB environment variable`);
+    console.error(`        Set --db-path or THADM_DB environment variable`);
     process.exit(1);
   }
 

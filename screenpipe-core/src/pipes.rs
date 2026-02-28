@@ -414,6 +414,11 @@ pub async fn run_pipe(
     debug!("preparing environment variables for pipe: {}", pipe);
     let mut env_vars = std::env::vars().collect::<Vec<(String, String)>>();
     env_vars.push((
+        "THADM_DIR".to_string(),
+        screenpipe_dir.to_str().unwrap().to_string(),
+    ));
+    // Backward compat for older pipes that read SCREENPIPE_DIR
+    env_vars.push((
         "SCREENPIPE_DIR".to_string(),
         screenpipe_dir.to_str().unwrap().to_string(),
     ));

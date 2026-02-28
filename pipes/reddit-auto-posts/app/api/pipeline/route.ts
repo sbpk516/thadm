@@ -13,7 +13,7 @@ async function saveDailyLog(logEntry: DailyLog) {
   }
   console.log("saving log entry:", logEntry);
 
-  const screenpipeDir = process.env.SCREENPIPE_DIR || process.cwd();
+  const screenpipeDir = process.env.THADM_DIR || process.env.SCREENPIPE_DIR || process.cwd();
   const logsDir = path.join(
     screenpipeDir,
     "pipes",
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
     const pageSize = redditSettings?.pageSize;
     const contentType = redditSettings?.contentType || "ocr";
     const emailEnabled = !!(emailAddress && emailPassword);
-    const screenpipeDir = process.env.SCREENPIPE_DIR || process.cwd();
+    const screenpipeDir = process.env.THADM_DIR || process.env.SCREENPIPE_DIR || process.cwd();
     const logsDir = path.join(
       screenpipeDir,
       "pipes",
