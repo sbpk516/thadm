@@ -12,7 +12,7 @@ use screenpipe_audio::{
         default_input_device, default_output_device, list_audio_devices, parse_audio_device,
     },
 };
-use screenpipe_core::constants::DATA_DIR_NAME;
+use screenpipe_core::constants::{self, DATA_DIR_NAME};
 use screenpipe_core::find_ffmpeg_path;
 use screenpipe_db::{
     create_migration_worker, DatabaseManager, MigrationCommand, MigrationConfig, MigrationStatus,
@@ -264,6 +264,9 @@ async fn main() -> anyhow::Result<()> {
     } else {
         None
     };
+
+    // Migrate data directories before anything reads them
+    constants::migrate_data_dir();
 
     let local_data_dir = get_base_dir(&cli.data_dir)?;
     let local_data_dir_clone = local_data_dir.clone();

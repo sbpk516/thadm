@@ -60,6 +60,7 @@ pub use store::get_store;
 
 mod config;
 mod constants;
+mod migration;
 pub use config::get_base_dir;
 
 pub use commands::set_tray_health_icon;
@@ -865,6 +866,9 @@ async fn main() {
         ])
         .setup(move |app| {
             eprintln!("[DEBUG STARTUP] ======= setup() closure entered =======");
+
+            // Migrate data directories before anything reads them
+            migration::migrate_data_dir();
 
             //deep link register_all
             #[cfg(any(windows, target_os = "linux"))]
