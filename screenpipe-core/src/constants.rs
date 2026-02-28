@@ -1,21 +1,18 @@
 use std::path::PathBuf;
 
-/// Default data directory name under $HOME (e.g., ~/.screenpipe).
-/// When renaming to ".thadm", change this constant and its mirror in
-/// screenpipe-app-tauri/src-tauri/src/constants.rs
-pub const DATA_DIR_NAME: &str = ".screenpipe";
+/// Default data directory name under $HOME (e.g., ~/.thadm).
+/// Mirror in screenpipe-app-tauri/src-tauri/src/constants.rs — keep in sync.
+pub const DATA_DIR_NAME: &str = ".thadm";
 
 /// Default app support directory name under local_data_dir
-/// (e.g., ~/Library/Application Support/screenpipe).
-/// When renaming to "thadm", change this constant and its mirror in
-/// screenpipe-app-tauri/src-tauri/src/constants.rs
-pub const APP_SUPPORT_DIR_NAME: &str = "screenpipe";
+/// (e.g., ~/Library/Application Support/thadm).
+/// Mirror in screenpipe-app-tauri/src-tauri/src/constants.rs — keep in sync.
+pub const APP_SUPPORT_DIR_NAME: &str = "thadm";
 
 /// Migrate data directories from old names to new names.
 ///
-/// Currently a no-op because DATA_DIR_NAME is still ".screenpipe".
-/// When Phase 3 flips the constants to ".thadm" / "thadm", this will
-/// detect the old directory and rename it automatically.
+/// Detects old ".screenpipe" / "screenpipe" directories and renames them
+/// to the current DATA_DIR_NAME / APP_SUPPORT_DIR_NAME (".thadm" / "thadm").
 pub fn migrate_data_dir() {
     if let Some(home) = dirs::home_dir() {
         let old = home.join(".screenpipe");

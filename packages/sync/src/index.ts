@@ -70,7 +70,7 @@ function parseArgs(): Config {
     format: "markdown",
     verbose: false,
     dbSync: false,
-    dbPath: process.env.SCREENPIPE_DB || `${home}/.screenpipe/db.sqlite`,
+    dbPath: process.env.SCREENPIPE_DB || `${home}/.thadm/db.sqlite`,
     daemon: false,
     daemonInterval: 3600,
     daemonStop: false,
@@ -149,7 +149,7 @@ OPTIONS:
   -v, --verbose         Show debug output
 
   --db, --db-sync       Sync raw SQLite database instead of summary
-  --db-path <path>      Path to Screenpipe DB (default: ~/.screenpipe/db.sqlite)
+  --db-path <path>      Path to Screenpipe DB (default: ~/.thadm/db.sqlite)
 
   -d, --daemon          Install persistent background sync (survives reboot)
   --interval <secs>     Sync interval in seconds (default: 3600 = 1 hour)
@@ -171,13 +171,13 @@ EXAMPLES:
   bunx @screenpipe/sync --output ~/Documents/brain/context --git
 
   # Sync raw database to remote (e.g., Clawdbot)
-  bunx @screenpipe/sync --db --remote user@clawdbot:~/.screenpipe/
+  bunx @screenpipe/sync --db --remote user@clawdbot:~/.thadm/
 
   # Full sync: DB + daily summary
-  bunx @screenpipe/sync --db -r clawdbot:~/.screenpipe && bunx @screenpipe/sync -o ~/context -g
+  bunx @screenpipe/sync --db -r clawdbot:~/.thadm && bunx @screenpipe/sync -o ~/context -g
 
   # ONE-LINER: Permanent background sync (survives reboot)
-  bunx @screenpipe/sync --daemon --remote user@server:~/.screenpipe/
+  bunx @screenpipe/sync --daemon --remote user@server:~/.thadm/
 
   # Stop the daemon
   bunx @screenpipe/sync --stop
@@ -192,7 +192,7 @@ OUTPUT (summary mode):
   - AI-generated insights
 
 OUTPUT (db mode):
-  - Copies ~/.screenpipe/db.sqlite to remote
+  - Copies ~/.thadm/db.sqlite to remote
   - Remote can query SQLite directly for full history
 `);
 }
@@ -474,7 +474,7 @@ async function setupDaemon(config: Config) {
 
   if (!config.remote && !config.outputDir) {
     console.error(`[error] --daemon requires --remote or --output`);
-    console.error(`        Example: bunx @screenpipe/sync --daemon -r user@host:~/.screenpipe/`);
+    console.error(`        Example: bunx @screenpipe/sync --daemon -r user@host:~/.thadm/`);
     process.exit(1);
   }
 
@@ -484,13 +484,13 @@ async function setupDaemon(config: Config) {
 
   if (platform === "darwin") {
     // macOS: LaunchAgent
-    const plistPath = path.join(home, "Library/LaunchAgents/com.screenpipe.sync.plist");
+    const plistPath = path.join(home, "Library/LaunchAgents/com.thadm.sync.plist");
     const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.screenpipe.sync</string>
+    <string>com.thadm.sync</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
@@ -591,7 +591,7 @@ async function stopDaemon() {
   const platform = os.platform();
 
   if (platform === "darwin") {
-    const plistPath = path.join(home, "Library/LaunchAgents/com.screenpipe.sync.plist");
+    const plistPath = path.join(home, "Library/LaunchAgents/com.thadm.sync.plist");
     try {
       execSync(`launchctl unload "${plistPath}" 2>/dev/null`);
       await fs.unlink(plistPath);

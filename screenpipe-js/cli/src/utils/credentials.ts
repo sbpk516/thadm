@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 
 export class Credentials {
-  private static configDir = path.join(os.homedir(), ".screenpipe");
+  private static configDir = path.join(os.homedir(), ".thadm");
   private static configFile = path.join(this.configDir, "config-developer.json");
 
   static getApiKey(): string | null {
@@ -19,7 +19,7 @@ export class Credentials {
   }
 
   static setApiKey(apiKey: string, developerId: string): void {
-    // Create .screenpipe directory if it doesn't exist
+    // Create .thadm directory if it doesn't exist
     if (!fs.existsSync(this.configDir)) {
       fs.mkdirSync(this.configDir);
     }

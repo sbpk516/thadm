@@ -55,11 +55,11 @@ function addMCPServer(settings: any): boolean {
     settings.mcpServers = {};
   }
 
-  if (settings.mcpServers.screenpipe) {
+  if (settings.mcpServers.thadm) {
     return false; // Already configured
   }
 
-  settings.mcpServers.screenpipe = {
+  settings.mcpServers.thadm = {
     type: "stdio",
     command: "npx",
     args: ["-y", "screenpipe-mcp"],

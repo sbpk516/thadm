@@ -4,9 +4,8 @@ use crate::constants::{APP_SUPPORT_DIR_NAME, DATA_DIR_NAME};
 
 /// Migrate data directories from old names to new names on startup.
 ///
-/// Currently a no-op because DATA_DIR_NAME is still ".screenpipe".
-/// When Phase 3 flips the constant to ".thadm", this will detect
-/// the old directory and rename it automatically.
+/// Detects old ".screenpipe" / "screenpipe" directories and renames them
+/// to the current DATA_DIR_NAME / APP_SUPPORT_DIR_NAME (".thadm" / "thadm").
 pub fn migrate_data_dir() {
     // Home data directory: ~/.screenpipe → ~/.thadm
     if let Some(home) = dirs::home_dir() {

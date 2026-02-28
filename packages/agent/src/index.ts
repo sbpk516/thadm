@@ -153,7 +153,7 @@ Generate a morning summary from yesterday's screen activity.
 ## Query Yesterday's Activity
 
 \`\`\`bash
-sqlite3 -header ~/.screenpipe/db.sqlite "
+sqlite3 -header ~/.thadm/db.sqlite "
   SELECT
     o.app_name,
     COUNT(*) as frames,
@@ -172,7 +172,7 @@ sqlite3 -header ~/.screenpipe/db.sqlite "
 Search for patterns like "TODO", "need to", "should", "must", "action item":
 
 \`\`\`bash
-sqlite3 ~/.screenpipe/db.sqlite "
+sqlite3 ~/.thadm/db.sqlite "
   SELECT DISTINCT substr(o.text, 1, 200)
   FROM ocr_text o
   JOIN frames f ON o.frame_id = f.id
@@ -271,7 +271,7 @@ async function setup(config: Config) {
     try {
       // Install sync daemon locally
       exec(
-        `bunx @screenpipe/sync --daemon --remote ${config.remote}:~/.screenpipe/ --interval ${config.syncInterval}`,
+        `bunx @screenpipe/sync --daemon --remote ${config.remote}:~/.thadm/ --interval ${config.syncInterval}`,
         config.verbose
       );
       console.log(`      → Daemon installed, syncs every ${config.syncInterval}s`);
@@ -279,14 +279,14 @@ async function setup(config: Config) {
       console.log("      → Running sync setup...");
       // Fallback: run sync package directly
       const home = homedir();
-      const dbPath = join(home, ".screenpipe", "db.sqlite");
+      const dbPath = join(home, ".thadm", "db.sqlite");
 
       // Create remote directory
-      exec(`ssh ${config.remote} "mkdir -p ~/.screenpipe"`, config.verbose);
+      exec(`ssh ${config.remote} "mkdir -p ~/.thadm"`, config.verbose);
 
       // Initial sync
       try {
-        exec(`rsync -az "${dbPath}" ${config.remote}:~/.screenpipe/db.sqlite`, config.verbose);
+        exec(`rsync -az "${dbPath}" ${config.remote}:~/.thadm/db.sqlite`, config.verbose);
         console.log("      → Initial sync complete");
       } catch {
         console.log("      → Will sync on next daemon run");
@@ -294,18 +294,18 @@ async function setup(config: Config) {
 
       // Set up local daemon using launchd/systemd
       if (platform() === "darwin") {
-        const plistPath = join(home, "Library/LaunchAgents/com.screenpipe.agent-sync.plist");
+        const plistPath = join(home, "Library/LaunchAgents/com.thadm.agent-sync.plist");
         const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.screenpipe.agent-sync</string>
+    <string>com.thadm.agent-sync</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
         <string>-c</string>
-        <string>rsync -az ~/.screenpipe/db.sqlite ${config.remote}:~/.screenpipe/db.sqlite 2>/dev/null || true</string>
+        <string>rsync -az ~/.thadm/db.sqlite ${config.remote}:~/.thadm/db.sqlite 2>/dev/null || true</string>
     </array>
     <key>StartInterval</key>
     <integer>${config.syncInterval}</integer>
@@ -346,10 +346,10 @@ description: Get a summary of screen activity
 tools: Bash
 ---
 
-Query ~/.screenpipe/db.sqlite for activity summary.
+Query ~/.thadm/db.sqlite for activity summary.
 
 \\\`\\\`\\\`bash
-sqlite3 ~/.screenpipe/db.sqlite "SELECT app_name, COUNT(*) FROM ocr_text GROUP BY app_name ORDER BY COUNT(*) DESC LIMIT 10;"
+sqlite3 ~/.thadm/db.sqlite "SELECT app_name, COUNT(*) FROM ocr_text GROUP BY app_name ORDER BY COUNT(*) DESC LIMIT 10;"
 \\\`\\\`\\\`
 `;
       exec(
@@ -393,7 +393,7 @@ async function remove(config: Config) {
   // Remove local daemon
   const home = homedir();
   if (platform() === "darwin") {
-    const plistPath = join(home, "Library/LaunchAgents/com.screenpipe.agent-sync.plist");
+    const plistPath = join(home, "Library/LaunchAgents/com.thadm.agent-sync.plist");
     try {
       execSync(`launchctl unload "${plistPath}" 2>/dev/null`);
       unlinkSync(plistPath);
@@ -403,7 +403,7 @@ async function remove(config: Config) {
     }
 
     // Also remove the @screenpipe/sync daemon if it exists
-    const syncPlistPath = join(home, "Library/LaunchAgents/com.screenpipe.sync.plist");
+    const syncPlistPath = join(home, "Library/LaunchAgents/com.thadm.sync.plist");
     try {
       execSync(`launchctl unload "${syncPlistPath}" 2>/dev/null`);
       unlinkSync(syncPlistPath);
@@ -463,7 +463,7 @@ async function status(config: Config) {
   // Check remote DB
   try {
     const dbSize = exec(
-      `ssh ${config.remote} "du -h ~/.screenpipe/db.sqlite 2>/dev/null | cut -f1"`,
+      `ssh ${config.remote} "du -h ~/.thadm/db.sqlite 2>/dev/null | cut -f1"`,
       false
     ).trim();
     console.log(`   Remote database: ✓ ${dbSize}`);
