@@ -711,6 +711,23 @@ async fn main() -> anyhow::Result<()> {
             })?,
     );
 
+    // Migrate stale .screenpipe paths in DB to .thadm (idempotent, no-op if already done)
+    for (table, column) in [("video_chunks", "file_path"), ("audio_chunks", "file_path"), ("frames", "name")] {
+        let sql = format!(
+            "UPDATE {} SET {} = REPLACE({}, '/.screenpipe/', '/.thadm/') WHERE {} LIKE '%/.screenpipe/%'",
+            table, column, column, column
+        );
+        match sqlx::query(&sql).execute(&db.pool).await {
+            Ok(result) if result.rows_affected() > 0 => {
+                eprintln!("[MIGRATION] Updated {} rows in {}.{}", result.rows_affected(), table, column);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                eprintln!("[MIGRATION] Failed to update {}.{}: {}", table, column, e);
+            }
+        }
+    }
+
     let db_server = db.clone();
 
     let warning_ocr_engine_clone = cli.ocr_engine.clone();

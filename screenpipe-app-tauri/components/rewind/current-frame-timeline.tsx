@@ -36,6 +36,8 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 	const [isLoading, setIsLoading] = useState(true);
 	const [hasError, setHasError] = useState(false);
 	const [retryCount, setRetryCount] = useState(0);
+	const skipCountRef = useRef(0);
+	const MAX_AUTO_SKIPS = 10;
 	const [naturalDimensions, setNaturalDimensions] = useState<{
 		width: number;
 		height: number;
@@ -116,11 +118,11 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 		}
 	};
 
-	// Auto-skip to next frame when error occurs
+	// Auto-skip to next frame when error occurs (with circuit breaker)
 	React.useEffect(() => {
-		if (hasError && !isLoading && onFrameUnavailable) {
-			// Small delay to avoid rapid skipping
+		if (hasError && !isLoading && onFrameUnavailable && skipCountRef.current < MAX_AUTO_SKIPS) {
 			const timer = setTimeout(() => {
+				skipCountRef.current += 1;
 				onFrameUnavailable();
 			}, 300);
 			return () => clearTimeout(timer);
@@ -195,6 +197,7 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 					console.log('Image loaded successfully for frame:', frameId);
 					setIsLoading(false);
 					setHasError(false);
+					skipCountRef.current = 0;
 					setNaturalDimensions({
 						width: img.naturalWidth,
 						height: img.naturalHeight,
@@ -248,8 +251,17 @@ export const CurrentFrameTimeline: FC<CurrentFrameTimelineProps> = ({
 					<SkeletonLoader />
 					<div className="absolute inset-0 flex items-center justify-center">
 						<div className="flex items-center gap-2 px-4 py-2 bg-card/90 backdrop-blur-sm rounded-lg border border-border">
-							<Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
-							<span className="text-sm text-muted-foreground">Finding next frame...</span>
+							{skipCountRef.current < MAX_AUTO_SKIPS ? (
+								<>
+									<Loader2 className="w-4 h-4 animate-spin text-muted-foreground" />
+									<span className="text-sm text-muted-foreground">Finding next frame...</span>
+								</>
+							) : (
+								<>
+									<ImageOff className="w-4 h-4 text-muted-foreground" />
+									<span className="text-sm text-muted-foreground">No frames available for this time</span>
+								</>
+							)}
 						</div>
 					</div>
 				</div>
