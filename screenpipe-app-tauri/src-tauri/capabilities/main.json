@@ -39,7 +39,15 @@
     "fs:allow-write-file",
     "fs:read-dirs",
     "fs:allow-copy-file",
-    "fs:allow-exists",
+    {
+      "identifier": "fs:allow-exists",
+      "allow": [
+        {
+          "path": "$HOME/**",
+          "requireLiteralLeadingDot": false
+        }
+      ]
+    },
     "fs:allow-read-text-file",
     "fs:allow-create",
     "fs:allow-mkdir",
@@ -105,6 +113,10 @@
         },
         {
           "path": "$HOME/*",
+          "requireLiteralLeadingDot": false
+        },
+        {
+          "path": "$HOME/**",
           "requireLiteralLeadingDot": false
         },
         {

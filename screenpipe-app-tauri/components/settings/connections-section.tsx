@@ -10,6 +10,8 @@ import { writeFile, readTextFile } from "@tauri-apps/plugin-fs";
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { platform } from "@tauri-apps/plugin-os";
 import { tempDir, join, homeDir } from "@tauri-apps/api/path";
+import { NotionConnectionCard } from "./notion-connection-card";
+import { ObsidianConnectionCard } from "./obsidian-connection-card";
 
 const GITHUB_RELEASES_API = "https://api.github.com/repos/sbpk516/thadm/releases";
 
@@ -202,7 +204,7 @@ export function ConnectionsSection() {
           Connections
         </h1>
         <p className="text-muted-foreground text-lg">
-          Connect thadm to AI assistants and other applications
+          Connect thadm to AI assistants, note-taking apps, and other services
         </p>
       </div>
 
@@ -298,6 +300,9 @@ export function ConnectionsSection() {
             )}
           </CardContent>
         </Card>
+
+        <NotionConnectionCard />
+        <ObsidianConnectionCard />
 
         {/* Learn & Build section */}
         <div className="space-y-3">

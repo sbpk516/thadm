@@ -87,6 +87,16 @@ export type Settings = SettingsStore & {
 	licenseValidatedAt?: string | null;
 	licensePlan?: "annual" | "lifetime" | null;
 	firstSeenAt?: string | null;
+	notionConnection?: {
+		accessToken?: string;
+		databaseId?: string;
+		intelligenceDbId?: string;
+		aiPresetId?: string;
+	};
+	obsidianConnection?: {
+		vaultPath?: string;
+		aiPresetId?: string;
+	};
 }
 
 export const DEFAULT_PROMPT = `Rules:
@@ -328,6 +338,18 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
+		// Migration: Remove stale flattened "settings.*" keys from the store.
+		// The @screenpipe/js SDK's unflattenObject() overwrites the nested
+		// "settings" key's values when flattened keys like "settings.aiPresets"
+		// coexist, causing pipes to see stale data (e.g., missing AI presets).
+		const staleKeys = (await store.keys()).filter(k => k.startsWith("settings."));
+		if (staleKeys.length > 0) {
+			for (const key of staleKeys) {
+				await store.delete(key);
+			}
+			needsUpdate = true;
+		}
+
 		// Save migrations if needed
 		if (needsUpdate) {
 			await store.set("settings", settings);
@@ -342,6 +364,13 @@ function createSettingsStore() {
 		const current = await get();
 		const newSettings = { ...current, ...value };
 		await store.set("settings", newSettings);
+		// Remove flattened "settings.*" keys that conflict with the nested
+		// "settings" key during @screenpipe/js SDK reads (unflatten bug).
+		for (const key of await store.keys()) {
+			if (key.startsWith("settings.")) {
+				await store.delete(key);
+			}
+		}
 		await store.save();
 	};
 

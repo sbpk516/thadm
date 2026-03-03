@@ -601,6 +601,9 @@ async fn spawn_sidecar(app: &tauri::AppHandle, override_args: Option<Vec<String>
         args.push("--disable-vision");
     }
 
+    // Always enable pipe manager so Notion/Obsidian integrations work
+    args.push("--enable-pipe-manager");
+
     // args.push("--debug");
 
     let override_args_as_vec = override_args.unwrap_or_default();

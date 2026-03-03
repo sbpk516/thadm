@@ -11,9 +11,6 @@ async openPermissionSettings(permission: OSPermission) : Promise<void> {
 async requestPermission(permission: OSPermission) : Promise<void> {
     await TAURI_INVOKE("request_permission", { permission });
 },
-async resetAndRequestPermission(permission: OSPermission) : Promise<void> {
-    await TAURI_INVOKE("reset_and_request_permission", { permission });
-},
 async doPermissionsCheck(initialCheck: boolean) : Promise<OSPermissionsCheck> {
     return await TAURI_INVOKE("do_permissions_check", { initialCheck });
 },
@@ -259,7 +256,7 @@ analyticsId: string; devMode: boolean; audioTranscriptionEngine: string; ocrEngi
 /**
  * Unique device ID for AI usage tracking (generated on first launch)
  */
-deviceId?: string }
+deviceId?: string; licenseKey?: string | null; licenseValidatedAt?: string | null; licensePlan?: string | null; firstSeenAt?: string | null }
 export type ShowRewindWindow = "Main" | { Settings: { page: string | null } } | { Search: { query: string | null } } | "Onboarding" | "Chat" | "PermissionRecovery"
 export type User = { id: string | null; name: string | null; email: string | null; image: string | null; token: string | null; clerk_id: string | null; api_key: string | null; credits: Credits | null; stripe_connected: boolean | null; stripe_account_status: string | null; github_username: string | null; bio: string | null; website: string | null; contact: string | null; cloud_subscribed: boolean | null }
 

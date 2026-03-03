@@ -71,6 +71,15 @@ export class SettingsStore {
   async loadGlobalSettings() {
     try {
       const screenpipeSettings = await getScreenpipeAppSettings();
+      // Tauri store nests real settings under a `settings` key —
+      // merge them up so aiPresets[] is accessible at the top level.
+      const nested = (screenpipeSettings as any)?.settings;
+      if (nested && typeof nested === "object") {
+        const merged = { ...screenpipeSettings, ...nested };
+        delete (merged as any).settings;
+        this.setGlobalSettings(merged);
+        return merged;
+      }
       this.setGlobalSettings(screenpipeSettings);
       return screenpipeSettings;
     } catch (error) {
@@ -104,14 +113,23 @@ export class SettingsStore {
     try {
       const screenpipeSettings = await getScreenpipeAppSettings();
 
-      // if global settings are not loaded, load them
-      if (!this.store.globalSettings) {
-        await this.loadGlobalSettings();
-      }
+      // Always reload global settings so aiPresets reflect the latest
+      // store.bin contents (the Tauri frontend may have added presets
+      // since the pipe's last read).
+      await this.loadGlobalSettings();
+
+      // Tauri store nests real settings under a `settings` key —
+      // check nested path as fallback for customSettings.
+      const nested = (screenpipeSettings as any)?.settings;
+      const customSettings =
+        screenpipeSettings.customSettings?.[pipeName] ??
+        (nested && typeof nested === "object"
+          ? nested.customSettings?.[pipeName]
+          : undefined);
 
       const settings = {
         ...DEFAULT_SETTINGS,
-        ...screenpipeSettings.customSettings?.[pipeName],
+        ...customSettings,
       };
       this.setPipeSettings(pipeName, settings);
       return settings;
