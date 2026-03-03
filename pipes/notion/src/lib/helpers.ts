@@ -7,7 +7,6 @@ import { Client } from "@notionhq/client";
 import { NotionToMarkdown } from "notion-to-md";
 import { settingsStore } from "./store/settings-store";
 import OpenAI from "openai";
-import { zodResponseFormat } from "openai/helpers/zod.mjs";
 
 export const workLog = z.object({
   title: z.string(),
@@ -93,7 +92,7 @@ export async function generateWorkLog(
   console.log("enrichedPrompt prompt:", enrichedPrompt);
 
   const openai = new OpenAI({
-    apiKey: aiPreset.apiKey,
+    apiKey: aiPreset.apiKey || "not-needed",
     baseURL: aiPreset.url,
     dangerouslyAllowBrowser: true,
   });
@@ -101,7 +100,7 @@ export async function generateWorkLog(
   const response = await openai.chat.completions.create({
     model: aiPreset.model,
     messages: [{ role: "user", content: defaultPrompt }],
-    response_format: zodResponseFormat(workLog, "workLog"),
+    response_format: { type: "json_object" },
   });
 
   const formatDate = (date: Date) => {
@@ -115,8 +114,12 @@ export async function generateWorkLog(
     });
   };
 
+  let raw = response.choices[0].message.content || "{}";
+  // Strip markdown code fences that non-OpenAI models (e.g. Groq/llama) wrap around JSON
+  raw = raw.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+
   return {
-    ...JSON.parse(response.choices[0].message.content || "{}"),
+    ...JSON.parse(raw),
     startTime: formatDate(startTime),
     endTime: formatDate(endTime),
   };

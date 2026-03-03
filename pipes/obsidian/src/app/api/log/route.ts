@@ -1,8 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { embed, generateObject } from "ai";
+import { embed } from "ai";
 import { ollama } from "ollama-ai-provider";
-import { AIPreset, ContentItem } from "@screenpipe/js";
+import { ContentItem } from "@screenpipe/js";
 import { pipe } from "@screenpipe/js";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -93,7 +93,7 @@ async function generateWorkLog(
     }`;
 
   const openaiConfig = {
-    apiKey: aiPreset.apiKey,
+    apiKey: aiPreset.apiKey || "not-needed",
     model: aiPreset.model,
     baseURL: aiPreset.url || undefined,
   };
@@ -106,7 +106,10 @@ async function generateWorkLog(
     response_format: { type: "json_object" },
   });
 
-  const jsonResponse = JSON.parse(response.choices[0].message.content || "{}");
+  let raw = response.choices[0].message.content || "{}";
+  // Strip markdown code fences that non-OpenAI models (e.g. Groq/llama) wrap around JSON
+  raw = raw.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+  const jsonResponse = JSON.parse(raw);
 
   const formatDate = (date: Date) => {
     return date.toLocaleString("en-US", {
@@ -273,7 +276,7 @@ export async function GET() {
     const settings = await settingsStore.loadPipeSettings("obsidian");
     const interval = settings.logTimeWindow || 3600000;
     const obsidianPath = settings.vaultPath;
-    const pageSize = settings.logPageSize || 100;
+    const pageSize = settings.logPageSize || 50;
     const deduplicationEnabled = settings.deduplicationEnabled;
 
     const aiPreset = settingsStore.getPreset("obsidian", "aiLogPresetId");

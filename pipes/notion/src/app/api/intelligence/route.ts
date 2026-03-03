@@ -1,12 +1,9 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { generateObject } from "ai";
-import { ollama } from "ollama-ai-provider";
 import { Client } from "@notionhq/client";
 import { NotionClient } from "@/lib/notion/client";
 import { settingsStore } from "@/lib/store/settings-store";
 import { OpenAI } from "openai";
-import { zodResponseFormat } from "openai/helpers/zod";
 
 // rich schema for relationship intelligence
 const contactSchema = z.object({
@@ -82,23 +79,24 @@ async function analyzeRelationships(
     `;
 
 	const openai = new OpenAI({
-		apiKey: aiPreset.apiKey,
+		apiKey: aiPreset.apiKey || "not-needed",
 		baseURL: aiPreset.url,
 		dangerouslyAllowBrowser: true,
 	});
 
 	console.log("prompt", prompt);
 
-
 	const response = await openai.chat.completions.create({
 		model: aiPreset.model,
 		messages: [{ role: "user", content: prompt }],
-		// response_format: { type: "json_object" },
-		response_format: zodResponseFormat(relationshipIntelligence, "relationshipIntelligence"),
+		response_format: { type: "json_object" },
 	});
 
-	console.log("relationship intelligence response", response.choices[0].message.content);
-	return JSON.parse(response.choices[0].message.content || "{}");
+	let raw = response.choices[0].message.content || "{}";
+	console.log("relationship intelligence response", raw);
+	// Strip markdown code fences that non-OpenAI models (e.g. Groq/llama) wrap around JSON
+	raw = raw.replace(/^```(?:json)?\s*\n?/i, "").replace(/\n?```\s*$/i, "").trim();
+	return JSON.parse(raw);
 }
 
 async function readRecentLogs(

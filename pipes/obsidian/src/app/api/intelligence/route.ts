@@ -1,7 +1,4 @@
 import { NextResponse } from "next/server";
-import { z } from "zod";
-import { generateObject, generateText, jsonSchema } from "ai";
-import { ollama } from "ollama-ai-provider";
 import { pipe } from "@screenpipe/js";
 import * as fs from "fs/promises";
 import * as path from "path";
@@ -97,7 +94,7 @@ Analysis Structure:
 Generate a structured analysis following the above format.`;
 
   const openaiConfig = {
-    apiKey: aiPreset.apiKey,
+    apiKey: aiPreset.apiKey || "not-needed",
     model: aiPreset.model,
     baseURL: aiPreset.url || undefined,
   };
