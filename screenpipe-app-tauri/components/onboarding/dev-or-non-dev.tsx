@@ -7,7 +7,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import OnboardingNavigation from "@/components/onboarding/navigation";
 import { invoke } from "@tauri-apps/api/core";
-import { SettingsStore } from "@/lib/utils/tauri";
 
 interface OnboardingDevOrNonDevProps {
   className?: string;
@@ -76,7 +75,7 @@ const OnboardingDevOrNonDev: React.FC<OnboardingDevOrNonDevProps> = ({
     try {
       if (option === "devMode") {
         await updateSettings({ devMode: true });
-        setLocalSettings({ ...localSettings, devMode: true } as SettingsStore);
+        setLocalSettings({ ...localSettings, devMode: true });
         toast({
           title: "success",
           description: "dev mode enabled successfully",
@@ -84,7 +83,7 @@ const OnboardingDevOrNonDev: React.FC<OnboardingDevOrNonDevProps> = ({
         });
       } else if (option === "nonDevMode") {
         await updateSettings({ devMode: false });
-        setLocalSettings({ ...localSettings, devMode: false } as SettingsStore);
+        setLocalSettings({ ...localSettings, devMode: false });
         toast({
           title: "success",
           description: "thadm backend is in standard mode",
