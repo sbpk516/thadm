@@ -156,7 +156,7 @@ export default function Home() {
         setIsActivating(false);
         const msg =
           result.status === "expired"
-            ? "This license has expired. Please renew at kalam-plus.com/thadm."
+            ? "This license has expired. Please renew at kalam-plus.com/#thadm."
             : result.error === "network"
               ? "Can't verify right now. Please check your internet connection."
               : "Invalid license key. Please check and try again.";
@@ -237,7 +237,7 @@ export default function Home() {
                     </div>
                     <p className="text-sm">
                       <button
-                        onClick={() => openUrl("https://kalam-plus.com/thadm")}
+                        onClick={() => openUrl("https://kalam-plus.com/#thadm")}
                         className="text-primary hover:underline"
                       >
                         Buy Thadm — Annual $29/yr · Lifetime $49
@@ -334,7 +334,7 @@ export default function Home() {
             <div className="fixed bottom-0 left-0 right-0 bg-primary/10 border-t px-4 py-2 text-center text-sm z-50">
               Trial ends in {licenseStatus.daysRemaining} days{" · "}
               <button
-                onClick={() => openUrl("https://kalam-plus.com/thadm")}
+                onClick={() => openUrl("https://kalam-plus.com/#thadm")}
                 className="text-primary hover:underline"
               >
                 Buy Thadm

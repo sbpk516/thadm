@@ -220,7 +220,7 @@ export function AccountSection() {
         setIsActivatingLicense(false);
         const msg =
           result.status === "expired"
-            ? "This license has expired. Please renew at kalam-plus.com/thadm."
+            ? "This license has expired. Please renew at kalam-plus.com/#thadm."
             : result.error === "network"
               ? "Can't verify right now. Please check your internet connection."
               : "Invalid license key. Please check and try again.";
@@ -383,7 +383,7 @@ export function AccountSection() {
         )}
 
         <button
-          onClick={() => openUrl("https://kalam-plus.com/thadm")}
+          onClick={() => openUrl("https://kalam-plus.com/#thadm")}
           className="text-sm text-primary hover:underline"
         >
           Buy Thadm — Annual $29/yr · Lifetime $49

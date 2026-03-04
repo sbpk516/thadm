@@ -252,7 +252,7 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             });
         }
         "trial_expired" => {
-            let _ = app_handle.opener().open_url("https://kalam-plus.com/thadm", None::<&str>);
+            let _ = app_handle.opener().open_url("https://kalam-plus.com/#thadm", None::<&str>);
         }
         "update_now" => {
             // For source builds, show info dialog about updates
