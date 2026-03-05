@@ -88,7 +88,7 @@ export function ObsidianConnectionCard() {
       } else if (refreshed.isBuilding) {
         setState("building");
       }
-    });
+    }).catch(() => {});
     return () => { cancelled = true; };
   }, [isSettingsLoaded, settings]);
 

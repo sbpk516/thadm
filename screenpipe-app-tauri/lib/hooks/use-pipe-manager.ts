@@ -55,9 +55,7 @@ export function usePipeManager(pipeId: string) {
 
   const refresh = useCallback(async (): Promise<PipeStatus> => {
     try {
-      console.log("[PIPE_DEBUG] refresh() → GET", `${BASE_URL}/pipes/list`);
       const response = await fetch(`${BASE_URL}/pipes/list`);
-      console.log("[PIPE_DEBUG] refresh() response:", response.status);
       if (!response.ok) throw new Error("Failed to list pipes");
 
       const data = await response.json();
@@ -108,8 +106,7 @@ export function usePipeManager(pipeId: string) {
 
       if (mountedRef.current) setStatus(newStatus);
       return newStatus;
-    } catch (error) {
-      console.error("[PIPE_DEBUG] refresh() FAILED:", error);
+    } catch {
       // Return current status from ref — avoids stale closure on `status`
       return statusRef.current;
     }
@@ -117,13 +114,11 @@ export function usePipeManager(pipeId: string) {
 
   const install = useCallback(
     async (sourceUrl: string) => {
-      console.log("[PIPE_DEBUG] install() → POST", `${BASE_URL}/pipes/download`, { url: sourceUrl });
       const response = await fetch(`${BASE_URL}/pipes/download`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ url: sourceUrl }),
       });
-      console.log("[PIPE_DEBUG] install() response:", response.status);
 
       if (!response.ok) {
         const err = await response.text().catch(() => "Unknown error");
@@ -136,13 +131,11 @@ export function usePipeManager(pipeId: string) {
   );
 
   const enable = useCallback(async () => {
-    console.log("[PIPE_DEBUG] enable() → POST", `${BASE_URL}/pipes/enable`, { pipe_id: pipeId });
     const response = await fetch(`${BASE_URL}/pipes/enable`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ pipe_id: pipeId }),
     });
-    console.log("[PIPE_DEBUG] enable() response:", response.status);
 
     if (!response.ok) {
       const err = await response.text().catch(() => "Unknown error");
@@ -257,12 +250,10 @@ export function usePipeManager(pipeId: string) {
       pipePort?: number
     ) => {
       const targetPort = pipePort ?? statusRef.current.port;
-      console.log("[PIPE_DEBUG] saveSettings() targetPort:", targetPort, "pipePort arg:", pipePort, "statusRef.port:", statusRef.current.port);
       if (!targetPort) {
         throw new Error("Pipe port not available — is the pipe running?");
       }
 
-      console.log("[PIPE_DEBUG] saveSettings() → PUT", `http://localhost:${targetPort}/api/settings`, { namespace, value });
       const response = await fetch(
         `http://localhost:${targetPort}/api/settings`,
         {
@@ -276,7 +267,6 @@ export function usePipeManager(pipeId: string) {
         }
       );
 
-      console.log("[PIPE_DEBUG] saveSettings() response:", response.status);
       if (!response.ok) {
         const err = await response.text().catch(() => "Unknown error");
         throw new Error(`Failed to save settings: ${err}`);
@@ -303,9 +293,6 @@ export function usePipeManager(pipeId: string) {
 
         const latest = await refresh();
         const port = latest.port;
-        const elapsed = Date.now() - readyStart;
-        console.log(`[READY_DEBUG] attempt=${attempt} elapsed=${elapsed}ms port=${port} isBuilding=${latest.isBuilding} isEnabled=${latest.isEnabled}`);
-
         if (port) {
           // Use regular fetch (not tauriFetch) — the /api/settings route
           // sets CORS headers, and tauriFetch is blocked by the HTTP plugin
@@ -318,7 +305,6 @@ export function usePipeManager(pipeId: string) {
               signal: probeCtrl.signal,
             });
             clearTimeout(probeTimer);
-            console.log(`[READY_DEBUG] probe1 OK status=${resp1.status}`);
 
             // Re-probe after short delay to confirm stable server
             await new Promise((r) => setTimeout(r, 500));
@@ -332,16 +318,13 @@ export function usePipeManager(pipeId: string) {
                 signal: confirmCtrl.signal,
               });
               clearTimeout(confirmTimer);
-              console.log(`[READY_DEBUG] probe2 OK status=${resp2.status} → READY!`);
               return port;
-            } catch (e2) {
+            } catch {
               clearTimeout(confirmTimer);
-              console.log(`[READY_DEBUG] probe2 FAILED:`, e2);
               // Server died between probes — it was the old run. Keep polling.
             }
-          } catch (e1) {
+          } catch {
             clearTimeout(probeTimer);
-            console.log(`[READY_DEBUG] probe1 FAILED:`, e1);
             // Connection refused, timeout, or abort — server not up yet
           }
         }

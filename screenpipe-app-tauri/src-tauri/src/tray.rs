@@ -160,11 +160,10 @@ fn create_dynamic_menu(
             .item(update_item);
     }
 
-    // Settings and feedback
+    // Settings
     menu_builder = menu_builder
         .item(&PredefinedMenuItem::separator(app)?)
-        .item(&MenuItemBuilder::with_id("settings", "Settings...").build(app)?)
-        .item(&MenuItemBuilder::with_id("feedback", "Send Feedback").build(app)?);
+        .item(&MenuItemBuilder::with_id("settings", "Settings...").build(app)?);
 
     // Quit with version
     let version = app.package_info().version.to_string();
@@ -273,9 +272,9 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
 
                     dialog.show(move |clicked_download| {
                         if clicked_download {
-                            let _ = app.opener().open_url("https://screenpi.pe/download", None::<&str>);
+                            let _ = app.opener().open_url("https://github.com/sbpk516/thadm/releases", None::<&str>);
                         } else {
-                            let _ = app.opener().open_url("https://github.com/mediar-ai/screenpipe/releases", None::<&str>);
+                            let _ = app.opener().open_url("https://github.com/sbpk516/thadm/releases", None::<&str>);
                         }
                     });
                 });

@@ -82,8 +82,9 @@ const OnboardingLogin: React.FC<OnboardingLoginProps> = ({
                   onClick={handleSkip}
                   className="w-full"
                 >
-                  continue without account
+                  continue
                 </Button>
+                {/* THADM-HIDDEN: cloud login — uncomment when own auth backend is available
                 <Button
                   variant="ghost"
                   size="sm"
@@ -92,6 +93,7 @@ const OnboardingLogin: React.FC<OnboardingLoginProps> = ({
                 >
                   sign in (optional) <ExternalLinkIcon className="w-4 h-4 ml-2" />
                 </Button>
+                */}
               </div>
             </>
           )}

@@ -518,6 +518,7 @@ const OnboardingWelcome: React.FC<OnboardingWelcomeProps> = ({
                     →
                   </motion.span>
                 </Button>
+                {/* THADM-HIDDEN: cloud login — uncomment when own auth backend is available
                 <Button
                   variant="ghost"
                   size="sm"
@@ -527,6 +528,7 @@ const OnboardingWelcome: React.FC<OnboardingWelcomeProps> = ({
                   sign in for cloud features
                   <ExternalLinkIcon className="w-3 h-3 ml-1.5" />
                 </Button>
+                */}
               </div>
             )}
           </motion.div>

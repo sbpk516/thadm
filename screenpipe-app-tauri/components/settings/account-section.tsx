@@ -272,58 +272,7 @@ export function AccountSection() {
         </p>
       </div>
       
-      <div className="flex items-center justify-between">
-        <div className="space-y-2">
-          {settings.user?.token ? (
-            <p className="text-sm text-muted-foreground flex items-center gap-2">
-              <span className="inline-flex h-2 w-2 rounded-full bg-foreground" />
-              logged in as {settings.user.email}
-            </p>
-          ) : (
-            <p className="text-sm text-muted-foreground flex items-center gap-2">
-              <span className="inline-flex h-2 w-2 rounded-full bg-muted-foreground" />
-              not logged in - some features will be limited
-            </p>
-          )}
-        </div>
-        <div className="flex gap-2">
-          {settings.user?.token ? (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openUrl("https://screenpi.pe/user-dashboard")}
-                className="hover:bg-secondary/80"
-              >
-                manage account <UserCog className="w-4 h-4 ml-2" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  updateSettings({ user: undefined });
-                  toast({
-                    title: "logged out",
-                    description: "you have been logged out",
-                  });
-                }}
-                className="hover:bg-secondary/80"
-              >
-                logout <ExternalLinkIcon className="w-4 h-4 ml-2" />
-              </Button>
-            </>
-          ) : (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => openUrl("https://screenpi.pe/login")}
-              className="hover:bg-secondary/80"
-            >
-              login <ExternalLinkIcon className="w-4 h-4 ml-2" />
-            </Button>
-          )}
-        </div>
-      </div>
+      {/* THADM-HIDDEN: cloud login — uncomment when own auth backend is available */}
 
       {/* License Section */}
       <Card className="p-4 space-y-4">

@@ -1,6 +1,6 @@
 [package]
 name = "thadm"
-version = "1.0.2"
+version = "1.0.3"
 description = "24/7 memory for your desktop. 100% local."
 authors = ["you"]
 license = ""

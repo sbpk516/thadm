@@ -4,6 +4,11 @@ const nextConfig = {
     images: {
         unoptimized: true,
     },
+    devIndicators: {
+        appIsrStatus: false,
+        buildActivity: false,
+        buildActivityPosition: 'bottom-right',
+    },
     eslint: {
         // Disable eslint during builds - we run it separately in CI
         ignoreDuringBuilds: true,

@@ -268,11 +268,40 @@ let _store: Promise<Store> | undefined;
 
 export const getStore = async () => {
 	if (!_store) {
-		const dir = await localDataDir();
-		_store = Store.load(`${dir}/screenpipe/store.bin`, {
-			autoSave: false,
-			defaults: {},
-		});
+		_store = (async () => {
+			const dir = await localDataDir();
+			const store = await Store.load(`${dir}/thadm/store.bin`, {
+				autoSave: false,
+				defaults: {},
+			});
+
+			// One-time migration: copy settings from old screenpipe/store.bin
+			// (frontend was writing there before the thadm rebrand)
+			if (!(await store.get("_screenpipeMigrated"))) {
+				try {
+					const oldStore = await Store.load(`${dir}/screenpipe/store.bin`, {
+						autoSave: false,
+						defaults: {},
+					});
+					const oldSettings = await oldStore.get<Settings>("settings");
+					if (oldSettings) {
+						const currentSettings = (await store.get<Settings>("settings")) || {};
+						// Old store has the user's real settings — let it win
+						await store.set("settings", { ...currentSettings, ...oldSettings });
+					}
+					const oldOnboarding = await oldStore.get("onboarding");
+					if (oldOnboarding) {
+						await store.set("onboarding", oldOnboarding);
+					}
+				} catch {
+					// Old store doesn't exist or is corrupted — skip migration
+				}
+				await store.set("_screenpipeMigrated", true);
+				await store.save();
+			}
+
+			return store;
+		})();
 	}
 	return _store;
 };

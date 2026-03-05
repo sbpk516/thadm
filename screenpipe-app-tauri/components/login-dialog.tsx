@@ -10,32 +10,9 @@ import { ExternalLinkIcon } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { create } from "zustand";
 
+// THADM-HIDDEN: cloud login dialog — uncomment when own auth backend is available
 export function LoginDialog() {
-  const { isOpen, setIsOpen } = useLoginDialog();
-
-  return (
-    <Dialog open={isOpen} onOpenChange={setIsOpen}>
-      <DialogContent>
-        <DialogHeader>
-          <DialogTitle>login required</DialogTitle>
-          <DialogDescription>
-            please login to continue. you will be redirected to screenpi.pe
-          </DialogDescription>
-        </DialogHeader>
-        <div className="flex justify-end">
-          <Button
-            variant="default"
-            onClick={() => {
-              openUrl("https://screenpi.pe/login");
-              setIsOpen(false);
-            }}
-          >
-            login <ExternalLinkIcon className="w-4 h-4 ml-2" />
-          </Button>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
+  return null;
 }
 
 interface LoginDialogState {

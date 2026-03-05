@@ -319,6 +319,7 @@ export default function GeneralSettings() {
           </CardContent>
         </Card>
 
+        {/* THADM-HIDDEN: beta download — uncomment when own beta channel is available
         <Card className="border-border bg-card shadow-sm">
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
@@ -347,6 +348,7 @@ export default function GeneralSettings() {
             </div>
           </CardContent>
         </Card>
+        */}
       </div>
 
       <Separator />

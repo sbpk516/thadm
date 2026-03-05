@@ -123,12 +123,14 @@ const settingsGroups = [
         icon: <HardDrive className="h-4 w-4" />,
         description: "Monitor storage usage for thadm data",
       },
+      /* THADM-HIDDEN: feedback — uncomment when own feedback backend is available
       {
         id: "feedback" as const,
         label: "Send Feedback",
         icon: <MessageSquare className="h-4 w-4" />,
         description: "Report issues or share suggestions",
       },
+      */
     ],
   },
 ];
