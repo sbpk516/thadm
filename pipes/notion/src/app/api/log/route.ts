@@ -31,10 +31,10 @@ export async function GET() {
     }
 
     const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - minute(1));
+    const windowStart = new Date(now.getTime() - minute(5));
 
     const screenData = await pipe.queryScreenpipe({
-      startTime: oneHourAgo.toISOString(),
+      startTime: windowStart.toISOString(),
       endTime: now.toISOString(),
       limit: pageSize,
       contentType: "all",
@@ -62,7 +62,7 @@ export async function GET() {
     const logEntry = await generateWorkLog(
       screenData.data,
       aiPreset,
-      oneHourAgo,
+      windowStart,
       now,
       customPrompt,
     );

@@ -11,12 +11,80 @@ function getPipeSettingsPath() {
   return path.join(screenpipeDir, "pipes", "notion", "settings.json");
 }
 
+async function readStoreBin(): Promise<Record<string, any> | null> {
+  const storePath = process.env.THADM_STORE_PATH;
+  if (!storePath) return null;
+
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const raw = await fs.readFile(storePath, "utf8");
+      return JSON.parse(raw);
+    } catch {
+      if (attempt === 0) await new Promise((r) => setTimeout(r, 100));
+    }
+  }
+  return null;
+}
+
+function mapNotionSettings(
+  store: Record<string, any>,
+): Partial<ScreenpipeAppSettings> {
+  const s = store.settings ?? store;
+  const conn = s.notionConnection;
+
+  const mapped: Partial<ScreenpipeAppSettings> = { ...s };
+
+  if (conn) {
+    mapped.customSettings = {
+      ...s.customSettings,
+      notion: {
+        ...(s.customSettings?.notion || {}),
+        notion: {
+          ...(s.customSettings?.notion?.notion || {}),
+          accessToken: conn.accessToken,
+          databaseId: conn.databaseId,
+          intelligenceDbId: conn.intelligenceDbId,
+        },
+        aiLogPresetId: conn.aiPresetId,
+        aiPresetId: conn.aiPresetId,
+      },
+    };
+  }
+
+  return mapped;
+}
+
 export async function getScreenpipeAppSettings() {
+  // Try reading store.bin directly (bypasses SDK's hardcoded path)
+  const store = await readStoreBin();
+  if (store) {
+    let settings = mapNotionSettings(store);
+
+    // Overlay pipe-local settings.json on top
+    try {
+      const settingsPath = getPipeSettingsPath();
+      const content = await fs.readFile(settingsPath, "utf8");
+      const persisted = JSON.parse(content);
+      settings = {
+        ...settings,
+        customSettings: {
+          ...settings.customSettings,
+          notion: {
+            ...(settings.customSettings?.notion || {}),
+            ...persisted,
+          },
+        },
+      };
+    } catch {
+      // No settings.json — that's fine
+    }
+
+    return settings;
+  }
+
+  // Fallback: use SDK (may read stale screenpipe/ path)
   const rawSettings = await pipe.settings.getAll();
 
-  // Overlay pipe-local settings.json on top of SDK settings.
-  // The PUT handler writes here instead of SDK's store.bin to avoid
-  // flattenObject() corruption of the Tauri plugin-store format.
   try {
     const settingsPath = getPipeSettingsPath();
     const content = await fs.readFile(settingsPath, "utf8");

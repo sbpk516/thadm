@@ -23,6 +23,7 @@ use serde_json::json;
 use tokio::fs::File;
 use tokio::io::AsyncWriteExt;
 
+use crate::constants;
 use crate::pick_unused_port;
 use once_cell::sync::Lazy;
 
@@ -427,6 +428,17 @@ pub async fn run_pipe(
         "PIPE_DIR".to_string(),
         pipe_dir.to_str().unwrap().to_string(),
     ));
+    // Pass the exact store.bin path so pipes can read Tauri settings directly
+    // (bypasses the @screenpipe/js SDK's hardcoded "screenpipe" path)
+    if let Some(local_data) = dirs::data_local_dir() {
+        let store_path = local_data
+            .join(constants::APP_SUPPORT_DIR_NAME)
+            .join("store.bin");
+        env_vars.push((
+            "THADM_STORE_PATH".to_string(),
+            store_path.to_str().unwrap_or_default().to_string(),
+        ));
+    }
 
     if is_nextjs {
         debug!(
