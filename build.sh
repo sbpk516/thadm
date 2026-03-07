@@ -29,6 +29,36 @@ SIGNING_IDENTITY="Developer ID Application: Balaji Sachidanandam (KVLNE2Y696)"
 
 cd "$PROJECT_ROOT"
 
+# Source .env.local if it exists (Apple notarization credentials, etc.)
+if [[ -f "$PROJECT_ROOT/.env.local" ]]; then
+    set -a
+    source "$PROJECT_ROOT/.env.local"
+    set +a
+fi
+
+# Notarize a .dmg or .app with Apple
+# Requires: APPLE_ID, APPLE_PASSWORD (app-specific), APPLE_TEAM_ID env vars
+notarize_app() {
+    local file="$1"
+    if [[ -z "${APPLE_ID:-}" || -z "${APPLE_PASSWORD:-}" || -z "${APPLE_TEAM_ID:-}" ]]; then
+        echo "==> WARNING: Skipping notarization (APPLE_ID, APPLE_PASSWORD, or APPLE_TEAM_ID not set)"
+        echo "    Set these env vars to enable notarization."
+        return 0
+    fi
+
+    echo "==> Submitting for notarization: $(basename "$file")"
+    echo "    This may take a few minutes..."
+    xcrun notarytool submit "$file" \
+        --apple-id "$APPLE_ID" \
+        --password "$APPLE_PASSWORD" \
+        --team-id "$APPLE_TEAM_ID" \
+        --wait
+
+    echo "==> Stapling notarization ticket..."
+    xcrun stapler staple "$file"
+    echo "==> Notarization complete for: $(basename "$file")"
+}
+
 # Detect host architecture
 detect_host_target() {
     local arch
@@ -199,6 +229,11 @@ cmd_release() {
     # If `bun tauri build` fails but the .app exists, fall back to hdiutil.
     if SKIP_SCREENPIPE_SETUP=1 bun tauri build --target "$target"; then
         echo "==> Tauri build completed successfully."
+        # Tauri already signs & notarizes the .app during build.
+        # Only notarize the DMG (notarytool rejects .app directly).
+        for dmg in "$dmg_dir"/*.dmg; do
+            [[ -f "$dmg" ]] && notarize_app "$dmg"
+        done
     elif [[ -d "$app_path" ]]; then
         echo ""
         echo "==> Tauri DMG bundler failed, but .app was built successfully."
@@ -217,6 +252,8 @@ cmd_release() {
         echo "==> Signing DMG with: $SIGNING_IDENTITY"
         codesign --sign "$SIGNING_IDENTITY" "$dmg_dir/$dmg_name"
         echo "==> DMG created and signed: $dmg_dir/$dmg_name"
+        notarize_app "$app_path"
+        notarize_app "$dmg_dir/$dmg_name"
     else
         echo ""
         echo "ERROR: Tauri build failed and no .app was produced."

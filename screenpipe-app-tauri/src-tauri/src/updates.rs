@@ -15,12 +15,8 @@ use tokio::sync::oneshot;
 use tokio::sync::Mutex;
 use tokio::time::interval;
 
-/// Check if this is a source/community build (not an official release)
-/// Official releases are built with --features official-build in GitHub Actions
 pub fn is_source_build(_app: &tauri::AppHandle) -> bool {
-    // The official-build feature is only enabled during CI releases
-    // Source builds will not have this feature enabled
-    !cfg!(feature = "official-build")
+    false
 }
 
 pub struct UpdatesManager {
