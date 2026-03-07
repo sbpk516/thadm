@@ -52,7 +52,7 @@
       "endpoints": [
         "https://github.com/sbpk516/thadm/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEVBQ0NDQkQyQzU5RkE3QjUKUldTMXA1L0Ywc3ZNNm9DcUI3QlQ0b3hZd2NibU5jaDlKbHNwTzZubGV4Rm11eGd5MldTOVkzNEUK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEREMEZFOUFDNjA0QUFGMEYKUldRUHIwcGdyT2tQM1E1NEVNZ081NS9XQzJjQXRZR3dVeE9rSHhFRS9SNWh3L2NyTE1vVEN0MVYK"
     },
     "deep-link": {
       "desktop": {
