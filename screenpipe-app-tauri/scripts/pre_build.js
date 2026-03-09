@@ -179,10 +179,24 @@ async function copyBunBinary() {
 		const crossRelease = isArm64Host ? 'bun-darwin-x64' : 'bun-darwin-aarch64';
 		const crossUrl = `https://github.com/oven-sh/bun/releases/latest/download/${crossRelease}.zip`;
 
+		const crossExpectedArch = isArm64Host ? 'x86_64' : 'arm64';
+		const hostExpectedArch = isArm64Host ? 'arm64' : 'x86_64';
 		const tasks = [];
 
-		// Download cross-architecture bun if needed
-		if (!(await fs.exists(crossDest))) {
+		// Check if cross-arch bun exists with CORRECT architecture
+		let needsCrossDownload = true;
+		if (await fs.exists(crossDest)) {
+			const { stdout } = await $`file ${crossDest}`.quiet();
+			if (stdout.includes(crossExpectedArch)) {
+				console.log(`Cross-arch bun already correct (${crossExpectedArch}), skipping download.`);
+				needsCrossDownload = false;
+			} else {
+				console.log(`Cross-arch bun exists but has wrong architecture, replacing...`);
+				await fs.unlink(crossDest);
+			}
+		}
+
+		if (needsCrossDownload) {
 			const tmpZip = `/tmp/${crossRelease}.zip`;
 			const tmpDir = `/tmp/${crossRelease}`;
 			tasks.push((async () => {
@@ -198,8 +212,20 @@ async function copyBunBinary() {
 			})());
 		}
 
-		// Copy host bun if needed
-		if (!(await fs.exists(hostDest))) {
+		// Check if host bun exists with correct architecture
+		let needsHostCopy = true;
+		if (await fs.exists(hostDest)) {
+			const { stdout } = await $`file ${hostDest}`.quiet();
+			if (stdout.includes(hostExpectedArch)) {
+				console.log(`Host bun already correct (${hostExpectedArch}), skipping copy.`);
+				needsHostCopy = false;
+			} else {
+				console.log(`Host bun exists but has wrong architecture, replacing...`);
+				await fs.unlink(hostDest);
+			}
+		}
+
+		if (needsHostCopy) {
 			tasks.push((async () => {
 				await copyFile(bunSrc, hostDest);
 				console.log(`Host bun copied to ${hostDest}`);
