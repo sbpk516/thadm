@@ -39,7 +39,7 @@ jobs:
             tauri-args: "--target aarch64-apple-darwin --features official-build"
             os_type: "macos"
           - platform: "macos-latest"
-            args: "--target x86_64-apple-darwin --features metal"
+            args: "--target x86_64-apple-darwin"
             target: x86_64-apple-darwin
             tauri-args: "--target x86_64-apple-darwin --features official-build"
             os_type: "macos"

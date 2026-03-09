@@ -66,3 +66,4 @@ screenpipe-app-tauri/src-tauri/thadm-recorder-*
 
 # Temporary working files
 tmp/
+.gitnexus

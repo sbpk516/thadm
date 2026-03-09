@@ -169,6 +169,47 @@ async function copyBunBinary() {
 		bunSrc = path.join(os.homedir(), '.bun', 'bin', 'bun');
 		bunDest1 = path.join(cwd, 'bun-aarch64-apple-darwin');
 		bunDest2 = path.join(cwd, 'bun-x86_64-apple-darwin');
+
+		const hostArch = os.arch(); // 'arm64' or 'x64'
+		const isArm64Host = hostArch === 'arm64';
+
+		// Host bun matches one arch; download the other from GitHub releases
+		const hostDest = isArm64Host ? bunDest1 : bunDest2;
+		const crossDest = isArm64Host ? bunDest2 : bunDest1;
+		const crossRelease = isArm64Host ? 'bun-darwin-x64' : 'bun-darwin-aarch64';
+		const crossUrl = `https://github.com/oven-sh/bun/releases/latest/download/${crossRelease}.zip`;
+
+		const tasks = [];
+
+		// Download cross-architecture bun if needed
+		if (!(await fs.exists(crossDest))) {
+			const tmpZip = `/tmp/${crossRelease}.zip`;
+			const tmpDir = `/tmp/${crossRelease}`;
+			tasks.push((async () => {
+				console.log(`Downloading ${crossRelease} bun for cross-compilation...`);
+				try {
+					await $`curl -L -o ${tmpZip} ${crossUrl}`.quiet();
+					await $`unzip -o ${tmpZip} -d ${tmpDir}`.quiet();
+					await copyFile(`${tmpDir}/${crossRelease}/bun`, crossDest);
+					console.log(`Cross-arch bun copied to ${crossDest}`);
+				} finally {
+					await $`rm -rf ${tmpZip} ${tmpDir}`.quiet().catch(() => {});
+				}
+			})());
+		}
+
+		// Copy host bun if needed
+		if (!(await fs.exists(hostDest))) {
+			tasks.push((async () => {
+				await copyFile(bunSrc, hostDest);
+				console.log(`Host bun copied to ${hostDest}`);
+			})());
+		}
+
+		if (tasks.length > 0) {
+			await Promise.all(tasks);
+		}
+		return;
 	} else if (platform === 'linux') {
 		bunSrc = path.join(os.homedir(), '.bun', 'bin', 'bun');
 		bunDest1 = path.join(cwd, 'bun-x86_64-unknown-linux-gnu');
@@ -183,11 +224,6 @@ async function copyBunBinary() {
 		await fs.access(bunSrc);
 		await copyFile(bunSrc, bunDest1);
 		console.log(`bun binary copied successfully from ${bunSrc} to ${bunDest1}`);
-
-		if (platform === 'macos') {
-			await copyFile(bunSrc, bunDest2);
-			console.log(`bun binary also copied to ${bunDest2}`);
-		}
 	} catch (error) {
 		console.error('failed to copy bun binary:', error);
 		console.error('source path:', bunSrc);
