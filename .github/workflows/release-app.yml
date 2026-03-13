@@ -271,6 +271,9 @@ jobs:
             if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
               export CFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
               export CXXFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+            elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
+              export CFLAGS="-march=penryn -mno-avx -mno-avx2"
+              export CXXFLAGS="-march=penryn -mno-avx -mno-avx2"
             fi
           fi
           cargo build --release -p screenpipe-server ${{ matrix.args }}
@@ -349,9 +352,9 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CI: true
-          # Fix i8mm build error on Apple Silicon
-          CFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || '' }}
-          CXXFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || '' }}
+          # Fix i8mm build error on Apple Silicon; prevent AVX/AVX2 on Intel Mac
+          CFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || matrix.target == 'x86_64-apple-darwin' && '-march=penryn -mno-avx -mno-avx2' || '' }}
+          CXXFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || matrix.target == 'x86_64-apple-darwin' && '-march=penryn -mno-avx -mno-avx2' || '' }}
           # Build optimizations
           CARGO_PROFILE_RELEASE_LTO: ${{ matrix.os_type == 'windows' && 'thin' || 'false' }}
           CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ matrix.os_type == 'windows' && '2' || '3' }}

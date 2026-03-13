@@ -154,10 +154,19 @@ build_sidecar_release() {
     local target="${1:-$HOST_TARGET}"
     echo "==> Building from: $(pwd)"
     echo "==> Building sidecar (release) for $target..."
+    # Set C/C++ flags per target to prevent AVX/AVX2 (Intel) or i8mm (ARM)
+    local cflags="" cxxflags=""
+    if [[ "$target" == "x86_64-apple-darwin" ]]; then
+        cflags="-march=penryn -mno-avx -mno-avx2"
+        cxxflags="-march=penryn -mno-avx -mno-avx2"
+    elif [[ "$target" == "aarch64-apple-darwin" ]]; then
+        cflags="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+        cxxflags="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+    fi
     if [[ "$target" == "$HOST_TARGET" ]]; then
-        cargo build --release --bin "$SIDECAR_BIN"
+        CFLAGS="$cflags" CXXFLAGS="$cxxflags" cargo build --release --bin "$SIDECAR_BIN"
     else
-        cargo build --release --bin "$SIDECAR_BIN" --target "$target"
+        CFLAGS="$cflags" CXXFLAGS="$cxxflags" cargo build --release --bin "$SIDECAR_BIN" --target "$target"
     fi
     echo "==> Sidecar built for $target"
 }

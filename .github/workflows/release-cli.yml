@@ -121,6 +121,9 @@ jobs:
           if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
             export CFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
             export CXXFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+          elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
+            export CFLAGS="-march=penryn -mno-avx -mno-avx2"
+            export CXXFLAGS="-march=penryn -mno-avx -mno-avx2"
           fi
           cargo build --release --features metal --target ${{ matrix.target }}
 

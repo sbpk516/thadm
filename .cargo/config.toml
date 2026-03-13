@@ -26,8 +26,16 @@ rustflags = [
     "-l", "c++",
 ]
 
+# Force Penryn baseline for all Intel Mac builds (SSE up to SSE4.1, no AVX/AVX2)
+# This prevents Rust code from using AVX/AVX2 instructions that older Intel Macs lack
+# NOTE: C/C++ deps (whisper.cpp, knf-rs) need CFLAGS/CXXFLAGS set separately — see build.sh
 [target.x86_64-apple-darwin]
-rustflags = "-lc++ -l framework=Accelerate"
+rustflags = [
+    "-C", "target-cpu=penryn",
+    "-C", "link-arg=-framework",
+    "-C", "link-arg=Accelerate",
+    "-l", "c++",
+]
 
 [env]
 CMAKE_POLICY_VERSION_MINIMUM = "3.5"
