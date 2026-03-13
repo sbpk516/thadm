@@ -176,7 +176,9 @@ async function copyBunBinary() {
 		// Host bun matches one arch; download the other from GitHub releases
 		const hostDest = isArm64Host ? bunDest1 : bunDest2;
 		const crossDest = isArm64Host ? bunDest2 : bunDest1;
-		const crossRelease = isArm64Host ? 'bun-darwin-x64' : 'bun-darwin-aarch64';
+		// Use baseline build for x64 — standard bun-darwin-x64 requires AVX which
+		// older Intel Macs and Rosetta 2 don't support, causing SIGSEGV crashes
+		const crossRelease = isArm64Host ? 'bun-darwin-x64-baseline' : 'bun-darwin-aarch64';
 		const crossUrl = `https://github.com/oven-sh/bun/releases/latest/download/${crossRelease}.zip`;
 
 		const crossExpectedArch = isArm64Host ? 'x86_64' : 'arm64';
