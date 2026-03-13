@@ -118,13 +118,10 @@ jobs:
           # Fix i8mm build error - force M1 compatible architecture
           # -U__ARM_FEATURE_MATMUL_INT8 undefines i8mm macro
           # See: https://github.com/ggml-org/whisper.cpp/issues/3427
-          if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
-            export CFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-            export CXXFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-          elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
-            export CFLAGS="-march=penryn -mno-avx -mno-avx2"
-            export CXXFLAGS="-march=penryn -mno-avx -mno-avx2"
-          fi
+          export CFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+          export CXXFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+          export CFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2"
+          export CXXFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2"
           cargo build --release --features metal --target ${{ matrix.target }}
 
       - name: Set version

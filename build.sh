@@ -154,19 +154,21 @@ build_sidecar_release() {
     local target="${1:-$HOST_TARGET}"
     echo "==> Building from: $(pwd)"
     echo "==> Building sidecar (release) for $target..."
-    # Set C/C++ flags per target to prevent AVX/AVX2 (Intel) or i8mm (ARM)
-    local cflags="" cxxflags=""
-    if [[ "$target" == "x86_64-apple-darwin" ]]; then
-        cflags="-march=penryn -mno-avx -mno-avx2"
-        cxxflags="-march=penryn -mno-avx -mno-avx2"
-    elif [[ "$target" == "aarch64-apple-darwin" ]]; then
-        cflags="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-        cxxflags="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-    fi
+    # Set target-specific C/C++ flags to prevent AVX/AVX2 (Intel) or i8mm (ARM)
+    # Use CC crate's target-specific env vars (CFLAGS_<target_with_underscores>)
+    # to avoid applying x86 flags to ARM assembly files (e.g. ring crate)
     if [[ "$target" == "$HOST_TARGET" ]]; then
-        CFLAGS="$cflags" CXXFLAGS="$cxxflags" cargo build --release --bin "$SIDECAR_BIN"
+        CFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2" \
+        CXXFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2" \
+        CFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8" \
+        CXXFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8" \
+        cargo build --release --bin "$SIDECAR_BIN"
     else
-        CFLAGS="$cflags" CXXFLAGS="$cxxflags" cargo build --release --bin "$SIDECAR_BIN" --target "$target"
+        CFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2" \
+        CXXFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2" \
+        CFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8" \
+        CXXFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8" \
+        cargo build --release --bin "$SIDECAR_BIN" --target "$target"
     fi
     echo "==> Sidecar built for $target"
 }
@@ -236,7 +238,13 @@ cmd_release() {
 
     # Tauri's DMG bundler (bundle_dmg.sh) can fail on newer macOS versions.
     # If `bun tauri build` fails but the .app exists, fall back to hdiutil.
-    if SKIP_SCREENPIPE_SETUP=1 bun tauri build --target "$target"; then
+    # Use target-specific CFLAGS to avoid applying x86 flags to ARM assembly (ring crate)
+    if SKIP_SCREENPIPE_SETUP=1 \
+        CFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2" \
+        CXXFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2" \
+        CFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8" \
+        CXXFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8" \
+        bun tauri build --target "$target"; then
         echo "==> Tauri build completed successfully."
         # Tauri already signs & notarizes the .app during build.
         # Only notarize the DMG (notarytool rejects .app directly).

@@ -268,13 +268,10 @@ jobs:
           if [[ "${{ matrix.os_type }}" == "macos" ]]; then
             export PKG_CONFIG_PATH="/usr/local/opt/ffmpeg/lib/pkgconfig:$PKG_CONFIG_PATH"
             export PKG_CONFIG_ALLOW_CROSS=1
-            if [[ "${{ matrix.target }}" == "aarch64-apple-darwin" ]]; then
-              export CFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-              export CXXFLAGS="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
-            elif [[ "${{ matrix.target }}" == "x86_64-apple-darwin" ]]; then
-              export CFLAGS="-march=penryn -mno-avx -mno-avx2"
-              export CXXFLAGS="-march=penryn -mno-avx -mno-avx2"
-            fi
+            export CFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+              export CXXFLAGS_aarch64_apple_darwin="-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8"
+              export CFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2"
+              export CXXFLAGS_x86_64_apple_darwin="-march=penryn -mno-avx -mno-avx2"
           fi
           cargo build --release -p screenpipe-server ${{ matrix.args }}
 
@@ -352,9 +349,12 @@ jobs:
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           CI: true
-          # Fix i8mm build error on Apple Silicon; prevent AVX/AVX2 on Intel Mac
-          CFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || matrix.target == 'x86_64-apple-darwin' && '-march=penryn -mno-avx -mno-avx2' || '' }}
-          CXXFLAGS: ${{ matrix.target == 'aarch64-apple-darwin' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || matrix.target == 'x86_64-apple-darwin' && '-march=penryn -mno-avx -mno-avx2' || '' }}
+          # Target-specific C/C++ flags (cc crate reads CFLAGS_<target>)
+          # Prevents applying x86 flags to ARM assembly files (ring crate)
+          CFLAGS_aarch64_apple_darwin: ${{ matrix.os_type == 'macos' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || '' }}
+          CXXFLAGS_aarch64_apple_darwin: ${{ matrix.os_type == 'macos' && '-mcpu=apple-m1 -U__ARM_FEATURE_MATMUL_INT8' || '' }}
+          CFLAGS_x86_64_apple_darwin: ${{ matrix.os_type == 'macos' && '-march=penryn -mno-avx -mno-avx2' || '' }}
+          CXXFLAGS_x86_64_apple_darwin: ${{ matrix.os_type == 'macos' && '-march=penryn -mno-avx -mno-avx2' || '' }}
           # Build optimizations
           CARGO_PROFILE_RELEASE_LTO: ${{ matrix.os_type == 'windows' && 'thin' || 'false' }}
           CARGO_PROFILE_RELEASE_OPT_LEVEL: ${{ matrix.os_type == 'windows' && '2' || '3' }}
