@@ -113,11 +113,11 @@ pub async fn redownload_model(model_type: PyannoteModel) -> Result<PathBuf> {
 async fn download_model(model_type: PyannoteModel) -> Result<()> {
     let (url, filename) = match model_type {
         PyannoteModel::Segmentation => (
-            "https://github.com/mediar-ai/screenpipe/raw/refs/heads/main/screenpipe-audio/models/pyannote/segmentation-3.0.onnx",
+            "https://github.com/sbpk516/thadm/releases/download/models/segmentation-3.0.onnx",
             "segmentation-3.0.onnx",
         ),
         PyannoteModel::Embedding => (
-            "https://github.com/mediar-ai/screenpipe/raw/refs/heads/main/screenpipe-audio/models/pyannote/wespeaker_en_voxceleb_CAM++.onnx",
+            "https://github.com/sbpk516/thadm/releases/download/models/wespeaker_en_voxceleb_CAM%2B%2B.onnx",
             "wespeaker_en_voxceleb_CAM++.onnx",
         ),
     };
