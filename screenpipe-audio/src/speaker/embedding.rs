@@ -5,22 +5,33 @@ use std::path::Path;
 
 #[derive(Debug)]
 pub struct EmbeddingExtractor {
-    session: Session,
+    session: Option<Session>,
 }
 
 impl EmbeddingExtractor {
     pub fn new<P: AsRef<Path>>(model_path: P) -> Result<Self> {
         let session = super::create_session(&model_path)?;
-        Ok(Self { session })
+        Ok(Self { session: Some(session) })
     }
+
+    /// Create a disabled extractor that returns empty embeddings
+    pub fn disabled() -> Self {
+        Self { session: None }
+    }
+
     pub fn compute(&mut self, samples: &[f32]) -> Result<impl Iterator<Item = f32>> {
+        let session = match &self.session {
+            Some(s) => s,
+            None => return Ok(Vec::new().into_iter()),
+        };
+
         let features: Array2<f32> = knf_rs::compute_fbank(samples)
             .map_err(anyhow::Error::msg)
             .context("compute_fbank failed")?;
         let features = features.insert_axis(ndarray::Axis(0)); // Add batch dimension
         let inputs = ort::inputs! ["feats" => features.view()]?;
 
-        let ort_outs = self.session.run(inputs)?;
+        let ort_outs = session.run(inputs)?;
         let ort_out = ort_outs
             .get("embs")
             .context("Output tensor not found")?

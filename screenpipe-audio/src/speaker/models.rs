@@ -87,6 +87,29 @@ pub enum PyannoteModel {
     Embedding,
 }
 
+/// Delete cached model and re-download fresh copy. Returns the new path.
+pub async fn redownload_model(model_type: PyannoteModel) -> Result<PathBuf> {
+    let (filename, mutex) = match &model_type {
+        PyannoteModel::Segmentation => ("segmentation-3.0.onnx", &*SEGMENTATION_MODEL_PATH),
+        PyannoteModel::Embedding => ("wespeaker_en_voxceleb_CAM++.onnx", &*EMBEDDING_MODEL_PATH),
+    };
+    let cache_dir = get_cache_dir()?;
+    let path = cache_dir.join(filename);
+
+    // Remove the corrupted file
+    if path.exists() {
+        let _ = tokio::fs::remove_file(&path).await;
+    }
+
+    // Clear the cached path so get_or_download won't skip download
+    *mutex.lock().await = None;
+
+    // Download directly (bypass Once guard which may have already fired)
+    download_model(model_type).await?;
+
+    Ok(path)
+}
+
 async fn download_model(model_type: PyannoteModel) -> Result<()> {
     let (url, filename) = match model_type {
         PyannoteModel::Segmentation => (
@@ -101,7 +124,21 @@ async fn download_model(model_type: PyannoteModel) -> Result<()> {
 
     info!("downloading {} model from {}", filename, url);
     let response = reqwest::get(url).await?;
+    if !response.status().is_success() {
+        return Err(anyhow::anyhow!(
+            "Failed to download {}: HTTP {}",
+            filename,
+            response.status()
+        ));
+    }
     let model_data = response.bytes().await?;
+    if model_data.len() < 1024 {
+        return Err(anyhow::anyhow!(
+            "Downloaded {} is too small ({} bytes) — likely corrupted or error page",
+            filename,
+            model_data.len()
+        ));
+    }
 
     let cache_dir = get_cache_dir()?;
     tokio::fs::create_dir_all(&cache_dir).await?;
