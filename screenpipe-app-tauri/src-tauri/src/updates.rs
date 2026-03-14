@@ -112,10 +112,46 @@ impl UpdatesManager {
 
             #[cfg(not(target_os = "windows"))]
             {
-                update.download_and_install(|_, _| {}, || {}).await?;
-                *self.update_installed.lock().await = true;
-                self.update_menu_item.set_enabled(true)?;
-                self.update_menu_item.set_text("update now")?;
+                let menu_item = self.update_menu_item.clone();
+                let mut downloaded: usize = 0;
+                let download_result = tokio::time::timeout(
+                    Duration::from_secs(600),
+                    update.download_and_install(
+                        move |chunk_length, content_length| {
+                            downloaded += chunk_length;
+                            if let Some(total) = content_length {
+                                let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
+                                let _ = menu_item.set_text(&format!("downloading update... {}%", pct.min(100)));
+                            }
+                        },
+                        || {},
+                    ),
+                )
+                .await;
+
+                match download_result {
+                    Ok(Ok(())) => {
+                        *self.update_installed.lock().await = true;
+                        self.update_menu_item.set_enabled(true)?;
+                        self.update_menu_item.set_text("update now")?;
+                    }
+                    Ok(Err(e)) => {
+                        error!("Update download failed: {}", e);
+                        *self.update_available.lock().await = false;
+                        self.update_menu_item.set_enabled(false)?;
+                        self.update_menu_item.set_text("update failed - will retry")?;
+                        self.restore_tray_icon();
+                        return Ok(false);
+                    }
+                    Err(_) => {
+                        error!("Update download timed out after 10 minutes");
+                        *self.update_available.lock().await = false;
+                        self.update_menu_item.set_enabled(false)?;
+                        self.update_menu_item.set_text("update failed - will retry")?;
+                        self.restore_tray_icon();
+                        return Ok(false);
+                    }
+                }
             }
 
             if show_dialog {
@@ -149,17 +185,49 @@ impl UpdatesManager {
                             error!("Failed to kill sidecar: {}", err);
                         }
 
-                        update.download_and_install(|_, _| {}, || {}).await?;
-                        *self.update_installed.lock().await = true;
+                        let menu_item = self.update_menu_item.clone();
+                        let mut downloaded: usize = 0;
+                        let download_result = tokio::time::timeout(
+                            Duration::from_secs(600),
+                            update.download_and_install(
+                                move |chunk_length, content_length| {
+                                    downloaded += chunk_length;
+                                    if let Some(total) = content_length {
+                                        let pct = (downloaded as f64 / total as f64 * 100.0) as u32;
+                                        let _ = menu_item.set_text(&format!("downloading update... {}%", pct.min(100)));
+                                    }
+                                },
+                                || {},
+                            ),
+                        )
+                        .await;
 
-                        self.update_menu_item.set_enabled(true)?;
-                        self.update_menu_item.set_text("update now")?;
+                        match download_result {
+                            Ok(Ok(())) => {
+                                *self.update_installed.lock().await = true;
+                                self.update_menu_item.set_enabled(true)?;
+                                self.update_menu_item.set_text("update now")?;
+                            }
+                            Ok(Err(e)) => {
+                                error!("Update download failed: {}", e);
+                                *self.update_available.lock().await = false;
+                                self.update_menu_item.set_enabled(false)?;
+                                self.update_menu_item.set_text("update failed - will retry")?;
+                                self.restore_tray_icon();
+                                return Ok(false);
+                            }
+                            Err(_) => {
+                                error!("Update download timed out after 10 minutes");
+                                *self.update_available.lock().await = false;
+                                self.update_menu_item.set_enabled(false)?;
+                                self.update_menu_item.set_text("update failed - will retry")?;
+                                self.restore_tray_icon();
+                                return Ok(false);
+                            }
+                        }
                     }
-                    // Proceed with the update
 
-                    // i think it shouldn't kill if we're in dev mode (on macos, windows need to kill)
-                    // bad UX: i use CLI and it kills my CLI because i updated app
-
+                    // Stop sidecar and restart to apply the update
                     #[cfg(not(target_os = "windows"))]
                     {
                         if let Err(err) =
@@ -181,6 +249,27 @@ impl UpdatesManager {
 
     pub fn update_now_menu_item_ref(&self) -> &MenuItem<Wry> {
         &self.update_menu_item
+    }
+
+    fn restore_tray_icon(&self) {
+        if let Some(tray) = self.app.tray_by_id("thadm_main") {
+            let theme = dark_light::detect().unwrap_or(Mode::Dark);
+            let icon_path = if theme == Mode::Light {
+                "assets/thadm-tray-black.png"
+            } else {
+                "assets/thadm-tray-white.png"
+            };
+            if let Ok(path) = self
+                .app
+                .path()
+                .resolve(icon_path, tauri::path::BaseDirectory::Resource)
+            {
+                if let Ok(image) = tauri::image::Image::from_path(path) {
+                    let _ = tray.set_icon(Some(image));
+                    let _ = tray.set_icon_as_template(true);
+                }
+            }
+        }
     }
 
     pub fn update_screenpipe(&self) -> Option<Error> {
