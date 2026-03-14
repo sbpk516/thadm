@@ -326,13 +326,65 @@ cmd_release_all() {
         cd "$PROJECT_ROOT"
     done
 
+    # Generate updater artifacts (latest.json + .tar.gz)
+    echo ""
+    echo "==> Generating auto-updater artifacts..."
+    local version
+    version="$(grep '^version = ' "$TAURI_DIR/src-tauri/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')"
+    local bundle_base="$TAURI_DIR/src-tauri/target"
+
+    # Collect .tar.gz and .sig for each target
+    local aarch64_targz="$bundle_base/aarch64-apple-darwin/release/bundle/macos/Thadm.app.tar.gz"
+    local aarch64_sig="$aarch64_targz.sig"
+    local x64_targz="$bundle_base/x86_64-apple-darwin/release/bundle/macos/Thadm.app.tar.gz"
+    local x64_sig="$x64_targz.sig"
+
+    # Copy updater bundles to dist/
+    if [[ -f "$aarch64_targz" ]]; then
+        cp "$aarch64_targz" "$output_dir/Thadm.app_aarch64.tar.gz"
+        echo "==> Copied: dist/Thadm.app_aarch64.tar.gz"
+    fi
+    if [[ -f "$x64_targz" ]]; then
+        cp "$x64_targz" "$output_dir/Thadm.app_x64.tar.gz"
+        echo "==> Copied: dist/Thadm.app_x64.tar.gz"
+    fi
+
+    # Generate latest.json for Tauri updater
+    if [[ -f "$aarch64_sig" && -f "$x64_sig" ]]; then
+        local pub_date
+        pub_date="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+        cat > "$output_dir/latest.json" <<ENDJSON
+{
+  "version": "$version",
+  "notes": "Thadm v$version",
+  "pub_date": "$pub_date",
+  "platforms": {
+    "darwin-aarch64": {
+      "signature": "$(cat "$aarch64_sig")",
+      "url": "https://github.com/sbpk516/thadm/releases/download/v$version/Thadm.app_aarch64.tar.gz"
+    },
+    "darwin-x86_64": {
+      "signature": "$(cat "$x64_sig")",
+      "url": "https://github.com/sbpk516/thadm/releases/download/v$version/Thadm.app_x64.tar.gz"
+    }
+  }
+}
+ENDJSON
+        echo "==> Generated: dist/latest.json"
+    else
+        echo "WARNING: .sig files missing — latest.json NOT generated"
+    fi
+
     echo ""
     echo "========================================="
     echo "  ALL BUILDS COMPLETE"
     echo "========================================="
     echo ""
-    echo "Output DMGs in: $output_dir/"
-    ls -lh "$output_dir"/*.dmg 2>/dev/null || echo "  (no DMGs found — check build output above)"
+    echo "Output in: $output_dir/"
+    ls -lh "$output_dir"/Thadm* "$output_dir"/latest.json 2>/dev/null || echo "  (no artifacts found)"
+    echo ""
+    echo "To create a GitHub release:"
+    echo "  gh release create v$version dist/Thadm_${version}_*_apple-silicon.dmg dist/Thadm_${version}_*_intel.dmg dist/Thadm.app_aarch64.tar.gz dist/Thadm.app_x64.tar.gz dist/latest.json --title \"Thadm v$version\""
     echo ""
     echo "Note: Windows builds require GitHub Actions."
     echo "      Trigger the 'Release App' workflow from the Actions tab."
