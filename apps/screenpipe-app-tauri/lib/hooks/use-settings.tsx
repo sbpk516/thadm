@@ -240,18 +240,18 @@ const DEFAULT_IGNORED_WINDOWS_PER_OS: Record<string, string[]> = {
 	linux: ["Info center", "Discover", "Parted"],
 };
 
-// Default Screenpipe Cloud preset
+// Default preset — local-first, no cloud dependency on fresh install
 const DEFAULT_CLOUD_PRESET: AIPreset = {
-	id: "screenpipe-cloud",
-	provider: "screenpipe-cloud",
-	url: "",
-	model: "auto",
-	maxContextChars: 1000000,
+	id: "default",
+	provider: "native-ollama",
+	url: "http://localhost:11434/v1",
+	model: "",
+	maxContextChars: 128000,
 	defaultPreset: true,
 	prompt: "",
 };
 
-// Legacy presets removed — screenpipe-cloud is the only default now
+// Legacy presets removed — cloud preset is the only default now
 let DEFAULT_SETTINGS: Settings = {
 			aiPresets: [DEFAULT_CLOUD_PRESET as any],
 			deviceId: crypto.randomUUID(),
@@ -415,10 +415,10 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
-		// Migration: Rename "pi" provider to "screenpipe-cloud" for clarity
+		// Migration: Rename legacy "pi" provider to "native-ollama" (cloud disabled)
 		if (settings.aiPresets?.some((p: any) => p.provider === "pi")) {
 			settings.aiPresets = settings.aiPresets.map((p: any) =>
-				p.provider === "pi" ? { ...p, provider: "screenpipe-cloud" } : p
+				p.provider === "pi" ? { ...p, provider: "native-ollama", url: "http://localhost:11434/v1" } : p
 			);
 			needsUpdate = true;
 		}
@@ -426,20 +426,38 @@ function createSettingsStore() {
 		// Migration: Rename "pi-agent" preset id to "screenpipe-cloud"
 		if (settings.aiPresets?.some((p: any) => p.id === "pi-agent")) {
 			settings.aiPresets = settings.aiPresets.map((p: any) =>
-				p.id === "pi-agent" ? { ...p, id: "screenpipe-cloud" } : p
+				p.id === "pi-agent" ? { ...p, id: "default" } : p
 			);
 			needsUpdate = true;
 		}
 
-		// Migration: Add screenpipe-cloud preset for existing users (without touching their existing presets)
-		const hasCloudPreset = settings.aiPresets?.some(
-			(p: any) => p.id === "screenpipe-cloud" || p.provider === "screenpipe-cloud"
+		// Migration: Rename old "screenpipe-cloud" and "screenpipe-free" preset ids to "default"
+		if (settings.aiPresets?.some((p: any) => p.id === "screenpipe-cloud" || p.id === "screenpipe-free")) {
+			settings.aiPresets = settings.aiPresets.map((p: any) =>
+				(p.id === "screenpipe-cloud" || p.id === "screenpipe-free") ? { ...p, id: "default" } : p
+			);
+			needsUpdate = true;
+		}
+
+		// Migration: Convert screenpipe-cloud presets to native-ollama (cloud disabled in thadm)
+		if (settings.aiPresets?.some((p: any) => p.provider === "screenpipe-cloud")) {
+			settings.aiPresets = settings.aiPresets.map((p: any) =>
+				p.provider === "screenpipe-cloud"
+					? { ...p, provider: "native-ollama", url: "http://localhost:11434/v1", model: "" }
+					: p
+			);
+			needsUpdate = true;
+		}
+
+		// Migration: Ensure existing users have a default preset (without touching their existing presets)
+		const hasDefaultPreset = settings.aiPresets?.some(
+			(p: any) => p.id === "default"
 		);
-		if (settings.aiPresets && settings.aiPresets.length > 0 && !hasCloudPreset) {
+		if (settings.aiPresets && settings.aiPresets.length > 0 && !hasDefaultPreset) {
 			// Only set as default if no other preset is already default
 			const hasDefault = settings.aiPresets.some((p: any) => p.defaultPreset);
-			const cloudPreset = { ...DEFAULT_CLOUD_PRESET, defaultPreset: !hasDefault };
-			settings.aiPresets = [cloudPreset as any, ...settings.aiPresets];
+			const defaultPreset = { ...DEFAULT_CLOUD_PRESET, defaultPreset: !hasDefault };
+			settings.aiPresets = [defaultPreset as any, ...settings.aiPresets];
 			needsUpdate = true;
 		}
 

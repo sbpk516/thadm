@@ -228,10 +228,10 @@ async saveEnterpriseLicenseKey(licenseKey: string) : Promise<Result<null, string
 }
 },
 /**
- * Called by the frontend after fetching the enterprise policy.
+ * No-op command stub for enterprise policy
  */
-async setEnterprisePolicy(hiddenSections: string[]) : Promise<void> {
-    await TAURI_INVOKE("set_enterprise_policy", { hiddenSections });
+async setEnterprisePolicy() : Promise<void> {
+    await TAURI_INVOKE("set_enterprise_policy");
 },
 async getDiskUsage(forceRefresh: boolean | null, dataDir: string | null) : Promise<Result<JsonValue, string>> {
     try {

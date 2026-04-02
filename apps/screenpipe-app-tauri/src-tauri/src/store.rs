@@ -303,9 +303,9 @@ impl Default for AIPreset {
         Self {
             id: String::new(),
             prompt: String::new(),
-            provider: AIProviderType::ScreenpipeCloud,
-            url: "".to_string(), // THADM: disabled
-            model: "qwen/qwen3.5-flash-02-23".to_string(),
+            provider: AIProviderType::NativeOllama,
+            url: "http://localhost:11434/v1".to_string(),
+            model: String::new(),
             default_preset: false,
             api_key: None,
             max_context_chars: 512000,
@@ -443,15 +443,15 @@ impl Default for SettingsStore {
 
         // Default free AI preset - works without login
         let default_free_preset = AIPreset {
-            id: "screenpipe-free".to_string(),
+            id: "default".to_string(),
             prompt: r#"IMPORTANT: At the start of every conversation, read the files in .pi/skills/ directory (e.g. .pi/skills/screenpipe-api/SKILL.md and .pi/skills/screenpipe-cli/SKILL.md) before responding.
 Rules:
 - Media: use standard markdown ![description](/path/to/file.mp4) for videos and ![description](/path/to/image.jpg) for images
 - Always answer my question/intent, do not make up things
 "#.to_string(),
-            provider: AIProviderType::ScreenpipeCloud,
-            url: "".to_string(), // THADM: disabled
-            model: "auto".to_string(),
+            provider: AIProviderType::NativeOllama,
+            url: "http://localhost:11434/v1".to_string(),
+            model: String::new(),
             default_preset: true,
             api_key: None,
             max_context_chars: 128000,

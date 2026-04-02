@@ -877,7 +877,7 @@ export function RecordingSettings() {
       return;
     }
 
-    // THADM: disabled — screenpipe cloud checkout
+    // THADM: disabled — cloud checkout
     // If trying to use cloud but not subscribed
     if (value === "screenpipe-cloud" && !settings.user?.cloud_subscribed) {
       return;

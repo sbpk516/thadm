@@ -950,7 +950,7 @@ export const AIPresetDialog = ({
       prompt: providerData.prompt,
     };
 
-    // Screenpipe Cloud: max output is defined per model in the gateway catalog (see screenpipe_cloud_models in Rust).
+    // Thadm Cloud: max output is defined per model in the gateway catalog (see screenpipe_cloud_models in Rust).
     // Do not persist or override maxTokens from this dialog — avoids defaulting to 4096 and matches Settings.
     if (providerData.provider !== "screenpipe-cloud") {
       (newPreset as any).maxTokens = (providerData as any).maxTokens ?? 4096;
@@ -1044,11 +1044,11 @@ export const AIPresetsSelector = ({
     return defaultPreset?.id || settings?.aiPresets?.[0]?.id || undefined;
   }, [settings?.aiPresets, isControlled, controlledPresetId]);
 
-  // Check if selected preset requires login
-  const selectedPresetRequiresLogin = useMemo(() => {
-    const preset = aiPresets.find((p) => p.id === selectedPreset);
-    return preset?.provider === "screenpipe-cloud" && !settings?.user?.token;
-  }, [aiPresets, selectedPreset, settings?.user?.token]);
+  // THADM: disabled — never show login-required warnings for presets
+  const selectedPresetRequiresLogin = false; // useMemo(() => {
+  //   const preset = aiPresets.find((p) => p.id === selectedPreset);
+  //   return preset?.provider === "screenpipe-cloud" && !settings?.user?.token;
+  // }, [aiPresets, selectedPreset, settings?.user?.token]);
 
   useEffect(() => {
     if (onPresetChange) {
@@ -1264,7 +1264,7 @@ export const AIPresetsSelector = ({
 
   const handleRemovePreset = (preset: AIPreset) => {
     if (!settings?.aiPresets) return;
-    // Prevent deletion of screenpipe-cloud preset for Pro subscribers
+    // Prevent deletion of cloud preset for Pro subscribers
     if (preset.provider === "screenpipe-cloud" && settings.user?.cloud_subscribed) {
       toast.error("Cannot delete cloud preset", {
         description: "This preset is included with your Pro subscription",
@@ -1295,7 +1295,7 @@ export const AIPresetsSelector = ({
           <div className="flex items-center gap-2 p-2 text-sm bg-amber-500/10 border border-amber-500/20 rounded-lg">
             <AlertTriangle className="h-4 w-4 text-amber-500 shrink-0" />
             <span className="text-amber-600 dark:text-amber-400 flex-1">
-              Login required to use Screenpipe Cloud
+              Login required to use Thadm Cloud
             </span>
             {showLoginCta && (
               <Button

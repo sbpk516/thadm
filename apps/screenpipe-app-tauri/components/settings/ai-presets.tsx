@@ -445,7 +445,7 @@ const AISection = ({
   useEffect(() => {
     const model = settingsPreset?.model;
     if (!model) return;
-    // Screenpipe Cloud uses per-model max output from the gateway catalog — do not infer from model name.
+    // Thadm Cloud uses per-model max output from the gateway catalog — do not infer from model name.
     if (settingsPreset?.provider === "screenpipe-cloud") return;
     const tokens = getDefaultMaxTokens(model);
     if (tokens && (settingsPreset as any)?.maxTokens !== tokens) {
@@ -1648,7 +1648,7 @@ const providerImageSrc: Record<string, string> = {
   custom: "/images/custom.png",
   pi: "/images/screenpipe.png",
   screenpipe: "/images/screenpipe.png",
-  "screenpipe-cloud": "/images/screenpipe.png",
+  "screenpipe-cloud": "/images/screenpipe.png", // THADM: kept for backward compat with stored presets
 };
 
 // Sortable preset card for drag-and-drop reordering
@@ -1827,7 +1827,7 @@ export const AIPresets = () => {
   const removePreset = async (id: string) => {
     setIsLoading(true);
     try {
-      // Prevent deletion of screenpipe-cloud preset for Pro subscribers
+      // Prevent deletion of cloud preset for Pro subscribers
       const presetToRemove = settings.aiPresets.find((preset) => preset.id === id);
       if (presetToRemove?.provider === "screenpipe-cloud" && settings.user?.cloud_subscribed) {
         toast({

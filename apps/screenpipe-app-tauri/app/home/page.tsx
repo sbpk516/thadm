@@ -415,9 +415,10 @@ function SettingsPageContent() {
     { id: "speakers", label: "Speakers", icon: <Mic className="h-4 w-4" />, group: "data" },
     { id: "memories", label: "Memories", icon: <Sparkles className="h-4 w-4" />, group: "data" },
     { id: "connections", label: "Connections", icon: <Plug className="h-4 w-4" />, group: "data" },
-    { id: "team", label: "Team", icon: <Users className="h-4 w-4" />, group: "account" },
-    { id: "account", label: "Account", icon: <User className="h-4 w-4" />, group: "account" },
-    { id: "referral", label: "Get free month", icon: <Gift className="h-4 w-4" />, group: "account" },
+    // THADM: disabled — cloud/subscription settings items
+    // { id: "team", label: "Team", icon: <Users className="h-4 w-4" />, group: "account" },
+    // { id: "account", label: "Account", icon: <User className="h-4 w-4" />, group: "account" },
+    // { id: "referral", label: "Get free month", icon: <Gift className="h-4 w-4" />, group: "account" },
   ] satisfies SettingsModalSectionItem[]).filter((s) => !isSectionHidden(s.id));
 
   const appGroup = settingsModalSections.filter(s => s.group === "app");
@@ -582,8 +583,8 @@ function SettingsPageContent() {
               {/* Spacer */}
               <div className="flex-1" />
 
-              {/* Team promo card — hidden when user already has a team, sidebar collapsed, or enterprise */}
-              {!teamState.team && !sidebarCollapsed && !isSectionHidden("team") && !teamPromoDismissed && (
+              {/* THADM: disabled — team promo card */}
+              {/* {!teamState.team && !sidebarCollapsed && !isSectionHidden("team") && !teamPromoDismissed && (
                 <div className={cn("mx-1 mb-3 p-3 border relative group", isTranslucent ? "vibrant-card-border" : "border-border bg-card")}>
                   <button
                     onClick={() => {
@@ -607,12 +608,12 @@ function SettingsPageContent() {
                     ADD YOUR TEAM
                   </button>
                 </div>
-              )}
+              )} */}
 
               {/* Bottom items */}
               <div className={cn("space-y-0.5 border-t pt-2", isTranslucent ? "vibrant-sidebar-border" : "border-border")}>
-                {/* Team link — hide invite promo in enterprise (unless team exists) */}
-                {(!isSectionHidden("team") || teamState.team) && (() => {
+                {/* THADM: disabled — Invite your team link */}
+                {/* {(!isSectionHidden("team") || teamState.team) && (() => {
                   const teamLabel = teamState.team
                     ? `Your team (${teamState.members.length})`
                     : "Invite your team";
@@ -638,10 +639,10 @@ function SettingsPageContent() {
                     );
                   }
                   return btn;
-                })()}
+                })()} */}
 
-                {/* Get free month — hidden in enterprise */}
-                {!isSectionHidden("referral") && (() => {
+                {/* THADM: disabled — Get free month link */}
+                {/* {!isSectionHidden("referral") && (() => {
                   const btn = (
                     <button
                       onClick={() => openModal("referral")}
@@ -664,7 +665,7 @@ function SettingsPageContent() {
                     );
                   }
                   return btn;
-                })()}
+                })()} */}
 
                 {/* Settings */}
                 {!isSectionHidden("settings") && (() => {
@@ -847,6 +848,7 @@ function SettingsPageContent() {
                       </div>
 
                       {/* Account group */}
+                      {accountGroup.length > 0 && (
                       <div>
                         <div className="px-2 pb-1">
                           <span className="text-[10px] font-medium uppercase tracking-wider text-muted-foreground/60">
@@ -879,6 +881,7 @@ function SettingsPageContent() {
                           ))}
                         </div>
                       </div>
+                      )}
                     </div>
                   </div>
 

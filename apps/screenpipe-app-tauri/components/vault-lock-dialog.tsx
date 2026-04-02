@@ -147,7 +147,7 @@ export function VaultLockDialog() {
             />
           </div>
           <p className="text-sm text-muted-foreground">
-            {Math.round(progress * 100)}% — do not close screenpipe
+            {Math.round(progress * 100)}% — do not close thadm
           </p>
         </div>
       </div>
@@ -196,7 +196,7 @@ export function VaultLockDialog() {
             set up vault encryption
           </DialogTitle>
           <DialogDescription>
-            create a password to encrypt all your screenpipe data at rest.
+            create a password to encrypt all your thadm data at rest.
             lock/unlock anytime from the tray menu or settings shortcut.
           </DialogDescription>
         </DialogHeader>

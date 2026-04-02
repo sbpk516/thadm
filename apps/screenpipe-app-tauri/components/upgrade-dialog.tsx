@@ -142,7 +142,7 @@ export function UpgradeDialog({
               >
                 <Zap className="h-4 w-4 shrink-0" />
                 <div className="text-left flex-1 min-w-0">
-                  <div className="font-medium">screenpipe — $99/mo</div>
+                  <div className="font-medium">thadm — $99/mo</div>
                   <div className="text-[11px] text-muted-foreground mt-0.5">
                     everything included — cloud, AI, sync
                   </div>

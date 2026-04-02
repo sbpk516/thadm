@@ -176,7 +176,7 @@ export default function ReadContent({ handleNextSlide }: ReadContentProps) {
           <p className="font-mono text-sm text-muted-foreground leading-relaxed">
             open this page in your browser.
             <br />
-            screenpipe will capture everything you read.
+            thadm will capture everything you read.
             <br />
             then come back and search for it.
           </p>

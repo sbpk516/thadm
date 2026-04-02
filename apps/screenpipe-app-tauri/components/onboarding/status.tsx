@@ -208,10 +208,10 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
   const ensureDefaultPreset = async () => {
     if (settings.aiPresets.length === 0) {
       const defaultPreset = {
-        id: "screenpipe-cloud",
-        provider: "screenpipe-cloud" as const,
-        url: "",
-        model: "auto",
+        id: "default",
+        provider: "native-ollama" as const,
+        url: "http://localhost:11434/v1",
+        model: "",
         maxContextChars: 200000,
         defaultPreset: true,
         prompt: "",
@@ -441,8 +441,8 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
         transition={{ duration: 0.4 }}
       >
         {/* eslint-disable-next-line @next/next/no-img-element */}
-        <img className="w-12 h-12 mb-2" src="/128x128.png" alt="screenpipe" />
-        <h1 className="font-mono text-base font-bold text-foreground">screenpipe</h1>
+        <img className="w-12 h-12 mb-2" src="/128x128.png" alt="thadm" />
+        <h1 className="font-mono text-base font-bold text-foreground">thadm</h1>
       </motion.div>
 
       {/* Checking state — particle stream at low progress */}

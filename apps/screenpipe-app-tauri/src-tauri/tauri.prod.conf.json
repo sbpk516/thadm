@@ -35,8 +35,8 @@
       "icons/1024x1024.png",
       "icons/icon.icns",
       "icons/icon.ico",
-      "icons/screenpipe-logo-tray-failed.png",
-      "icons/screenpipe-logo-tray-black.png"
+      "icons/thadm-tray-failed.png",
+      "icons/thadm-tray-black.png"
     ],
     "resources": [
       "assets/*",
@@ -115,7 +115,7 @@
     "withGlobalTauri": true,
     "trayIcon": {
       "id": "screenpipe_main",
-      "iconPath": "assets/screenpipe-logo-tray-white.png",
+      "iconPath": "assets/thadm-tray-white.png",
       "iconAsTemplate": true,
       "menuOnLeftClick": true
     },

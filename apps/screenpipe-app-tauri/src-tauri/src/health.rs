@@ -411,15 +411,15 @@ pub async fn start_health_check(app: tauri::AppHandle) -> Result<()> {
                 // Resolve icon path on this thread (no AppKit calls)
                 let icon_path = if is_unhealthy_icon(current_status) {
                     if theme == Mode::Light {
-                        "assets/screenpipe-logo-tray-black-failed.png"
+                        "assets/thadm-tray-black-failed.png"
                     } else {
-                        "assets/screenpipe-logo-tray-white-failed.png"
+                        "assets/thadm-tray-white-failed.png"
                     }
                 } else {
                     if theme == Mode::Light {
-                        "assets/screenpipe-logo-tray-black.png"
+                        "assets/thadm-tray-black.png"
                     } else {
-                        "assets/screenpipe-logo-tray-white.png"
+                        "assets/thadm-tray-white.png"
                     }
                 };
 

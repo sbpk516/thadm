@@ -226,7 +226,7 @@ export function GoogleCalendarCard() {
 
             <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
               Reads your Google Calendar to detect meetings. Requires a
-              screenpipe account. Read-only — never writes to your calendar.
+              thadm account. Read-only — never writes to your calendar.
             </p>
 
             {!connected ? (
@@ -250,7 +250,7 @@ export function GoogleCalendarCard() {
 
                 {!token && (
                   <p className="text-xs text-muted-foreground">
-                    Sign in to your screenpipe account first to connect Google
+                    Sign in to your thadm account first to connect Google
                     Calendar.
                   </p>
                 )}

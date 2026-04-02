@@ -151,12 +151,12 @@ pub fn recreate_tray(app: &AppHandle) {
 
                 // Create a new tray icon — macOS assigns it the rightmost position
                 let icon = match app.path().resolve(
-                    "assets/screenpipe-logo-tray-white.png",
+                    "assets/thadm-tray-white.png",
                     tauri::path::BaseDirectory::Resource,
                 ) {
                     Ok(path) => tauri::image::Image::from_path(path).ok(),
                     Err(_) => {
-                        tauri::image::Image::from_path("assets/screenpipe-logo-tray-white.png").ok()
+                        tauri::image::Image::from_path("assets/thadm-tray-white.png").ok()
                     }
                 };
 
