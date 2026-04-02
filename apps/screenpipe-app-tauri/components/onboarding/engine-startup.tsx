@@ -414,7 +414,7 @@ export default function EngineStartup({
   const openLogsFolder = async () => {
     try {
       const home = await homeDir();
-      const screenpipeDir = await join(home, ".screenpipe");
+      const screenpipeDir = await join(home, ".thadm");
       await revealItemInDir(screenpipeDir);
     } catch (err) {
       console.error("Failed to open logs folder:", err);

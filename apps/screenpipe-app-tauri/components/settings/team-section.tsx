@@ -192,15 +192,16 @@ export function TeamSection() {
         const hashMatch = input.match(/#key=(.+)/);
         if (hashMatch) base64Key = hashMatch[1];
 
-        // Fetch team_id from server
-        const infoRes = await fetch(`https://screenpi.pe/api/team/join/info?token=${encodeURIComponent(inviteToken)}`);
-        if (!infoRes.ok) throw new Error("invalid or expired invite link");
-        const info = await infoRes.json();
-        if (info.expired) throw new Error("invite link expired");
-        if (info.used) throw new Error("invite link already used");
-        teamId = info.team_id;
+        // THADM: disabled
+        // const infoRes = await fetch(`https://screenpi.pe/api/team/join/info?token=${encodeURIComponent(inviteToken)}`);
+        // if (!infoRes.ok) throw new Error("invalid or expired invite link");
+        // const info = await infoRes.json();
+        // if (info.expired) throw new Error("invite link expired");
+        // if (info.used) throw new Error("invite link already used");
+        // teamId = info.team_id;
+        throw new Error("web invite links are not yet supported in thadm");
       } else {
-        // Legacy format: screenpipe://join-team?team_id=X&invite_token=Y&key=Z
+        // Legacy format: thadm://join-team?team_id=X&invite_token=Y&key=Z
         const parsed = new URL(input);
         teamId = parsed.searchParams.get("team_id");
         inviteToken = parsed.searchParams.get("invite_token");
@@ -356,7 +357,7 @@ export function TeamSection() {
           <Users className="h-10 w-10 text-muted-foreground mb-4" />
           <h3 className="text-lg font-semibold mb-1">Sign in to use teams</h3>
           <p className="text-sm text-muted-foreground mb-6">
-            Team features require a Screenpipe account
+            Team features require a Thadm account
           </p>
           <Button
             className="w-full max-w-xs"
@@ -454,7 +455,7 @@ export function TeamSection() {
         <Card className="p-6">
           <div className="flex items-start justify-between mb-3">
             <div>
-              <h3 className="text-lg font-semibold">Bring your team to Screenpipe</h3>
+              <h3 className="text-lg font-semibold">Bring your team to Thadm</h3>
               <p className="text-sm text-muted-foreground mt-1">
                 add your team and push pipe configurations and content filters to all members.
                 everything is end-to-end encrypted — the server never sees your configs.
@@ -487,7 +488,7 @@ export function TeamSection() {
           {showJoinInput ? (
             <div className="flex gap-2">
               <Input
-                placeholder="paste invite link (https://screenpi.pe/join/... or screenpipe://...)"
+                placeholder="paste invite link (https://screenpi.pe/join/... or thadm://...)"
                 value={inviteInput}
                 onChange={(e) => setInviteInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleJoinFromLink()}

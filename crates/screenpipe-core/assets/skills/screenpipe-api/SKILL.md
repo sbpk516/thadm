@@ -383,7 +383,7 @@ curl -X POST http://localhost:11435/notify \
 # Markdown body with links
 curl -X POST http://localhost:11435/notify \
   -H "Content-Type: application/json" \
-  -d '{"title": "Meeting summary", "body": "**Q3 Planning** notes saved\n\nopen [meeting notes](~/Documents/notes/q3.md) or view [recording](screenpipe://timeline)"}'
+  -d '{"title": "Meeting summary", "body": "**Q3 Planning** notes saved\n\nopen [meeting notes](~/Documents/notes/q3.md) or view [recording](thadm://timeline)"}'
 
 # Link to a local file (absolute path or ~ path)
 curl -X POST http://localhost:11435/notify \
@@ -393,7 +393,7 @@ curl -X POST http://localhost:11435/notify \
 # With action buttons
 curl -X POST http://localhost:11435/notify \
   -H "Content-Type: application/json" \
-  -d '{"title": "Meeting summary", "body": "**Q3 Planning**\n- Budget approved", "actions": [{"id": "view", "label": "view", "type": "deeplink", "url": "screenpipe://timeline"}, {"id": "skip", "label": "skip", "type": "dismiss"}]}'
+  -d '{"title": "Meeting summary", "body": "**Q3 Planning**\n- Budget approved", "actions": [{"id": "view", "label": "view", "type": "deeplink", "url": "thadm://timeline"}, {"id": "skip", "label": "skip", "type": "dismiss"}]}'
 
 # Custom auto-dismiss (5 seconds)
 curl -X POST http://localhost:11435/notify \
@@ -413,7 +413,7 @@ curl -X POST http://localhost:11435/notify \
 **Supported link types in body markdown:**
 - Web URLs: `[docs](https://docs.screenpi.pe)` — opens in browser
 - File paths: `[notes](~/notes/file.md)` or `[log](/var/log/app.log)` — opens in default app
-- Deeplinks: `[timeline](screenpipe://timeline)` — navigates within screenpipe
+- Deeplinks: `[timeline](thadm://timeline)` — navigates within screenpipe
 
 Returns `{"success": true, "message": "Notification sent successfully"}`.
 
@@ -434,8 +434,8 @@ curl http://localhost:3030/vision/list          # Monitors
 Reference specific moments with clickable links:
 
 ```markdown
-[10:30 AM — Chrome](screenpipe://frame/12345)           # screen text results (use frame_id)
-[meeting at 3pm](screenpipe://timeline?timestamp=ISO8601) # Audio results (use timestamp)
+[10:30 AM — Chrome](thadm://frame/12345)           # screen text results (use frame_id)
+[meeting at 3pm](thadm://timeline?timestamp=ISO8601) # Audio results (use timestamp)
 ```
 
 Only use IDs/timestamps from actual search results. Never fabricate.

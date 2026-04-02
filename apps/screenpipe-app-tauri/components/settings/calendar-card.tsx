@@ -239,7 +239,7 @@ export function CalendarCard() {
                 {authDenied && (
                   <p className="text-xs text-muted-foreground">
                     Calendar access was denied. Click the button above to open System Settings,
-                    enable screenpipe under{" "}
+                    enable thadm under{" "}
                     <span className="font-medium">
                       Privacy &amp; Security &rarr; Calendars
                     </span>

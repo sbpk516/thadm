@@ -952,34 +952,34 @@ const AISection = ({
         }
 
         case "screenpipe-cloud": {
-          // Fetch models from gateway so new models appear automatically
-          try {
-            const token = settings.user?.token || "";
-            const piResp = await fetch("https://api.screenpi.pe/v1/models", {
-              headers: token ? { Authorization: `Bearer ${token}` } : {},
-            });
-            if (piResp.ok) {
-              const piData = await piResp.json();
-              const piModels: AIModel[] = (piData.data || []).map((m: any) => ({
-                id: m.id,
-                name: m.name || m.id,
-                provider: "screenpipe",
-                description: m.description,
-                tags: m.tags,
-                free: m.free,
-                context_window: m.context_window,
-                best_for: m.best_for,
-                speed: m.speed,
-                intelligence: m.intelligence,
-              }));
-              if (piModels.length > 0) {
-                setModels(piModels);
-                break;
-              }
-            }
-          } catch {
-            // fallback to hardcoded
-          }
+          // THADM: disabled — cloud model fetching from api.screenpi.pe
+          // try {
+          //   const token = settings.user?.token || "";
+          //   const piResp = await fetch("https://api.screenpi.pe/v1/models", {
+          //     headers: token ? { Authorization: `Bearer ${token}` } : {},
+          //   });
+          //   if (piResp.ok) {
+          //     const piData = await piResp.json();
+          //     const piModels: AIModel[] = (piData.data || []).map((m: any) => ({
+          //       id: m.id,
+          //       name: m.name || m.id,
+          //       provider: "screenpipe",
+          //       description: m.description,
+          //       tags: m.tags,
+          //       free: m.free,
+          //       context_window: m.context_window,
+          //       best_for: m.best_for,
+          //       speed: m.speed,
+          //       intelligence: m.intelligence,
+          //     }));
+          //     if (piModels.length > 0) {
+          //       setModels(piModels);
+          //       break;
+          //     }
+          //   }
+          // } catch {
+          //   // fallback to hardcoded
+          // }
           setModels([
             { id: "auto", name: "Auto (recommended)", provider: "screenpipe" },
             { id: "claude-haiku-4-5", name: "Haiku 4.5 (fast)", provider: "screenpipe" },
@@ -1114,18 +1114,19 @@ const AISection = ({
             onClick={() => handleAiProviderChange("native-ollama")}
           />
 
-          {piAvailable && (
+          {/* THADM: disabled — screenpipe-cloud provider option */}
+          {/* {piAvailable && (
             <AIProviderCard
               type="screenpipe-cloud"
-              title="Screenpipe Cloud"
-              description="AI coding agent powered by Screenpipe Cloud. Requires login."
+              title="Thadm Cloud"
+              description="AI coding agent powered by Thadm Cloud. Requires login."
               imageSrc="/images/screenpipe.png"
               selected={settingsPreset?.provider === "screenpipe-cloud"}
               onClick={() => handleAiProviderChange("screenpipe-cloud")}
               disabled={!settings.user?.token}
               warningText={!settings.user?.token ? "Login required" : undefined}
             />
-          )}
+          )} */}
 
         </div>
       </div>
@@ -1333,7 +1334,7 @@ const AISection = ({
                           ))}
                         </CommandGroup>
                       )}
-                      <CommandGroup heading={models?.some((m) => m.free) ? "Included with Screenpipe" : "Available Models"}>
+                      <CommandGroup heading={models?.some((m) => m.free) ? "Included with Thadm" : "Available Models"}>
                         {models?.filter((m) => !m.free).map((model) => {
                           const costLabel = model.cost_tier === 'low' ? '$' : model.cost_tier === 'medium' ? '$$' : model.cost_tier === 'high' ? '$$$' : model.cost_tier === 'very_high' ? '$$$$' : '';
                           return (
@@ -1431,7 +1432,7 @@ const AISection = ({
               </p>
               <p>
                 GPU strongly recommended. without a dedicated GPU, local models will be very slow and pipes may time out.
-                for best results consider screenpipe cloud or groq as custom provider.
+                for best results consider thadm cloud or groq as custom provider.
               </p>
             </div>
           )}

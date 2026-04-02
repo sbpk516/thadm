@@ -342,7 +342,7 @@ function TranscriptionDictionary({
             <Textarea
               value={bulkText}
               onChange={(e) => setBulkText(e.target.value)}
-              placeholder={"paste terms separated by commas, newlines, semicolons, or tabs\n\ne.g. kubernetes, posthog, screenpipe, terraform"}
+              placeholder={"paste terms separated by commas, newlines, semicolons, or tabs\n\ne.g. kubernetes, posthog, thadm, terraform"}
               className="text-xs font-mono min-h-[80px] resize-y"
               spellCheck={false}
               autoCorrect="off"
@@ -470,7 +470,7 @@ function TranscriptionDictionary({
             replacementInput.value = "";
           }}
         >
-          <Input name="vocab-word" placeholder="e.g. screenpipe" className="h-7 text-xs flex-1" spellCheck={false} autoCorrect="off" autoCapitalize="off" />
+          <Input name="vocab-word" placeholder="e.g. thadm" className="h-7 text-xs flex-1" spellCheck={false} autoCorrect="off" autoCapitalize="off" />
           <Input name="vocab-replacement" placeholder="replacement (optional)" className="h-7 text-xs flex-1" spellCheck={false} autoCorrect="off" autoCapitalize="off" />
           <Button type="submit" size="sm" variant="outline" className="h-7 text-xs px-2">
             add
@@ -652,7 +652,7 @@ export function RecordingSettings() {
       toast({
         title: "custom data directory unavailable",
         description:
-          "the configured data directory could not be accessed. recordings are using the default directory (~/.screenpipe).",
+          "the configured data directory could not be accessed. recordings are using the default directory (~/.thadm).",
         variant: "destructive",
         duration: 10000,
       });
@@ -817,9 +817,10 @@ export function RecordingSettings() {
             enabled: true,
           });
           console.log("Telemetry enabled");
-          Sentry.init({
-            ...defaultOptions,
-          });
+          // THADM: disabled
+          // Sentry.init({
+          //   ...defaultOptions,
+          // });
         }
       }
 
@@ -830,7 +831,7 @@ export function RecordingSettings() {
 
       toast({
         title: "Settings updated successfully",
-        description: "Screenpipe has been restarted with new settings",
+        description: "Thadm has been restarted with new settings",
       });
     } catch (error) {
       console.error("Failed to update settings:", error);
@@ -876,28 +877,9 @@ export function RecordingSettings() {
       return;
     }
 
+    // THADM: disabled — screenpipe cloud checkout
     // If trying to use cloud but not subscribed
     if (value === "screenpipe-cloud" && !settings.user?.cloud_subscribed) {
-      try {
-        const response = await fetch("https://screenpi.pe/api/cloud-sync/checkout", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${settings.user?.token}`,
-          },
-          body: JSON.stringify({
-            tier: "pro",
-            billingPeriod: "monthly",
-            userId: settings.user?.id,
-            email: settings.user?.email,
-          }),
-        });
-        const data = await response.json();
-        openUrl(data.url || "https://screenpi.pe/billing");
-      } catch {
-        openUrl("https://screenpi.pe/billing");
-      }
-      // Revert back to previous value in the Select component
       return;
     }
 
@@ -1173,7 +1155,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   </h3>
                   <p className="text-xs text-muted-foreground truncate max-w-[250px]">
                     {!settings.dataDir || settings.dataDir === "default"
-                      ? "~/.screenpipe (default)"
+                      ? "~/.thadm (default)"
                       : settings.dataDir}
                   </p>
                   <p className="text-[10px] text-muted-foreground/70 mt-0.5">
@@ -1239,7 +1221,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                 <User className="h-4 w-4 text-muted-foreground shrink-0" />
                 <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
                   Your name
-                  <HelpTooltip text="Your name in transcripts. Click 'train' and speak for 30 seconds to teach screenpipe your voice — it will recognize you across all devices using voice matching." />
+                  <HelpTooltip text="Your name in transcripts. Click 'train' and speak for 30 seconds to teach thadm your voice — it will recognize you across all devices using voice matching." />
                 </h3>
               </div>
               <div className="flex items-center gap-1.5">
@@ -1309,7 +1291,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   <SelectGroup>
                     <SelectLabel className="text-[10px] text-muted-foreground/70 uppercase tracking-wider">cloud</SelectLabel>
                     <SelectItem value="screenpipe-cloud" disabled={!settings.user?.cloud_subscribed}>
-                      Screenpipe Cloud {!settings.user?.cloud_subscribed && "(pro)"}{hwCapability?.recommendedEngine === "screenpipe-cloud" && " ★"}
+                      Thadm Cloud {!settings.user?.cloud_subscribed && "(pro)"}{hwCapability?.recommendedEngine === "screenpipe-cloud" && " ★"}
                     </SelectItem>
                     <SelectItem value="deepgram">Deepgram</SelectItem>
                   </SelectGroup>
@@ -2029,7 +2011,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         <DialogContent className="max-w-lg">
           <DialogTitle className="text-sm font-medium">Read this aloud</DialogTitle>
           <DialogDescription className="text-xs text-muted-foreground">
-            speak naturally at your normal pace — this helps screenpipe learn your voice
+            speak naturally at your normal pace — this helps thadm learn your voice
           </DialogDescription>
           <div className="space-y-4">
 

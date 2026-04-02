@@ -52,7 +52,7 @@ const EMPTY_CACHE: UsageCache = {
 
 async function getCachePath(): Promise<string> {
   const home = await homeDir();
-  return await join(home, ".screenpipe", "usage-cache.json");
+  return await join(home, ".thadm", "usage-cache.json");
 }
 
 async function loadCache(): Promise<UsageCache> {
@@ -296,8 +296,9 @@ export function UsageSection() {
     switch (p) {
       case "screenpipe-cloud":
       case "screenpipe":
+      case "thadm":
       case "pi":
-        return "Screenpipe Cloud";
+        return "Thadm Cloud";
       case "native-ollama":
       case "ollama":
         return "Ollama";

@@ -176,8 +176,8 @@ VISUALIZATION:
 When the user asks for diagrams, flowcharts, or visualizations, generate Mermaid diagrams using fenced code blocks with the "mermaid" language tag.
 
 DEEP LINKS & MEDIA:
-- Frame (PREFERRED): [10:30 AM — Chrome](screenpipe://frame/12345) — use frame_id from screen text search results. NEVER invent frame IDs.
-- Timeline (audio only): [meeting at 3pm](screenpipe://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from audio search results.
+- Frame (PREFERRED): [10:30 AM — Chrome](thadm://frame/12345) — use frame_id from screen text search results. NEVER invent frame IDs.
+- Timeline (audio only): [meeting at 3pm](thadm://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from audio search results.
 - Video/Image: use markdown ![description](/path/to/file.mp4)
 NEVER fabricate frame IDs or timestamps — only use values from actual search results.
 
@@ -538,11 +538,11 @@ function MarkdownBlock({ text, isUser }: { text: string; isUser: boolean }) {
             return <VideoComponent filePath={href} className="my-2" />;
           }
 
-          if (href?.startsWith("screenpipe://timeline") || href?.startsWith("screenpipe://frame")) {
+          if (href?.startsWith("thadm://timeline") || href?.startsWith("thadm://frame")) {
             const handleTimelineClick = async (e: React.MouseEvent<HTMLAnchorElement>) => {
               e.preventDefault();
               try {
-                if (href.startsWith("screenpipe://frame")) {
+                if (href.startsWith("thadm://frame")) {
                   const frameId = href.split("frame/")[1]?.replace(/^\//, "");
                   if (frameId) {
                     useTimelineStore.getState().setPendingNavigation({ timestamp: "", frameId });
@@ -2207,7 +2207,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             try {
               const providerConfig = buildProviderConfig();
               const home = await homeDir();
-              const dir = await join(home, ".screenpipe", "pi-chat");
+              const dir = await join(home, ".thadm", "pi-chat");
               const result = await commands.piStart(piSessionIdRef.current, dir, settings.user?.token ?? null, providerConfig);
               if (result.status === "ok") {
                 setPiInfo(result.data);
@@ -2273,7 +2273,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       if (!mounted) return;
       try {
         const home = await homeDir();
-        const dir = await join(home, ".screenpipe", "pi-chat");
+        const dir = await join(home, ".thadm", "pi-chat");
         const result = await commands.piStart(piSessionIdRef.current, dir, event.payload.apiKey, buildProviderConfig());
         if (result.status === "ok") {
           setPiInfo(result.data);
@@ -2542,7 +2542,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         try {
           const providerConfig = buildProviderConfig();
           const home = await homeDir();
-          const dir = await join(home, ".screenpipe", "pi-chat");
+          const dir = await join(home, ".thadm", "pi-chat");
           const result = await commands.piStart(piSessionIdRef.current, dir, settings.user?.token ?? null, providerConfig);
           if (result.status === "ok" && result.data.running) {
             setPiInfo(result.data);

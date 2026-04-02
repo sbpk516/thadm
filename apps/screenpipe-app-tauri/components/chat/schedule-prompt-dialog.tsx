@@ -28,7 +28,7 @@ const PIPE_CONTEXT = `create a screenpipe pipe that does the following.
 
 ## what is a pipe?
 
-a pipe is a scheduled AI agent defined as a single markdown file: ~/.screenpipe/pipes/{name}/pipe.md
+a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
 every N minutes, screenpipe runs a coding agent (like pi or claude-code) with the pipe's prompt.
 the agent can query your screen data, write files, call external APIs, send notifications, etc.
 
@@ -73,7 +73,7 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 IMPORTANT: always use "bun x screenpipe@latest" (not "bun x screenpipe" or "screenpipe") to ensure the latest CLI version:
 
-install: bun x screenpipe@latest pipe install ~/.screenpipe/pipes/my-pipe
+install: bun x screenpipe@latest pipe install ~/.thadm/pipes/my-pipe
 enable:  bun x screenpipe@latest pipe enable my-pipe
 
 ## important formatting rules

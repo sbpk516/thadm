@@ -1,5 +1,5 @@
 {
-  "name": "screenpipe",
+  "name": "thadm",
   "private": true,
   "scripts": {
     "dev": "next dev -p 1420",

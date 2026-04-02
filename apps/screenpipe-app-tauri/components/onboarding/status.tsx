@@ -371,7 +371,7 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
   const openLogsFolder = async () => {
     try {
       const home = await homeDir();
-      const screenpipeDir = await join(home, ".screenpipe");
+      const screenpipeDir = await join(home, ".thadm");
       await revealItemInDir(screenpipeDir);
     } catch (error) {
       console.error("Failed to open logs folder:", error);

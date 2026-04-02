@@ -80,7 +80,7 @@ export function BrowserUrlCard() {
             </div>
 
             <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-              screenpipe needs Automation permission to capture URLs from
+              thadm needs Automation permission to capture URLs from
               Chromium-based browsers. Safari works via Accessibility (already
               enabled).
             </p>
@@ -152,7 +152,7 @@ export function BrowserUrlCard() {
         <div className="px-4 py-2 bg-muted/50 border-t border-border">
           <p className="text-xs text-muted-foreground">
             if a browser was denied, toggle it on manually in System Settings →
-            Privacy &amp; Security → Automation → screenpipe
+            Privacy &amp; Security → Automation → thadm
           </p>
         </div>
       </CardContent>

@@ -273,7 +273,7 @@ export function OpenClawCard() {
               )}
             </div>
             <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-              sync your screenpipe data to a remote server.
+              sync your thadm data to a remote server.
               run openclaw or any AI agent on your VPS 24/7.
             </p>
 

@@ -46,7 +46,7 @@ export function DiskUsageSection() {
   return (
     <div className="space-y-5">
       <p className="text-muted-foreground text-sm mb-4">
-        Storage usage at ~/.screenpipe
+        Storage usage at ~/.thadm
       </p>
 
       <div className="flex items-center justify-end">
@@ -191,7 +191,7 @@ export function DiskUsageSection() {
                 <span className={cn("font-medium", diskUsage?.other?.logs_size?.includes("GB") && "text-destructive")}>{diskUsage?.other?.logs_size || "0 KB"}</span>
               </div>
               {diskUsage?.other?.logs_size?.includes("GB") && (
-                <p className="text-[11px] text-destructive mt-1">⚠️ Logs are large. Delete old ones at ~/.screenpipe/*.log</p>
+                <p className="text-[11px] text-destructive mt-1">⚠️ Logs are large. Delete old ones at ~/.thadm/*.log</p>
               )}
             </div>
           )}

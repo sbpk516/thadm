@@ -376,7 +376,7 @@ export const getStore = async () => {
 	if (!_store) {
 		// Use homeDir to match Rust backend's get_base_dir which uses $HOME/.screenpipe
 		const dir = await homeDir();
-		_store = Store.load(`${dir}/.screenpipe/store.bin`, {
+		_store = Store.load(`${dir}/.thadm/store.bin`, {
 			autoSave: false,
 			defaults: {},
 		});
@@ -717,7 +717,7 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 		)
 			return settings.dataDir;
 
-		return `${homeDirPath}/.screenpipe`;
+		return `${homeDirPath}/.thadm`;
 	};
 
 	const loadUser = async (token: string) => {

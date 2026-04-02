@@ -175,7 +175,8 @@ export function PrivacySection() {
         if (!isDebug) {
           posthog.opt_in_capturing();
           posthog.capture("telemetry", { enabled: true });
-          Sentry.init({ ...defaultOptions });
+          // THADM: disabled
+          // Sentry.init({ ...defaultOptions });
         }
       }
 

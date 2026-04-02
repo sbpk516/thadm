@@ -200,7 +200,7 @@ fn check_package_bin(pkg_dir: std::path::PathBuf, bin_name: &str) -> Option<Stri
 }
 
 const PI_PACKAGE: &str = "@mariozechner/pi-coding-agent@0.60.0";
-const SCREENPIPE_API_URL: &str = "https://api.screenpi.pe/v1";
+const SCREENPIPE_API_URL: &str = ""; // THADM: disabled
 
 /// Pool of Pi sessions — each session_id gets its own PiManager/process.
 pub struct PiPool {
@@ -700,16 +700,20 @@ fn build_models_json(
 ) -> serde_json::Value {
     let mut providers_map = serde_json::Map::new();
 
-    // Always add screenpipe cloud provider
+    // THADM: screenpipe-cloud provider disabled (SCREENPIPE_API_URL is empty).
+    // We still register it so deserialization doesn't break, but it won't work.
+    // Users should configure their own provider (openai, ollama, anthropic, etc.).
     let api_key_value = user_token.unwrap_or("SCREENPIPE_API_KEY");
-    let screenpipe_provider = json!({
-        "baseUrl": SCREENPIPE_API_URL,
-        "api": "openai-completions",
-        "apiKey": api_key_value,
-        "authHeader": true,
-        "models": screenpipe_cloud_models()
-    });
-    providers_map.insert("screenpipe".to_string(), screenpipe_provider);
+    if !SCREENPIPE_API_URL.is_empty() {
+        let screenpipe_provider = json!({
+            "baseUrl": SCREENPIPE_API_URL,
+            "api": "openai-completions",
+            "apiKey": api_key_value,
+            "authHeader": true,
+            "models": screenpipe_cloud_models()
+        });
+        providers_map.insert("screenpipe".to_string(), screenpipe_provider);
+    }
 
     // Add the user's selected provider (if not screenpipe-cloud)
     if let Some(config) = provider_config {
@@ -1100,9 +1104,9 @@ pub async fn pi_start_inner(
                 .ok_or_else(|| {
                     let bun_found = find_bun_executable().is_some();
                     if bun_found {
-                        format!("Pi not found after install attempt. Try restarting the app or delete ~/.screenpipe/pi-agent and restart.")
+                        format!("Pi not found after install attempt. Try restarting the app or delete ~/.thadm/pi-agent and restart.")
                     } else {
-                        format!("Pi not found: bun is not installed. Screenpipe needs bun to run the AI assistant. Expected bundled bun next to the app executable.")
+                        format!("Pi not found: bun is not installed. Thadm needs bun to run the AI assistant. Expected bundled bun next to the app executable.")
                     }
                 })?
         }
@@ -2497,7 +2501,7 @@ mod tests {
         assert_eq!(providers.len(), 1);
 
         let sp = &providers["screenpipe"];
-        assert_eq!(sp["baseUrl"], "https://api.screenpi.pe/v1");
+        assert_eq!(sp["baseUrl"], ""); // THADM: disabled
         assert_eq!(sp["api"], "openai-completions");
         assert_eq!(sp["apiKey"], "SCREENPIPE_API_KEY");
         assert_eq!(sp["authHeader"], true);

@@ -107,7 +107,7 @@ async function getCursorMcpConfigPath(): Promise<string> {
 async function isCursorMcpInstalled(): Promise<boolean> {
   try {
     const content = await readTextFile(await getCursorMcpConfigPath());
-    return !!JSON.parse(content)?.mcpServers?.screenpipe;
+    return !!JSON.parse(content)?.mcpServers?.thadm;
   } catch { return false; }
 }
 
@@ -116,7 +116,7 @@ async function installCursorMcp(): Promise<void> {
   let config: Record<string, unknown> = {};
   try { config = JSON.parse(await readTextFile(configPath)); } catch { /* fresh */ }
   if (!config.mcpServers || typeof config.mcpServers !== "object") config.mcpServers = {};
-  (config.mcpServers as Record<string, unknown>).screenpipe = { command: "npx", args: ["-y", "screenpipe-mcp"] };
+  (config.mcpServers as Record<string, unknown>).thadm = { command: "npx", args: ["-y", "screenpipe-mcp"] };
   await writeFile(configPath, new TextEncoder().encode(JSON.stringify(config, null, 2)));
 }
 
@@ -560,7 +560,7 @@ function MstyPanel() {
         </Button>
       </div>
       <p className="text-xs text-muted-foreground">
-        3. Give the tool a name (e.g. <strong>screenpipe</strong>) and click <strong>Add</strong>
+        3. Give the tool a name (e.g. <strong>thadm</strong>) and click <strong>Add</strong>
       </p>
       <Button variant="outline" onClick={() => openUrl("https://msty.app")} size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal">
         <ExternalLink className="h-3 w-3" />open msty
@@ -591,7 +591,7 @@ function OllamaPanel() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Use Ollama as a local AI provider for screenpipe.
+        Use Ollama as a local AI provider for thadm.
       </p>
       <Button onClick={handleCheck} disabled={status === "checking"} size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal">
         {status === "checking" ? (<><Loader2 className="h-3 w-3 animate-spin" />checking...</>) : "check connection"}
@@ -638,11 +638,11 @@ function LMStudioPanel() {
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground">
-        Connect LM Studio to screenpipe&apos;s screen &amp; audio data, or use it as a local AI provider.
+        Connect LM Studio to thadm&apos;s screen &amp; audio data, or use it as a local AI provider.
       </p>
       <div className="flex flex-wrap gap-2">
         <Button onClick={() => openUrl(deeplink)} size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal">
-          <Download className="h-3 w-3" /> add screenpipe MCP to LM Studio
+          <Download className="h-3 w-3" /> add thadm MCP to LM Studio
         </Button>
         <Button onClick={handleCheck} variant="outline" disabled={status === "checking"} size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal">
           {status === "checking" ? (<><Loader2 className="h-3 w-3 animate-spin" />checking...</>) : "check connection"}
@@ -699,7 +699,7 @@ function BrowserExtensionPanel({ connected, onRefresh }: { connected: boolean; o
       <div>
         <h3 className="text-sm font-medium mb-1">browser extension</h3>
         <p className="text-xs text-muted-foreground">
-          connects your browser to screenpipe so pipes can read data from authenticated pages
+          connects your browser to thadm so pipes can read data from authenticated pages
           (ChatGPT history, Claude conversations, dashboards, etc.)
         </p>
       </div>
@@ -712,7 +712,7 @@ function BrowserExtensionPanel({ connected, onRefresh }: { connected: boolean; o
       {!connected && (
         <div className="space-y-2">
           <p className="text-xs text-muted-foreground">
-            install the extension, then it auto-connects when screenpipe is running.
+            install the extension, then it auto-connects when thadm is running.
           </p>
           <div className="flex gap-2">
             <Button
@@ -1157,7 +1157,7 @@ export function ConnectionCredentialForm({
                 .map(([k, v]) => `${k}: ${v}`)
                 .join("\n  ");
               showChatWithPrefill({
-                context: `the user has the "${integrationName}" connection set up in screenpipe with these credentials:\n  ${credSummary}\n\nthe connection API is available at GET http://localhost:3030/connections/${integrationId}\n\n${integrationDescription || ""}`,
+                context: `the user has the "${integrationName}" connection set up in thadm with these credentials:\n  ${credSummary}\n\nthe connection API is available at GET http://localhost:3030/connections/${integrationId}\n\n${integrationDescription || ""}`,
                 prompt: `try using my ${integrationName} connection — query it and do a small test interaction to verify it works end to end. after that, suggest creating a pipe that uses this connection.`,
                 autoSend: true,
               });

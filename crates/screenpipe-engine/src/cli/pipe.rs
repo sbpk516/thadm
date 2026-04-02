@@ -30,7 +30,7 @@ pub async fn handle_pipe_command(command: &PipeCommand) -> anyhow::Result<()> {
                 println!("{}", serde_json::to_string_pretty(&pipes)?);
             } else if pipes.is_empty() {
                 println!("no pipes installed");
-                println!("\nhint: create one at ~/.screenpipe/pipes/my-pipe/pipe.md");
+                println!("\nhint: create one at ~/.thadm/pipes/my-pipe/pipe.md");
             } else {
                 println!(
                     "{:<20} {:<10} {:<12} {:<20}",
@@ -97,7 +97,7 @@ pub async fn handle_pipe_command(command: &PipeCommand) -> anyhow::Result<()> {
                 let pipe_dir = pipes_dir.join(name);
                 if !pipe_dir.exists() {
                     anyhow::bail!(
-                        "pipe '{}' not found — directory does not exist: {}\nhint: install it first with `screenpipe pipe install <source>`",
+                        "pipe '{}' not found — directory does not exist: {}\nhint: install it first with `thadm pipe install <source>`",
                         name,
                         pipe_dir.display()
                     );
@@ -185,7 +185,7 @@ async fn handle_publish_command(name: &str, pipes_dir: &std::path::Path) -> anyh
 
     if !pipe_md_path.exists() {
         anyhow::bail!(
-            "pipe.md not found at {}\nhint: make sure the pipe '{}' exists in ~/.screenpipe/pipes/",
+            "pipe.md not found at {}\nhint: make sure the pipe '{}' exists in ~/.thadm/pipes/",
             pipe_md_path.display(),
             name
         );
@@ -212,7 +212,7 @@ async fn handle_publish_command(name: &str, pipes_dir: &std::path::Path) -> anyh
 
     let token = get_auth_token().ok_or_else(|| {
         anyhow::anyhow!(
-            "no auth token found. set SCREENPIPE_API_KEY env var or create ~/.screenpipe/auth.json"
+            "no auth token found. set SCREENPIPE_API_KEY env var or create ~/.thadm/auth.json"
         )
     })?;
 
@@ -422,7 +422,7 @@ async fn handle_info_command(slug: &str) -> anyhow::Result<()> {
     }
 
     println!();
-    println!("install with: screenpipe pipe install {}", slug);
+    println!("install with: thadm pipe install {}", slug);
 
     Ok(())
 }
@@ -431,7 +431,7 @@ async fn handle_info_command(slug: &str) -> anyhow::Result<()> {
 async fn handle_status_command(slug: &str) -> anyhow::Result<()> {
     let token = get_auth_token().ok_or_else(|| {
         anyhow::anyhow!(
-            "no auth token found. set SCREENPIPE_API_KEY env var or create ~/.screenpipe/auth.json"
+            "no auth token found. set SCREENPIPE_API_KEY env var or create ~/.thadm/auth.json"
         )
     })?;
 

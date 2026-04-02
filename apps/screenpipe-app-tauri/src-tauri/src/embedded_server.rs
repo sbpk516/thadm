@@ -134,10 +134,11 @@ pub async fn start_embedded_server(
             std::env::remove_var("DEEPGRAM_API_URL");
             std::env::remove_var("CUSTOM_DEEPGRAM_API_TOKEN");
             info!("Using personal Deepgram API key for audio transcription");
-        } else if let Some(ref user_id) = config.user_id {
-            std::env::set_var("DEEPGRAM_API_URL", "https://api.screenpi.pe/v1/listen");
-            std::env::set_var("CUSTOM_DEEPGRAM_API_TOKEN", user_id);
-            info!("Using screenpipe cloud for audio transcription");
+        } else if let Some(ref _user_id) = config.user_id {
+            // THADM: disabled — cloud deepgram proxy removed
+            // std::env::set_var("DEEPGRAM_API_URL", "https://api.screenpi.pe/v1/listen");
+            // std::env::set_var("CUSTOM_DEEPGRAM_API_TOKEN", user_id);
+            // info!("Using screenpipe cloud for audio transcription");
         }
     }
 

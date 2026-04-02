@@ -106,7 +106,7 @@ pub async fn handle_mcp_command(
             // Create config regardless of download status
             let config = json!({
                 "mcpServers": {
-                    "screenpipe": {
+                    "thadm": {
                         "command": "uv",
                         "args": [
                             "--directory",

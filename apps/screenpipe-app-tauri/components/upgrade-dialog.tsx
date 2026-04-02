@@ -34,6 +34,8 @@ export function UpgradeDialog({
   source = "unknown",
   gatewayTier,
 }: UpgradeDialogProps) {
+  // THADM: cloud features disabled
+  return null;
   const { settings } = useSettings();
   const isLoggedIn = !!settings.user?.token;
   const localTier = settings.user?.cloud_subscribed ? "subscribed" : isLoggedIn ? "logged_in" : "anonymous";

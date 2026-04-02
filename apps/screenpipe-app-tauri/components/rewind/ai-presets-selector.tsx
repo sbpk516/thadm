@@ -198,23 +198,12 @@ export function AIProviderConfig({
     if (selectedProvider !== "screenpipe-cloud") return;
     const fetchPiModels = async () => {
       try {
-        const token = settings?.user?.token || "";
-        const resp = await fetch("https://api.screenpi.pe/v1/models", {
-          headers: token ? { Authorization: `Bearer ${token}` } : {},
-        });
-        if (resp.ok) {
-          const data = await resp.json();
-          const models = (data.data || []).map((m: any) => ({
-            id: m.id,
-            name: m.name || m.id,
-            free: m.free,
-            cost_tier: m.cost_tier,
-            recommended_for: m.recommended_for,
-            warning: m.warning,
-            health: m.health,
-          }));
-          setPiModels(models);
-        }
+        // THADM: disabled — cloud models endpoint removed
+        // const token = settings?.user?.token || "";
+        // const resp = await fetch("https://api.screenpi.pe/v1/models", {
+        //   headers: token ? { Authorization: `Bearer ${token}` } : {},
+        // });
+        setPiModels([]);
       } catch {
         // gateway down — model list stays empty, user sees empty dropdown
       }

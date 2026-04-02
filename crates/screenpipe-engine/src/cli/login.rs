@@ -38,7 +38,7 @@ pub async fn handle_login_command() -> anyhow::Result<()> {
     // Check if already logged in
     if let Some(token) = super::pipe::get_auth_token() {
         if !token.is_empty() {
-            println!("already logged in. use `screenpipe whoami` to check status.");
+            println!("already logged in. use `thadm whoami` to check status.");
             return Ok(());
         }
     }
@@ -191,7 +191,7 @@ pub async fn handle_whoami_command() -> anyhow::Result<()> {
             let source = if std::env::var("SCREENPIPE_API_KEY").is_ok() {
                 "SCREENPIPE_API_KEY env var"
             } else {
-                "~/.screenpipe/store.bin"
+                "~/.thadm/store.bin"
             };
 
             println!();
@@ -214,7 +214,7 @@ pub async fn handle_whoami_command() -> anyhow::Result<()> {
             println!();
             println!("  not logged in");
             println!();
-            println!("  run `screenpipe login` to authenticate");
+            println!("  run `thadm login` to authenticate");
             println!();
         }
     }

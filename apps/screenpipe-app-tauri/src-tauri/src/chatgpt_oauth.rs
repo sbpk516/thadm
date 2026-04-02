@@ -46,7 +46,7 @@ pub struct ChatGptOAuthStatus {
 fn get_token_path() -> Result<PathBuf, String> {
     let dir = screenpipe_core::paths::default_screenpipe_data_dir();
     std::fs::create_dir_all(&dir)
-        .map_err(|e| format!("failed to create .screenpipe dir: {}", e))?;
+        .map_err(|e| format!("failed to create .thadm dir: {}", e))?;
     Ok(dir.join("chatgpt-oauth.json"))
 }
 

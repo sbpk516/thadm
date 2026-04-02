@@ -235,51 +235,10 @@ export default function OverlayPage() {
   }, [isSettingsLoaded, settings.user?.token]);
 
   const sendLogs = async () => {
+    // THADM: disabled — cloud log upload removed
     setIsSendingLogs(true);
     try {
-      const BASE_URL = "https://screenpi.pe";
-      const machineId = localStorage?.getItem("machineId") || crypto.randomUUID();
-      try { localStorage?.setItem("machineId", machineId); } catch {}
-      const identifier = settings.user?.id || machineId;
-      const type = settings.user?.id ? "user" : "machine";
-      const logFilesResult = await commands.getLogFiles();
-      if (logFilesResult.status !== "ok") throw new Error("Failed to get log files");
-      const logFiles = logFilesResult.data.slice(0, 3);
-      const MAX_LOG_SIZE = 50 * 1024;
-      const logContents = await Promise.all(
-        logFiles.map(async (file) => {
-          try {
-            const content = await readTextFile(file.path);
-            const truncated = content.length > MAX_LOG_SIZE
-              ? `... [truncated] ...\n` + content.slice(-MAX_LOG_SIZE)
-              : content;
-            return { name: file.name, content: truncated };
-          } catch {
-            return { name: file.name, content: "[Error reading file]" };
-          }
-        })
-      );
-      const signedRes = await fetch(`${BASE_URL}/api/logs`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier, type }),
-      });
-      const { data: { signedUrl, path } } = await signedRes.json();
-      const consoleLog = (localStorage?.getItem("console_logs") || "").slice(-50000);
-      const combinedLogs = logContents
-        .map((log) => `\n=== ${log.name} ===\n${log.content}`)
-        .join("\n\n") +
-        "\n\n=== Browser Console Logs ===\n" + consoleLog +
-        "\n\n=== Server Not Active ===\nServer not active - user submitted logs";
-      await fetch(signedUrl, { method: "PUT", body: combinedLogs, headers: { "Content-Type": "text/plain" } });
-      const os = osPlatform();
-      const os_version = osVersion();
-      const app_version = await getVersion();
-      await fetch(`${BASE_URL}/api/logs/confirm`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ path, identifier, type, os, os_version, app_version, feedback_text: "Server not active - user submitted logs" }),
-      });
+      console.log("sendLogs: cloud log upload is disabled in thadm");
       setLogsSent(true);
     } catch (err) {
       console.error("Failed to send logs:", err);
@@ -297,7 +256,7 @@ export default function OverlayPage() {
     try {
       toast({
         title: "restarting server",
-        description: "stopping screenpipe server...",
+        description: "stopping thadm server...",
         duration: 3000,
       });
 
@@ -309,7 +268,7 @@ export default function OverlayPage() {
       
       toast({
         title: "restarting server",
-        description: "starting screenpipe server...",
+        description: "starting thadm server...",
         duration: 3000,
       });
 
@@ -318,14 +277,14 @@ export default function OverlayPage() {
       
       toast({
         title: "server restarted",
-        description: "screenpipe server has been restarted successfully.",
+        description: "thadm server has been restarted successfully.",
         duration: 3000,
       });
     } catch (error) {
       console.error("failed to restart server:", error);
       toast({
         title: "restart failed",
-        description: "failed to restart screenpipe server. please check the logs.",
+        description: "failed to restart thadm server. please check the logs.",
         variant: "destructive",
         duration: 5000,
       });
@@ -377,7 +336,7 @@ export default function OverlayPage() {
                 <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
                   <div className="flex flex-col items-center gap-3">
                     <RefreshCw className="h-6 w-6 animate-spin text-muted-foreground" />
-                    <p className="text-sm text-muted-foreground">connecting to screenpipe...</p>
+                    <p className="text-sm text-muted-foreground">connecting to thadm...</p>
                   </div>
                 </div>
               )}
@@ -397,7 +356,7 @@ export default function OverlayPage() {
                     <div>
                       <h2 className="text-2xl font-bold">Server Not Active</h2>
                       <p className="text-muted-foreground mt-2">
-                        The screenpipe server is not running. Start the server or check permissions to continue.
+                        The thadm server is not running. Start the server or check permissions to continue.
                       </p>
                     </div>
                   </div>
@@ -411,7 +370,7 @@ export default function OverlayPage() {
                       <div>
                         <h3 className="font-semibold">Server Control</h3>
                         <p className="text-sm text-muted-foreground">
-                          Start or restart the screenpipe server
+                          Start or restart the thadm server
                         </p>
                       </div>
                       <Button
@@ -433,7 +392,7 @@ export default function OverlayPage() {
                         <div>
                           <h3 className="font-semibold">System Permissions</h3>
                           <p className="text-sm text-muted-foreground">
-                            Ensure screenpipe has the necessary permissions to function properly
+                            Ensure thadm has the necessary permissions to function properly
                           </p>
                         </div>
                         <div className="space-y-3">

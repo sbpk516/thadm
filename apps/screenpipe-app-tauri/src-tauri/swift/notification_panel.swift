@@ -194,7 +194,7 @@ struct NotificationContentView: View {
                         .resizable()
                         .frame(width: 14, height: 14)
                 }
-                Text("screenpipe")
+                Text("thadm")
                     .font(Brand.swiftUIMonoFont(size: 10, weight: .medium))
                     .foregroundColor(.primary.opacity(0.4))
                 Spacer()

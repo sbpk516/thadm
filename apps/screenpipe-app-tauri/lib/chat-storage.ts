@@ -18,7 +18,7 @@ let _chatsDir: string | null = null;
 async function getChatsDir(): Promise<string> {
   if (_chatsDir) return _chatsDir;
   const home = await homeDir();
-  _chatsDir = await join(home, ".screenpipe", "chats");
+  _chatsDir = await join(home, ".thadm", "chats");
   return _chatsDir;
 }
 

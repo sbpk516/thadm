@@ -97,21 +97,21 @@ mod tests {
     fn test_resolve_default() {
         let (path, fell_back) = resolve_data_dir("default");
         assert!(!fell_back);
-        assert!(path.ends_with(".screenpipe"));
+        assert!(path.ends_with(".thadm"));
     }
 
     #[test]
     fn test_resolve_empty() {
         let (path, fell_back) = resolve_data_dir("");
         assert!(!fell_back);
-        assert!(path.ends_with(".screenpipe"));
+        assert!(path.ends_with(".thadm"));
     }
 
     #[test]
     fn test_resolve_relative_path_falls_back() {
         let (path, fell_back) = resolve_data_dir("relative/path");
         assert!(fell_back);
-        assert!(path.ends_with(".screenpipe"));
+        assert!(path.ends_with(".thadm"));
     }
 
     #[test]

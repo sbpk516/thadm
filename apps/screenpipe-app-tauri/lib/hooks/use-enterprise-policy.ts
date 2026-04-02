@@ -70,10 +70,12 @@ export function useEnterprisePolicy() {
 
   const fetchPolicy = useCallback(async (licenseKey: string): Promise<FetchResult> => {
     try {
-      const res = await tauriFetch("https://screenpi.pe/api/enterprise/policy", {
-        method: "GET",
-        headers: { "X-License-Key": licenseKey },
-      });
+      // THADM: disabled — screenpi.pe enterprise policy fetch
+      // const res = await tauriFetch("https://screenpi.pe/api/enterprise/policy", {
+      //   method: "GET",
+      //   headers: { "X-License-Key": licenseKey },
+      // });
+      const res = { ok: false, status: 0, statusText: "disabled", json: async () => ({}) } as any;
       if (res.status === 401 || res.status === 402) {
         console.error(`[enterprise] policy fetch: key rejected (${res.status})`);
         return { ok: false, reason: "invalid_key" };

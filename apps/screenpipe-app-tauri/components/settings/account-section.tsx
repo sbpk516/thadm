@@ -84,78 +84,79 @@ export function AccountSection() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.user?.token, updateSettings]);
 
+  // THADM: disabled — cloud checkout and subscription polling
   const handleCheckout = async () => {
-    if (!settings.user?.id) {
-      await commands.openLoginWindow();
-      return;
-    }
-    if (!settings.user?.cloud_subscribed) {
-      posthog.capture("cloud_plan_selected", { billing: isAnnual ? "annual" : "monthly" });
-      try {
-        const response = await fetch("https://screenpi.pe/api/subscription/checkout", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify({
-            plan: isAnnual ? "annual" : "monthly",
-            origin: "desktop-app",
-          }),
-        });
-        const data = await response.json();
-        if (data.url) {
-          openUrl(data.url);
-
-          // Poll for subscription status with exponential backoff after checkout
-          let pollCount = 0;
-          const maxPolls = 60;
-          let delay = 2000;
-          let pollTimer: ReturnType<typeof setTimeout> | null = null;
-          const poll = async () => {
-            pollCount++;
-            try {
-              const subResponse = await fetch(
-                `https://screenpi.pe/api/cloud-sync/subscription?userId=${settings.user?.id}&email=${encodeURIComponent(settings.user?.email || "")}`,
-                {
-                  headers: { Authorization: `Bearer ${settings.user?.token}` },
-                }
-              );
-              if (subResponse.ok) {
-                const subData = await subResponse.json();
-                // Treat trialing subscriptions as active (API returns hasSubscription: false for trials)
-                const subStatus = subData.subscription?.status;
-                const isActive = subData.hasSubscription || subStatus === "trialing" || subStatus === "active";
-                if (isActive) {
-                  updateSettings({
-                    user: { ...settings.user!, cloud_subscribed: true },
-                  });
-                  toast({
-                    title: "subscription activated",
-                    description: "welcome to screenpipe pro!",
-                  });
-                  return; // stop polling
-                }
-              }
-            } catch (e) {
-              console.error("polling error:", e);
-            }
-            if (pollCount < maxPolls) {
-              delay = Math.min(delay * 1.5, 30000);
-              pollTimer = setTimeout(poll, delay);
-            }
-          };
-          pollTimer = setTimeout(poll, delay);
-        } else {
-          throw new Error(data.error || "failed to create checkout");
-        }
-      } catch (error) {
-        toast({
-          title: "failed to start checkout",
-          description: String(error),
-          variant: "destructive",
-        });
-      }
-    }
+    // if (!settings.user?.id) {
+    //   await commands.openLoginWindow();
+    //   return;
+    // }
+    // if (!settings.user?.cloud_subscribed) {
+    //   posthog.capture("cloud_plan_selected", { billing: isAnnual ? "annual" : "monthly" });
+    //   try {
+    //     const response = await fetch("https://screenpi.pe/api/subscription/checkout", {
+    //       method: "POST",
+    //       headers: {
+    //         "Content-Type": "application/json",
+    //       },
+    //       body: JSON.stringify({
+    //         plan: isAnnual ? "annual" : "monthly",
+    //         origin: "desktop-app",
+    //       }),
+    //     });
+    //     const data = await response.json();
+    //     if (data.url) {
+    //       openUrl(data.url);
+    //
+    //       // Poll for subscription status with exponential backoff after checkout
+    //       let pollCount = 0;
+    //       const maxPolls = 60;
+    //       let delay = 2000;
+    //       let pollTimer: ReturnType<typeof setTimeout> | null = null;
+    //       const poll = async () => {
+    //         pollCount++;
+    //         try {
+    //           const subResponse = await fetch(
+    //             `https://screenpi.pe/api/cloud-sync/subscription?userId=${settings.user?.id}&email=${encodeURIComponent(settings.user?.email || "")}`,
+    //             {
+    //               headers: { Authorization: `Bearer ${settings.user?.token}` },
+    //             }
+    //           );
+    //           if (subResponse.ok) {
+    //             const subData = await subResponse.json();
+    //             // Treat trialing subscriptions as active (API returns hasSubscription: false for trials)
+    //             const subStatus = subData.subscription?.status;
+    //             const isActive = subData.hasSubscription || subStatus === "trialing" || subStatus === "active";
+    //             if (isActive) {
+    //               updateSettings({
+    //                 user: { ...settings.user!, cloud_subscribed: true },
+    //               });
+    //               toast({
+    //                 title: "subscription activated",
+    //                 description: "welcome to screenpipe pro!",
+    //               });
+    //               return; // stop polling
+    //             }
+    //           }
+    //         } catch (e) {
+    //           console.error("polling error:", e);
+    //         }
+    //         if (pollCount < maxPolls) {
+    //           delay = Math.min(delay * 1.5, 30000);
+    //           pollTimer = setTimeout(poll, delay);
+    //         }
+    //       };
+    //       pollTimer = setTimeout(poll, delay);
+    //     } else {
+    //       throw new Error(data.error || "failed to create checkout");
+    //     }
+    //   } catch (error) {
+    //     toast({
+    //       title: "failed to start checkout",
+    //       description: String(error),
+    //       variant: "destructive",
+    //     });
+    //   }
+    // }
   };
 
   // Auto-trigger checkout when tray "Upgrade to Pro" is clicked
@@ -224,7 +225,7 @@ export function AccountSection() {
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-2">
               <Sparkles className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">Screenpipe Pro</h3>
+              <h3 className="text-lg font-semibold">Thadm Pro</h3>
               <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">active</span>
             </div>
             <div className="flex gap-2">
@@ -316,7 +317,7 @@ export function AccountSection() {
         <>
           <Card className="p-8 flex flex-col items-center text-center">
             <UserCog className="h-10 w-10 text-muted-foreground mb-4" />
-            <h3 className="text-lg font-semibold mb-1">Sign in to Screenpipe</h3>
+            <h3 className="text-lg font-semibold mb-1">Sign in to Thadm</h3>
             <p className="text-sm text-muted-foreground mb-6">
               free account — no credit card required
             </p>
@@ -334,7 +335,7 @@ export function AccountSection() {
           <details className="group">
             <summary className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
               <Sparkles className="h-4 w-4" />
-              Optional: upgrade to Screenpipe Pro
+              Optional: upgrade to Thadm Pro
               <span className="text-xs ml-auto group-open:hidden">show details</span>
             </summary>
             <Card className="mt-3 p-5">
@@ -342,7 +343,7 @@ export function AccountSection() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">Screenpipe Pro</h3>
+                    <h3 className="text-lg font-semibold">Thadm Pro</h3>
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold">{isAnnual ? "$50" : "$99"}</span>
@@ -434,7 +435,7 @@ export function AccountSection() {
                 <div>
                   <div className="flex items-center gap-2 mb-1">
                     <Sparkles className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">Screenpipe Pro</h3>
+                    <h3 className="text-lg font-semibold">Thadm Pro</h3>
                   </div>
                   <div className="flex items-baseline gap-2">
                     <span className="text-2xl font-bold">{isAnnual ? "$50" : "$99"}</span>

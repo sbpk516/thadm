@@ -85,23 +85,24 @@ export const Providers = forwardRef<
     if (typeof window !== "undefined") {
       const isDebug = process.env.TAURI_ENV_DEBUG === "true";
       if (isDebug) return;
-      posthog.init("phc_z7FZXE8vmXtdTQ78LMy3j1BQWW4zP6PGDUP46rgcdnb", {
-        api_host: "https://us.i.posthog.com",
-        person_profiles: "identified_only",
-        capture_pageview: false,
-      });
-      // Offline mode: opt out of PostHog immediately on init.
-      // The setting is read async from the store by SettingsProvider,
-      // but we also check here to prevent any early events from leaking.
-      import("@/lib/hooks/use-settings").then(({ getStore }) => {
-        getStore().then((store) => {
-          store.get<{ offlineMode?: boolean }>("settings").then((s) => {
-            if (s?.offlineMode) {
-              posthog.opt_out_capturing();
-            }
-          });
-        });
-      }).catch(() => {});
+      // THADM: disabled screenpipe analytics
+      // posthog.init("phc_z7FZXE8vmXtdTQ78LMy3j1BQWW4zP6PGDUP46rgcdnb", {
+      //   api_host: "https://us.i.posthog.com",
+      //   person_profiles: "identified_only",
+      //   capture_pageview: false,
+      // });
+      // // Offline mode: opt out of PostHog immediately on init.
+      // // The setting is read async from the store by SettingsProvider,
+      // // but we also check here to prevent any early events from leaking.
+      // import("@/lib/hooks/use-settings").then(({ getStore }) => {
+      //   getStore().then((store) => {
+      //     store.get<{ offlineMode?: boolean }>("settings").then((s) => {
+      //       if (s?.offlineMode) {
+      //         posthog.opt_out_capturing();
+      //       }
+      //     });
+      //   });
+      // }).catch(() => {});
     }
   }, []);
 
@@ -109,7 +110,7 @@ export const Providers = forwardRef<
     <Suspense>
     <NuqsAdapter>
       <SettingsProvider>
-        <ThemeProvider defaultTheme="light" storageKey="screenpipe-ui-theme">
+        <ThemeProvider defaultTheme="light" storageKey="thadm-ui-theme">
           <ChangelogDialogProvider>
             <PermissionMonitorProvider>
               <PostHogProvider client={posthog}>{children}</PostHogProvider>

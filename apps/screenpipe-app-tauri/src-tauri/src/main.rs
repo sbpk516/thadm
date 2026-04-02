@@ -347,7 +347,7 @@ async fn main() {
         let args: Vec<String> = std::env::args().collect();
         let deep_link_url = args
             .iter()
-            .find(|a| a.starts_with("screenpipe://"))
+            .find(|a| a.starts_with("thadm://"))
             .cloned();
 
         if let Ok(resp) = reqwest::Client::new()
@@ -361,7 +361,7 @@ async fn main() {
             .await
         {
             if resp.status().is_success() {
-                eprintln!("screenpipe: another instance is already running — focused existing window, exiting.");
+                eprintln!("thadm: another instance is already running — focused existing window, exiting.");
                 std::process::exit(0);
             }
         }
@@ -391,47 +391,8 @@ async fn main() {
     let _posthog_disabled = telemetry_disabled || offline_mode;
 
     let app_version = env!("CARGO_PKG_VERSION");
-    // Sentry disabled only when telemetry is explicitly off, NOT for offline mode
-    let sentry_guard = if !telemetry_disabled {
-        Some(sentry::init((
-            "https://da4edafe2c8e5e8682505945695ecad7@o4505591122886656.ingest.us.sentry.io/4510761355116544",
-            sentry::ClientOptions {
-                release: Some(format!("screenpipe-app@{}", app_version).into()),
-                send_default_pii: false,
-                server_name: Some("screenpipe-app".into()),
-                before_send: Some(std::sync::Arc::new(|mut event| {
-                    fn strip_user_paths(s: &str) -> String {
-                        let re_unix = regex::Regex::new(r"/Users/[^/\s]+").unwrap();
-                        let re_win = regex::Regex::new(r"(?i)C:\\Users\\[^\\\s]+").unwrap();
-                        let s = re_unix.replace_all(s, "~").to_string();
-                        re_win.replace_all(&s, "~").to_string()
-                    }
-                    if let Some(ref mut msg) = event.message {
-                        *msg = strip_user_paths(msg);
-                    }
-                    // Filter out IndexedDB disconnect errors (APP-2E)
-                    // WKWebView's IndexedDB server crashes are handled via auto-reload
-                    // in layout.tsx — no need to report to Sentry
-                    for val in event.exception.values.iter() {
-                        if let Some(ref v) = val.value {
-                            if v.contains("Indexed Database server lost") {
-                                return None;
-                            }
-                        }
-                    }
-                    for val in event.exception.values.iter_mut() {
-                        if let Some(ref mut v) = val.value {
-                            *v = strip_user_paths(v);
-                        }
-                    }
-                    Some(event)
-                })),
-                ..Default::default()
-            },
-        )))
-    } else {
-        None
-    };
+    // THADM: disabled sentry
+    let sentry_guard: Option<sentry::ClientInitGuard> = None;
 
     // Install a panic hook that logs to stderr + Sentry BEFORE the default hook runs.
     // This is critical because panics inside `tao::send_event` (called from Obj-C)
@@ -762,7 +723,7 @@ async fn main() {
             show_main_window(&app_for_closure, false);
 
             // Forward deep-link URL from args
-            if let Some(url) = args_clone.iter().find(|a| a.starts_with("screenpipe://")) {
+            if let Some(url) = args_clone.iter().find(|a| a.starts_with("thadm://")) {
                 let _ = app_for_closure.emit("deep-link-received", url.clone());
             }
 
@@ -959,8 +920,8 @@ async fn main() {
             {
                 use tauri::menu::{MenuBuilder, SubmenuBuilder, PredefinedMenuItem, MenuItemBuilder};
 
-                let mut app_submenu_builder = SubmenuBuilder::new(app, "screenpipe")
-                    .item(&PredefinedMenuItem::about(app, Some("About screenpipe"), None)?)
+                let mut app_submenu_builder = SubmenuBuilder::new(app, "thadm")
+                    .item(&PredefinedMenuItem::about(app, Some("About thadm"), None)?)
                     .separator();
                 if !crate::updates::is_enterprise_build(&app_handle) {
                     app_submenu_builder = app_submenu_builder
@@ -973,7 +934,7 @@ async fn main() {
                         .accelerator("CmdOrCtrl+,")
                         .build(app)?)
                     .separator()
-                    .item(&PredefinedMenuItem::quit(app, Some("Quit screenpipe"))?)
+                    .item(&PredefinedMenuItem::quit(app, Some("Quit thadm"))?)
                     .build()?;
 
                 let edit_submenu = SubmenuBuilder::new(app, "Edit")
@@ -1037,7 +998,7 @@ async fn main() {
                 .unwrap_or_else(|_| screenpipe_core::paths::default_screenpipe_data_dir());
             let file_appender = RollingFileAppender::builder()
                 .rotation(Rotation::DAILY)
-                .filename_prefix("screenpipe-app")
+                .filename_prefix("thadm")
                 .filename_suffix("log")
                 .max_log_files(5)
                 .build(log_dir)?;

@@ -1725,7 +1725,7 @@ pub async fn copy_frame_to_clipboard(frame_id: i64) -> Result<(), String> {
 #[tauri::command]
 #[specta::specta]
 pub async fn copy_deeplink_to_clipboard(frame_id: i64) -> Result<(), String> {
-    let link = format!("screenpipe://frame/{}", frame_id);
+    let link = format!("thadm://frame/{}", frame_id);
     let mut clipboard = arboard::Clipboard::new().map_err(|e| format!("clipboard error: {}", e))?;
     clipboard
         .set_text(link)

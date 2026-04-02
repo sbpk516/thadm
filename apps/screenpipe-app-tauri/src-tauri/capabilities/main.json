@@ -116,7 +116,7 @@
           "requireLiteralLeadingDot": false
         },
         {
-          "path": "$RESOURCE/.screenpipe/*",
+          "path": "$RESOURCE/.thadm/*",
           "requireLiteralLeadingDot": false
         },
         {
@@ -124,7 +124,7 @@
           "requireLiteralLeadingDot": false
         },
         {
-          "path": "$HOME/.screenpipe/*",
+          "path": "$HOME/.thadm/*",
           "requireLiteralLeadingDot": false
         },
         {
@@ -132,15 +132,15 @@
           "requireLiteralLeadingDot": false
         },
         {
-          "path": "$HOME/.screenpipe/data/**",
+          "path": "$HOME/.thadm/data/**",
           "requireLiteralLeadingDot": false
         },
         {
-          "path": "$HOME/.screenpipe/**",
+          "path": "$HOME/.thadm/**",
           "requireLiteralLeadingDot": false
         },
         {
-          "path": "$RESOURCE/.screenpipe/**",
+          "path": "$RESOURCE/.thadm/**",
           "requireLiteralLeadingDot": false
         },
         {

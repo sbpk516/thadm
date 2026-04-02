@@ -21,6 +21,8 @@ interface ReferralData {
 }
 
 export function ReferralCard() {
+  // THADM: cloud features disabled
+  return null;
   const { settings } = useSettings();
   const [referral, setReferral] = useState<ReferralData | null>(null);
   const [noCode, setNoCode] = useState(false);

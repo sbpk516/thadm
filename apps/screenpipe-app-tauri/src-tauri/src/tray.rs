@@ -269,7 +269,7 @@ fn create_dynamic_menu(
             .item(&PredefinedMenuItem::separator(app)?)
             .item(&MenuItemBuilder::with_id("skip_onboarding", "Skip onboarding").build(app)?)
             .item(&PredefinedMenuItem::separator(app)?)
-            .item(&MenuItemBuilder::with_id("quit", "Quit screenpipe").build(app)?);
+            .item(&MenuItemBuilder::with_id("quit", "Quit thadm").build(app)?);
 
         return menu_builder.build().map_err(Into::into);
     }
@@ -296,7 +296,7 @@ fn create_dynamic_menu(
 
     // --- Open screenpipe ---
     menu_builder = menu_builder
-        .item(&MenuItemBuilder::with_id("settings_top", "Open screenpipe").build(app)?)
+        .item(&MenuItemBuilder::with_id("settings_top", "Open thadm").build(app)?)
         .item(&PredefinedMenuItem::separator(app)?);
 
     // --- Primary actions (most-used first) ---
@@ -405,9 +405,9 @@ fn create_dynamic_menu(
     let is_beta = app.config().identifier.contains("beta");
     let is_enterprise = cfg!(feature = "enterprise-build");
     let version_text = match (is_beta, is_enterprise) {
-        (_, true) => format!("screenpipe v{} (Enterprise)", app.package_info().version),
-        (true, false) => format!("screenpipe v{} (Beta)", app.package_info().version),
-        (false, false) => format!("screenpipe v{}", app.package_info().version),
+        (_, true) => format!("thadm v{} (Enterprise)", app.package_info().version),
+        (true, false) => format!("thadm v{} (Beta)", app.package_info().version),
+        (false, false) => format!("thadm v{}", app.package_info().version),
     };
     menu_builder = menu_builder.item(
         &MenuItemBuilder::with_id("version", version_text)
@@ -464,7 +464,7 @@ fn create_dynamic_menu(
         );
     }
     menu_builder = menu_builder.item(
-            &MenuItemBuilder::with_id("quit", "Quit screenpipe")
+            &MenuItemBuilder::with_id("quit", "Quit thadm")
                 .accelerator("CmdOrCtrl+Q")
                 .build(app)?,
         );
@@ -804,9 +804,9 @@ async fn update_menu_if_needed(
                     debug!("tray_menu_update: setting tooltip");
                     // Update tooltip to show permission status
                     let tooltip = if has_perm_issue {
-                        "screenpipe — ⚠️ permissions needed"
+                        "thadm — ⚠️ permissions needed"
                     } else {
-                        "screenpipe"
+                        "thadm"
                     };
                     let _ = tray.set_tooltip(Some(tooltip));
                 }

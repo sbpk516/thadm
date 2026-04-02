@@ -39,7 +39,7 @@ const TOOLS = [
   {
     name: "search_content",
     description:
-      "Search screenpipe's recorded content: screen text (OCR), audio transcriptions, and UI elements. " +
+      "Search thadm's recorded content: screen text (OCR), audio transcriptions, and UI elements. " +
       "Returns timestamped results with app context. " +
       "Call with no parameters to get recent activity.",
     inputSchema: {
@@ -99,7 +99,7 @@ async function fetchAPI(endpoint: string, options: RequestInit = {}): Promise<Re
 // Create MCP server
 const server = new Server(
   {
-    name: "screenpipe-http",
+    name: "thadm-http",
     version: "0.8.2",
   },
   {
@@ -241,7 +241,7 @@ const httpServer = createServer(async (req, res) => {
 });
 
 httpServer.listen(mcpPort, () => {
-  console.log(`Screenpipe MCP HTTP server running on http://localhost:${mcpPort}`);
+  console.log(`Thadm MCP HTTP server running on http://localhost:${mcpPort}`);
   console.log(`MCP endpoint: http://localhost:${mcpPort}/mcp`);
   console.log(`Health check: http://localhost:${mcpPort}/health`);
 });

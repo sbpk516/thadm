@@ -142,9 +142,9 @@ pub enum OutputFormat {
 #[command(
     author,
     version,
-    about = "screenpipe: power AI by everything you've seen, said or heard",
+    about = "thadm: power AI by everything you've seen, said or heard",
     long_about = None,
-    name = "screenpipe"
+    name = "thadm"
 )]
 pub struct Cli {
     #[command(subcommand)]
@@ -161,12 +161,12 @@ pub enum Command {
     /// Start recording screen, audio, and serve the API
     Record(RecordArgs),
 
-    /// Show screenpipe status (running state, data stats)
+    /// Show thadm status (running state, data stats)
     Status {
         /// Output format
         #[arg(long, default_value_t = false)]
         json: bool,
-        /// Data directory. Default to $HOME/.screenpipe
+        /// Data directory. Default to $HOME/.thadm
         #[arg(long, value_hint = ValueHint::DirPath)]
         data_dir: Option<String>,
         /// Port to check for running server
@@ -210,13 +210,13 @@ pub enum Command {
         subcommand: ConnectionCommand,
     },
 
-    /// Vault: encrypt/lock all screenpipe data at rest
+    /// Vault: encrypt/lock all thadm data at rest
     Vault {
         #[command(subcommand)]
         subcommand: VaultCommand,
     },
 
-    /// Authenticate with screenpipe cloud
+    /// Authenticate with thadm cloud
     Login,
 
     /// Show current auth status
@@ -252,11 +252,11 @@ pub struct RecordArgs {
     #[arg(long, default_value_t = true)]
     pub use_system_default_audio: bool,
 
-    /// Data directory. Default to $HOME/.screenpipe
+    /// Data directory. Default to $HOME/.thadm
     #[arg(long, value_hint = ValueHint::DirPath)]
     pub data_dir: Option<String>,
 
-    /// Enable debug logging for screenpipe modules
+    /// Enable debug logging for thadm modules
     #[arg(long)]
     pub debug: bool,
 
@@ -515,7 +515,7 @@ pub enum PipeCommand {
     },
     /// Publish a local pipe to the registry
     Publish {
-        /// Pipe name (directory name under ~/.screenpipe/pipes/)
+        /// Pipe name (directory name under ~/.thadm/pipes/)
         name: String,
     },
     /// Search the pipe registry
@@ -629,7 +629,7 @@ pub enum VisionCommand {
 pub enum McpCommand {
     /// Setup MCP server configuration
     Setup {
-        /// Directory to save MCP files (default: $HOME/.screenpipe/mcp)
+        /// Directory to save MCP files (default: $HOME/.thadm/mcp)
         #[arg(long, value_hint = ValueHint::DirPath)]
         directory: Option<String>,
         /// Output format

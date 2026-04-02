@@ -34,8 +34,8 @@ const NotificationHandler: React.FC = () => {
 
           if (!welcomeShown) {
             sendNotification({
-              title: "welcome to screenpipe",
-              body: "thank you for using screenpipe! we're dedicated to help you get the most out of screenpipe.",
+              title: "welcome to thadm",
+              body: "thank you for using thadm! we're dedicated to help you get the most out of thadm.",
             });
             localStorage?.setItem("welcomeNotificationShown", "true");
           }
@@ -128,7 +128,7 @@ const NotificationHandler: React.FC = () => {
 
         if (action.type === "mute" && action.pipe_name) {
           const localforage = (await import("localforage")).default;
-          const raw = await localforage.getItem<string>("screenpipe-settings");
+          const raw = await localforage.getItem<string>("thadm-settings");
           const settings = raw ? JSON.parse(raw) : {};
           const prefs = settings.notificationPrefs || {
             captureStalls: true, appUpdates: true,
@@ -138,7 +138,7 @@ const NotificationHandler: React.FC = () => {
             prefs.mutedPipes.push(action.pipe_name);
           }
           settings.notificationPrefs = prefs;
-          await localforage.setItem("screenpipe-settings", JSON.stringify(settings));
+          await localforage.setItem("thadm-settings", JSON.stringify(settings));
           return;
         }
 
@@ -172,7 +172,7 @@ const NotificationHandler: React.FC = () => {
         }
 
         if (action.type === "deeplink" && action.url) {
-          if (action.url.startsWith("screenpipe://")) {
+          if (action.url.startsWith("thadm://")) {
             const { emit } = await import("@tauri-apps/api/event");
             await emit("deep-link-received", action.url);
           } else {
@@ -241,17 +241,17 @@ const NotificationHandler: React.FC = () => {
   return null;
 };
 
-const PIPE_SUGGESTION_PROMPT = `you are a screenpipe automation advisor. the user wants ideas for pipes (scheduled AI agents) they can create based on their actual workflow.
+const PIPE_SUGGESTION_PROMPT = `you are a thadm automation advisor. the user wants ideas for pipes (scheduled AI agents) they can create based on their actual workflow.
 
-## what is screenpipe?
+## what is thadm?
 
-screenpipe is a desktop app that continuously captures screen text (via accessibility APIs) and audio (transcription).
+thadm is a desktop app that continuously captures screen text (via accessibility APIs) and audio (transcription).
 it runs a local API at http://localhost:3030 that lets you query everything you've seen, said, or heard.
 
 ## what is a pipe?
 
-a pipe is a scheduled AI agent defined as a single markdown file: ~/.screenpipe/pipes/{name}/pipe.md
-every N minutes, screenpipe runs a coding agent with the pipe's prompt.
+a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
+every N minutes, thadm runs a coding agent with the pipe's prompt.
 the agent can query screen data, write files, call external APIs, send notifications, etc.
 
 ## your task

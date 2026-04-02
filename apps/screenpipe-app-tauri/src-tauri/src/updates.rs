@@ -139,7 +139,7 @@ impl UpdatesManager {
             let (menu_text, enabled) = if is_source_build(app) {
                 ("Auto-updates unavailable (source build)", true) // Enable to show info dialog
             } else {
-                ("Screenpipe is up to date", false)
+                ("thadm is up to date", false)
             };
             Some(
                 MenuItemBuilder::with_id("update_now", menu_text)
@@ -258,7 +258,7 @@ impl UpdatesManager {
 
             if let Some(ref item) = self.update_menu_item {
                 item.set_enabled(false)?;
-                item.set_text("Downloading latest version of screenpipe")?;
+                item.set_text("Downloading latest version of thadm")?;
             }
 
             {
@@ -366,7 +366,7 @@ impl UpdatesManager {
                                 let _ = app_notif
                                     .notification()
                                     .builder()
-                                    .title("screenpipe update available")
+                                    .title("thadm update available")
                                     .body(format!(
                                         "v{} is ready — sign in to download",
                                         version_str
@@ -410,7 +410,7 @@ impl UpdatesManager {
                     if let Err(e) = app_notif
                         .notification()
                         .builder()
-                        .title("screenpipe updating")
+                        .title("thadm updating")
                         .body(format!("v{} downloaded — restarting now", version_str))
                         .show()
                     {
@@ -420,9 +420,9 @@ impl UpdatesManager {
                     if let Err(e) = app_notif
                         .notification()
                         .builder()
-                        .title("screenpipe update available")
+                        .title("thadm update available")
                         .body(format!(
-                            "v{} is ready — open screenpipe to update",
+                            "v{} is ready — open thadm to update",
                             version_str
                         ))
                         .show()
@@ -469,7 +469,7 @@ impl UpdatesManager {
                     .app
                     .dialog()
                     .message("update available")
-                    .title("screenpipe update")
+                    .title("thadm update")
                     .buttons(MessageDialogButtons::OkCancelCustom(
                         "update now".to_string(),
                         "later".to_string(),
@@ -484,7 +484,7 @@ impl UpdatesManager {
                     {
                         if let Some(ref item) = self.update_menu_item {
                             item.set_enabled(false)?;
-                            item.set_text("Downloading latest version of screenpipe")?;
+                            item.set_text("Downloading latest version of thadm")?;
                         }
 
                         if let Err(err) =
@@ -551,7 +551,7 @@ impl UpdatesManager {
                     "you're running the latest version (v{})",
                     self.app.package_info().version
                 ))
-                .title("screenpipe is up to date")
+                .title("thadm is up to date")
                 .buttons(MessageDialogButtons::Ok)
                 .show(|_| {});
         }
@@ -685,7 +685,7 @@ fn check_whats_new(app: &tauri::AppHandle) {
 
         let body = if release_notes.is_empty() {
             format!(
-                "screenpipe updated to **v{}**! check the [changelog](https://screenpi.pe/changelog) for details.",
+                "thadm updated to **v{}**! check the [changelog](https://screenpi.pe/changelog) for details.",
                 current_version
             )
         } else {
@@ -697,7 +697,7 @@ fn check_whats_new(app: &tauri::AppHandle) {
                 release_notes
             };
             format!(
-                "screenpipe updated to **v{}**!\n\n{}\n\n[full changelog](https://screenpi.pe/changelog)",
+                "thadm updated to **v{}**!\n\n{}\n\n[full changelog](https://screenpi.pe/changelog)",
                 current_version, truncated
             )
         };
@@ -706,7 +706,7 @@ fn check_whats_new(app: &tauri::AppHandle) {
         match client
             .post("http://127.0.0.1:11435/notify")
             .json(&serde_json::json!({
-                "title": format!("🎉 screenpipe v{} — what's new", current_version),
+                "title": format!("🎉 thadm v{} — what's new", current_version),
                 "body": body,
             }))
             .send()

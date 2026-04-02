@@ -938,11 +938,13 @@ export function SyncSettings() {
       }
 
       const email = settings.user?.email || "";
-      const response = await fetch(`https://screenpi.pe/api/cloud-sync/subscription?userId=${userId}&email=${encodeURIComponent(email)}`, {
-        headers: {
-          "Authorization": `Bearer ${token}`,
-        },
-      });
+      // THADM: disabled — screenpi.pe cloud sync subscription check
+      // const response = await fetch(`https://screenpi.pe/api/cloud-sync/subscription?userId=${userId}&email=${encodeURIComponent(email)}`, {
+      //   headers: {
+      //     "Authorization": `Bearer ${token}`,
+      //   },
+      // });
+      const response = { ok: false, status: 0, json: async () => ({}) } as any;
 
       if (response.ok) {
         const data = await response.json();
@@ -1008,19 +1010,21 @@ export function SyncSettings() {
         return;
       }
 
-      const response = await fetch("https://screenpi.pe/api/cloud-sync/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          tier: "pro",
-          billingPeriod: isAnnual ? "yearly" : "monthly",
-          userId,
-          email: settings.user?.email,
-        }),
-      });
+      // THADM: disabled — screenpi.pe cloud sync checkout
+      // const response = await fetch("https://screenpi.pe/api/cloud-sync/checkout", {
+      //   method: "POST",
+      //   headers: {
+      //     "Content-Type": "application/json",
+      //     "Authorization": `Bearer ${token}`,
+      //   },
+      //   body: JSON.stringify({
+      //     tier: "pro",
+      //     billingPeriod: isAnnual ? "yearly" : "monthly",
+      //     userId,
+      //     email: settings.user?.email,
+      //   }),
+      // });
+      const response = { ok: false, json: async () => ({ error: "disabled" }) } as any;
 
       const data = await response.json();
 

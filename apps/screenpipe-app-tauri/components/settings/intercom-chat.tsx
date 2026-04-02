@@ -21,7 +21,8 @@ type ChatState = {
 };
 
 const STORAGE_KEY = "intercom_chat_state";
-const API_URL = "https://screenpi.pe/api/intercom";
+// THADM: disabled — screenpipe intercom
+// const API_URL = "https://screenpi.pe/api/intercom";
 const POLL_INTERVAL = 5000;
 
 function loadChatState(): ChatState {
@@ -43,6 +44,8 @@ function stripHtml(html: string): string {
 }
 
 export function IntercomChat() {
+  // THADM: intercom chat disabled — upstream screenpipe service
+  return null;
   const { settings } = useSettings();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState("");

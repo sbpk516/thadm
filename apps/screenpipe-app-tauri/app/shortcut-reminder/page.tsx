@@ -76,7 +76,7 @@ export default function ShortcutReminderPage() {
   const loadShortcutsFromFile = useCallback(async () => {
     try {
       const home = await homeDir();
-      const raw = await readTextFile(`${home}/.screenpipe/store.bin`);
+      const raw = await readTextFile(`${home}/.thadm/store.bin`);
       const data = JSON.parse(raw);
       const settings = data?.settings;
       if (settings?.showScreenpipeShortcut) {

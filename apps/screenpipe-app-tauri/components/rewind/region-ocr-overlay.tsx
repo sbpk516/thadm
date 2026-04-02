@@ -148,46 +148,12 @@ export const RegionOcrOverlay: FC<RegionOcrOverlayProps> = ({
         const dataUrl = canvas.toDataURL("image/jpeg", 0.9);
         const base64 = dataUrl.replace(/^data:image\/jpeg;base64,/, "");
 
-        // Call screenpipe cloud API
-        const response = await fetch(
-          "https://api.screenpi.pe/v1/chat/completions",
-          {
-            method: "POST",
-            headers: {
-              Authorization: `Bearer ${userToken}`,
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify({
-              model: "claude-haiku-4-5",
-              max_tokens: 4096,
-              messages: [
-                {
-                  role: "user",
-                  content: [
-                    {
-                      type: "image_url",
-                      image_url: {
-                        url: `data:image/jpeg;base64,${base64}`,
-                      },
-                    },
-                    {
-                      type: "text",
-                      text: "Extract all text from this image. Return ONLY the extracted text, preserving the original formatting and line breaks. Do not add any commentary.",
-                    },
-                  ],
-                },
-              ],
-            }),
-          }
-        );
-
-        if (!response.ok) {
-          const errText = await response.text().catch(() => "unknown error");
-          throw new Error(`API error ${response.status}: ${errText}`);
-        }
-
-        const data = await response.json();
-        const extractedText = data?.choices?.[0]?.message?.content?.trim();
+        // THADM: disabled — cloud OCR API call removed
+        // const response = await fetch(
+        //   "https://api.screenpi.pe/v1/chat/completions",
+        //   { ... }
+        // );
+        const extractedText = ""; // THADM: disabled cloud OCR
 
         if (!extractedText) {
           toast({

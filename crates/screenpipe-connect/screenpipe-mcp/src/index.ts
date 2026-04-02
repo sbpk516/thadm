@@ -31,7 +31,7 @@ const SCREENPIPE_API = `http://localhost:${port}`;
 // Initialize server
 const server = new Server(
   {
-    name: "screenpipe",
+    name: "thadm",
     version: "0.9.0",
   },
   {
@@ -100,7 +100,7 @@ const TOOLS: Tool[] = [
     name: "list-meetings",
     description:
       "List detected meetings (Zoom, Teams, Meet, etc.) with duration, app, and attendees. " +
-      "Only available when screenpipe runs in smart transcription mode.",
+      "Only available when thadm runs in smart transcription mode.",
     annotations: { title: "List Meetings", readOnlyHint: true, openWorldHint: false, idempotentHint: true },
     inputSchema: {
       type: "object",
@@ -207,7 +207,7 @@ const TOOLS: Tool[] = [
   {
     name: "send-notification",
     description:
-      "Send a notification to the screenpipe desktop UI. " +
+      "Send a notification to the thadm desktop UI. " +
       "Use to alert the user about findings, completed tasks, or actions needing attention.",
     annotations: { title: "Send Notification", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     inputSchema: {
@@ -249,13 +249,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 // ---------------------------------------------------------------------------
 const RESOURCES = [
   {
-    uri: "screenpipe://context",
+    uri: "thadm://context",
     name: "Current Context",
     description: "Current date/time, timezone, and pre-computed timestamps for common time ranges",
     mimeType: "application/json",
   },
   {
-    uri: "screenpipe://guide",
+    uri: "thadm://guide",
     name: "Usage Guide",
     description: "How to use screenpipe tools effectively — search strategy, progressive disclosure, and common patterns",
     mimeType: "text/markdown",
@@ -269,7 +269,7 @@ server.setRequestHandler(ListResourcesRequestSchema, async () => {
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
 
-  if (uri === "screenpipe://context") {
+  if (uri === "thadm://context") {
     const now = new Date();
     const ms = now.getTime();
     return {
@@ -304,13 +304,13 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     };
   }
 
-  if (uri === "screenpipe://guide") {
+  if (uri === "thadm://guide") {
     return {
       contents: [
         {
           uri,
           mimeType: "text/markdown",
-          text: `# Screenpipe Usage Guide
+          text: `# Thadm Usage Guide
 
 ## Progressive Disclosure — start light, escalate only when needed
 
@@ -341,8 +341,8 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 ## Deep Links
 
 When referencing specific moments in results, create clickable links:
-- Frame: [10:30 AM — Chrome](screenpipe://frame/{frame_id}) — use frame_id from search results
-- Timeline: [meeting at 3pm](screenpipe://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from results
+- Frame: [10:30 AM — Chrome](thadm://frame/{frame_id}) — use frame_id from search results
+- Timeline: [meeting at 3pm](thadm://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from results
 Never fabricate IDs or timestamps — only use values from actual results.
 `,
         },
@@ -764,7 +764,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               if (message.status === "completed" && message.video_data) {
                 const tempDir = os.tmpdir();
                 const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-                const filename = `screenpipe_export_${timestamp}.mp4`;
+                const filename = `thadm_export_${timestamp}.mp4`;
                 const filePath = path.join(tempDir, filename);
                 fs.writeFileSync(filePath, Buffer.from(message.video_data));
                 resolved = true;
@@ -883,7 +883,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 async function main() {
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  console.error("Screenpipe MCP server running on stdio");
+  console.error("Thadm MCP server running on stdio");
 }
 
 main().catch((error) => {

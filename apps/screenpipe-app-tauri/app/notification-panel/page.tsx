@@ -128,9 +128,9 @@ export default function NotificationPanelPage() {
             }
             case "deeplink": {
               if (actionObj.url) {
-                if (actionObj.url.startsWith("screenpipe://")) {
+                if (actionObj.url.startsWith("thadm://")) {
                   // Emit to main window's DeeplinkHandler which knows how to
-                  // route screenpipe:// URLs (timeline, frame, settings, etc.)
+                  // route thadm:// URLs (timeline, frame, settings, etc.)
                   await emit("deep-link-received", actionObj.url);
                 } else {
                   // External URL — open in system browser
@@ -416,7 +416,7 @@ export default function NotificationPanelPage() {
           >
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img src="/32x32.png" alt="" width={14} height={14} style={{ borderRadius: "3px" }} />
-            screenpipe
+            thadm
           </span>
           <button
             onClick={() => hide(false)}
@@ -687,7 +687,7 @@ it runs a local API at http://localhost:3030 that lets you query everything you'
 
 ## what is a pipe?
 
-a pipe is a scheduled AI agent defined as a single markdown file: ~/.screenpipe/pipes/{name}/pipe.md
+a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
 every N minutes, screenpipe runs a coding agent with the pipe's prompt.
 the agent can query screen data, write files, call external APIs, send notifications, etc.
 

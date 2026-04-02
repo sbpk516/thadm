@@ -44,7 +44,7 @@ pub fn save_toml(settings: &RecordingSettings, path: &Path) -> Result<(), String
 
 /// Resolve the screenpipe config directory: `~/.screenpipe/`
 fn dirs_next() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".screenpipe"))
+    dirs::home_dir().map(|h| h.join(".thadm"))
 }
 
 #[cfg(test)]

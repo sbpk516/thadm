@@ -77,6 +77,9 @@ impl AnalyticsManager {
             return;
         }
 
+        // THADM: disabled — skip attribution fetch
+        return;
+        #[allow(unreachable_code)]
         match self
             .client
             .get("https://screenpi.pe/api/attribution")
@@ -127,6 +130,8 @@ impl AnalyticsManager {
         event: &str,
         properties: Option<serde_json::Value>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // THADM: disabled
+        return Ok(());
         if !*self.enabled.lock().await {
             return Ok(());
         }
@@ -235,6 +240,8 @@ impl AnalyticsManager {
     }
 
     pub async fn start_periodic_event(&self) {
+        // THADM: disabled
+        return;
         let mut interval = interval(self.interval);
 
         loop {

@@ -189,26 +189,27 @@ export function ArchiveSettings() {
       return;
     }
     try {
-      const response = await fetch(
-        "https://screenpi.pe/api/cloud-sync/checkout",
-        {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Authorization: `Bearer ${settings.user?.token}`,
-          },
-          body: JSON.stringify({
-            tier: "pro",
-            billingPeriod: "monthly",
-            userId: settings.user?.id,
-            email: settings.user?.email,
-          }),
-        }
-      );
-      const data = await response.json();
-      if (data.url) {
-        openUrl(data.url);
-      }
+      // THADM: disabled — screenpi.pe cloud checkout
+      // const response = await fetch(
+      //   "https://screenpi.pe/api/cloud-sync/checkout",
+      //   {
+      //     method: "POST",
+      //     headers: {
+      //       "Content-Type": "application/json",
+      //       Authorization: `Bearer ${settings.user?.token}`,
+      //     },
+      //     body: JSON.stringify({
+      //       tier: "pro",
+      //       billingPeriod: "monthly",
+      //       userId: settings.user?.id,
+      //       email: settings.user?.email,
+      //     }),
+      //   }
+      // );
+      // const data = await response.json();
+      // if (data.url) {
+      //   openUrl(data.url);
+      // }
     } catch (error) {
       toast({
         title: "Failed to start checkout",

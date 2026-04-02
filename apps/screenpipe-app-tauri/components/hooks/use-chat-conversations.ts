@@ -97,12 +97,12 @@ export function useChatConversations(opts: UseChatConversationsOpts) {
   } = opts;
 
   const [showHistory, setShowHistoryRaw] = useState(() => {
-    try { return localStorage.getItem("screenpipe:chat-history-open") === "true"; } catch { return false; }
+    try { return localStorage.getItem("thadm:chat-history-open") === "true"; } catch { return false; }
   });
   const setShowHistory = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
     setShowHistoryRaw((prev) => {
       const next = typeof v === "function" ? v(prev) : v;
-      try { localStorage.setItem("screenpipe:chat-history-open", String(next)); } catch {}
+      try { localStorage.setItem("thadm:chat-history-open", String(next)); } catch {}
       return next;
     });
   }, []);
