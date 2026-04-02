@@ -10,7 +10,7 @@
   },
   "bundle": {
     "active": true,
-    "publisher": "Mediar, Inc.",
+    "publisher": "Balaji Sachidanandam",
     "category": "DeveloperTool",
     "shortDescription": "24/7 memory for your desktop",
     "longDescription": "24/7 memory for your desktop. 100% local. You own your data.",
@@ -41,7 +41,8 @@
     ],
     "macOS": {
       "entitlements": "entitlements.plist",
-      "hardenedRuntime": true
+      "hardenedRuntime": true,
+      "signingIdentity": "Developer ID Application: Balaji Sachidanandam (KVLNE2Y696)"
     }
   },
   "plugins": {
