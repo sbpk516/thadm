@@ -32,6 +32,7 @@ import {
   Bell,
   BarChart3,
   History,
+  KeyRound,
 } from "lucide-react";
 import { useOverlayData } from "@/app/shortcut-reminder/use-overlay-data";
 import { cn } from "@/lib/utils";
@@ -52,6 +53,7 @@ import { MemoriesSection } from "@/components/settings/memories-section";
 import { NotificationsSettings } from "@/components/settings/notifications-settings";
 import { UsageSection } from "@/components/settings/usage-section";
 import { SpeakersSection } from "@/components/settings/speakers-section";
+import { LicenseSection } from "@/components/settings/license-section";
 // HomeStatsBadge is rendered inside SummaryCards (chat empty state)
 import { StandaloneChat } from "@/components/standalone-chat";
 import Timeline from "@/components/rewind/timeline";
@@ -90,7 +92,8 @@ type SettingsModalSection =
   | "notifications"
   | "referral"
   | "usage"
-  | "speakers";
+  | "speakers"
+  | "license";
 
 type SettingsModalSectionItem = {
   id: SettingsModalSection;
@@ -103,14 +106,14 @@ type SettingsModalSectionItem = {
 const ALL_SECTIONS = [
   "home", "timeline", "pipes", "help",
   "account", "recording", "ai", "general", "display", "shortcuts", "notifications",
-  "connections", "privacy", "storage", "meetings", "memories", "speakers", "team", "referral", "usage",
+  "connections", "privacy", "storage", "meetings", "memories", "speakers", "team", "referral", "usage", "license",
   "feedback", // backwards compat → maps to "help"
   "disk-usage", "cloud-archive", "cloud-sync", // backwards compat → maps to "storage"
 ];
 
 const MODAL_SECTIONS = new Set<string>([
   "account", "recording", "ai", "general", "display", "shortcuts", "notifications",
-  "connections", "privacy", "storage", "meetings", "memories", "team", "referral", "usage",
+  "connections", "privacy", "storage", "meetings", "memories", "team", "referral", "usage", "license",
 ]);
 
 function SettingsPageContent() {
@@ -391,6 +394,8 @@ function SettingsPageContent() {
         return <UsageSection />;
       case "speakers":
         return <SpeakersSection />;
+      case "license":
+        return <LicenseSection />;
     }
   };
 
@@ -405,6 +410,7 @@ function SettingsPageContent() {
   const settingsModalSections = ([
     { id: "display", label: "Display", icon: <Layout className="h-4 w-4" />, group: "app" },
     { id: "general", label: "General", icon: <SettingsIcon className="h-4 w-4" />, group: "app" },
+    { id: "license", label: "License", icon: <KeyRound className="h-4 w-4" />, group: "app" },
     { id: "ai", label: "AI models", icon: <Brain className="h-4 w-4" />, group: "app" },
     { id: "recording", label: "Recording", icon: <Video className="h-4 w-4" />, group: "app" },
     { id: "shortcuts", label: "Shortcuts", icon: <Keyboard className="h-4 w-4" />, group: "app" },
