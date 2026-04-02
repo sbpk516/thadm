@@ -822,7 +822,7 @@ export function AIProviderConfig({
                       {m.health?.status === 'degraded' && <span className="inline-block w-1.5 h-1.5 rounded-full bg-yellow-500" title="degraded" />}
                       {m.name}{m.free ? " (free)" : ""}
                       {costLabel && <span className="text-[9px] font-medium text-muted-foreground">{costLabel}</span>}
-                      {m.recommended_for?.includes('pipes') && <span className="text-[9px] text-muted-foreground bg-muted rounded px-1">pipes</span>}
+                      {m.recommended_for?.includes('pipes') && <span className="text-[9px] text-muted-foreground bg-muted rounded px-1">tasks</span>}
                       {m.health?.status === 'down' && <span className="text-[9px] text-red-400 ml-1">overloaded</span>}
                     </span>
                   </SelectItem>

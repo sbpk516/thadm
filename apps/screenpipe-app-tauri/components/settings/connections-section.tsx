@@ -1158,7 +1158,7 @@ export function ConnectionCredentialForm({
                 .join("\n  ");
               showChatWithPrefill({
                 context: `the user has the "${integrationName}" connection set up in thadm with these credentials:\n  ${credSummary}\n\nthe connection API is available at GET http://localhost:3030/connections/${integrationId}\n\n${integrationDescription || ""}`,
-                prompt: `try using my ${integrationName} connection — query it and do a small test interaction to verify it works end to end. after that, suggest creating a pipe that uses this connection.`,
+                prompt: `try using my ${integrationName} connection — query it and do a small test interaction to verify it works end to end. after that, suggest creating a task that uses this connection.`,
                 autoSend: true,
               });
             }}

@@ -778,7 +778,7 @@ export function PipesSection() {
       });
       posthog.capture("team_config_pushed", { config_type: "pipe", pipe_name: pipe.config.name });
       toast({
-        title: sharedPipeNames.has(pipe.config.name) ? "updated team pipe" : "shared to team",
+        title: sharedPipeNames.has(pipe.config.name) ? "updated team task" : "shared to team",
       });
     } catch (err: any) {
       toast({ title: "failed to share to team", description: err.message, variant: "destructive" });
@@ -806,7 +806,7 @@ export function PipesSection() {
       posthog.capture("pipe_shared_public", { pipe_name: pipe.config.name, pipe_id: data.id });
       toast({ title: "link copied!", description: data.url });
     } catch (err: any) {
-      toast({ title: "failed to share pipe", description: err.message, variant: "destructive" });
+      toast({ title: "failed to share task", description: err.message, variant: "destructive" });
     } finally {
       setSharingPublic(null);
     }
@@ -918,7 +918,7 @@ export function PipesSection() {
         toast({ title: "update failed", description: err.error || "unknown error", variant: "destructive" });
         return;
       }
-      toast({ title: "pipe updated", description: `${pipeName} updated successfully` });
+      toast({ title: "task updated", description: `${pipeName} updated successfully` });
       // Remove from updates map and refresh
       setAvailableUpdates(prev => {
         const next = { ...prev };
@@ -1367,8 +1367,8 @@ export function PipesSection() {
         </div>
         <p className="text-sm text-muted-foreground">
           {pipeTypeFilter === "scheduled"
-            ? "scheduled agents that run on your screen data"
-            : "pipes you trigger manually"}
+            ? "AI tasks that run on your screen data"
+            : "tasks you trigger manually"}
           {" · "}
           <a
             href="https://docs.screenpi.pe/pipes"
@@ -1412,7 +1412,7 @@ export function PipesSection() {
         <div className="relative">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
-            placeholder="search pipes..."
+            placeholder="search tasks..."
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-8 h-8 text-sm"
@@ -1452,12 +1452,12 @@ export function PipesSection() {
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
             {searchQuery ? (
-              <p>no pipes match your search</p>
+              <p>no tasks match your search</p>
             ) : pipeTypeFilter === "manual" ? (
               <>
-                <p>no manual pipes installed</p>
+                <p>no manual tasks installed</p>
                 <p className="text-sm mt-2">
-                  manual pipes use{" "}
+                  manual tasks use{" "}
                   <code className="text-xs bg-muted px-1 py-0.5 rounded">
                     schedule: manual
                   </code>
@@ -1466,18 +1466,18 @@ export function PipesSection() {
               </>
             ) : pipeFilter === "all" ? (
               <>
-                <p>no pipes installed</p>
+                <p>no tasks yet</p>
                 <p className="text-sm mt-2">
-                  create a pipe at{" "}
+                  create a task at{" "}
                   <code className="text-xs bg-muted px-1 py-0.5 rounded">
                     ~/.thadm/pipes/my-pipe/pipe.md
                   </code>
                 </p>
               </>
             ) : pipeFilter === "team" ? (
-              <p>no pipes shared with team yet</p>
+              <p>no tasks shared with team yet</p>
             ) : (
-              <p>no personal-only pipes</p>
+              <p>no personal-only tasks</p>
             )}
           </CardContent>
         </Card>
@@ -1560,7 +1560,7 @@ export function PipesSection() {
                       const update = availableUpdates[pipe.config.name];
                       const slug = (pipe.config as any).config?.source_slug as string || pipe.source_slug || pipe.config.name;
                       if (update.locally_modified) {
-                        if (confirm(`you have local changes to this pipe. updating to v${update.latest_version} will overwrite them. continue?`)) {
+                        if (confirm(`you have local changes to this task. updating to v${update.latest_version} will overwrite them. continue?`)) {
                           updatePipe(pipe.config.name, slug);
                         }
                       } else {
@@ -1627,7 +1627,7 @@ export function PipesSection() {
                       className="h-7 w-7"
                       onClick={() => stopPipe(pipe.config.name)}
                       disabled={stoppingPipe === pipe.config.name}
-                      title="stop pipe"
+                      title="stop task"
                     >
                       {stoppingPipe === pipe.config.name ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -1648,7 +1648,7 @@ export function PipesSection() {
                         }
                       }}
                       disabled={runningPipe === pipe.config.name}
-                      title={hasMissingConnections ? "configure required connections first" : "run pipe"}
+                      title={hasMissingConnections ? "configure required connections first" : "run task"}
                     >
                       {hasMissingConnections
                         ? <AlertCircle className="h-3.5 w-3.5" />
@@ -1667,7 +1667,7 @@ export function PipesSection() {
                       <DropdownMenuItem
                         onClick={() => {
                           navigateHomeAndPrefill({
-                            context: "the user wants to optimize their pipe",
+                            context: "the user wants to optimize their task",
                             prompt: buildOptimizePrompt(pipe.config.name),
                             autoSend: true,
                           });
@@ -1739,7 +1739,7 @@ export function PipesSection() {
                       ? "configure required connections before enabling auto-run"
                       : pipe.config.enabled
                         ? "auto-running on schedule — click to disable"
-                        : "auto-run disabled — pipe can still be run manually"
+                        : "auto-run disabled — task can still be run manually"
                   }
                 >
                   <Switch
@@ -2119,7 +2119,7 @@ export function PipesSection() {
 
                         {/* Triggers — only when workflow events enabled */}
                         {settings.enableWorkflowEvents && <div>
-                          <Label className="text-xs flex items-center gap-1.5 mb-2 cursor-help" title="AI detects your workflow patterns and runs this pipe automatically">
+                          <Label className="text-xs flex items-center gap-1.5 mb-2 cursor-help" title="AI detects your workflow patterns and runs this task automatically">
                             triggers
                             <span className="text-[10px] font-normal text-muted-foreground bg-muted px-1.5 py-0.5 rounded">cloud</span>
                           </Label>
@@ -2159,7 +2159,7 @@ export function PipesSection() {
                                 fetch(`${apiBase}/pipes/${pipe.config.name}/config`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ trigger: newTrigger }) }).then(() => fetchPipes());
                                 input.value = "";
                               }}>
-                                <Input placeholder="when should this pipe run?" className="h-7 text-xs flex-1 font-mono" spellCheck={false} autoCorrect="off" />
+                                <Input placeholder="when should this task run?" className="h-7 text-xs flex-1 font-mono" spellCheck={false} autoCorrect="off" />
                                 <Button type="submit" variant="outline" size="sm" className="h-7 text-xs px-2 uppercase tracking-wider">+</Button>
                               </form>
                             </div>
@@ -2261,7 +2261,7 @@ export function PipesSection() {
                       {/* ═══ ADVANCED TAB ═══ */}
                       <TabsContent value="advanced" className="mt-3 space-y-3">
                       <div className="flex items-center justify-between border px-3 py-2.5">
-                        <span className="text-xs font-medium cursor-help" title="when enabled, the pipe remembers context from previous runs">history</span>
+                        <span className="text-xs font-medium cursor-help" title="when enabled, the task remembers context from previous runs">history</span>
                         <Switch
                         checked={!!pipe.config.history}
                         onCheckedChange={(checked) => {
@@ -2485,7 +2485,7 @@ export function PipesSection() {
         <div className="flex items-center gap-2">
           <Plus className="h-4 w-4 text-muted-foreground shrink-0" />
           <Input
-            placeholder="describe a pipe to create..."
+            placeholder="describe a task to create..."
             className="font-mono text-sm"
           />
         </div>
@@ -2548,7 +2548,7 @@ export function PipesSection() {
         token={settings.user?.token}
         onPublished={() => {
           setPublishPipeName(null);
-          toast({ title: "pipe published to store" });
+          toast({ title: "task published to store" });
         }}
         defaultPipe={publishPipeName || undefined}
       />

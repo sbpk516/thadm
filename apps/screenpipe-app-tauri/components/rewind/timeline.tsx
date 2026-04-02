@@ -732,7 +732,7 @@ export default function Timeline({ embedded = false }: { embedded?: boolean }) {
 		});
 
 		if (pipe) {
-			toast({ title: `${pipe.icon} ${pipe.title}`, description: "running pipe with selection context" });
+			toast({ title: `${pipe.icon} ${pipe.title}`, description: "running task with selection context" });
 		}
 	}, [selectionRange, frames]);
 

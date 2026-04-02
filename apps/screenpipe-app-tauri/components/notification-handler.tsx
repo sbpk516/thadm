@@ -191,7 +191,7 @@ const NotificationHandler: React.FC = () => {
         } else if (action.action === "open_pipe_suggestions") {
           await showChatWithPrefill({
             context: PIPE_SUGGESTION_PROMPT,
-            prompt: "what pipes should i create based on my recent activity?",
+            prompt: "what tasks should i create based on my recent activity?",
             autoSend: true,
             source: "pipe-suggestion-notification",
           });
@@ -227,7 +227,7 @@ const NotificationHandler: React.FC = () => {
     const unlisten = listen("open-pipe-suggestions", async () => {
       await showChatWithPrefill({
         context: PIPE_SUGGESTION_PROMPT,
-        prompt: "what pipes should i create based on my recent activity?",
+        prompt: "what tasks should i create based on my recent activity?",
         autoSend: true,
         source: "pipe-suggestion-notification",
       });

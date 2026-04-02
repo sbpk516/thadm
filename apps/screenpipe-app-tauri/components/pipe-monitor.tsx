@@ -462,7 +462,7 @@ function DeviceCard({
                   )}
                   {enabledCount > 0 && (
                     <span>
-                      · {enabledCount} pipe{enabledCount > 1 ? "s" : ""}
+                      · {enabledCount} task{enabledCount > 1 ? "s" : ""}
                     </span>
                   )}
                   {runningCount > 0 && <span>· {runningCount} running</span>}
@@ -521,7 +521,7 @@ function DeviceCard({
           </div>
         ) : (
           <div className="px-4 py-3 text-xs text-muted-foreground">
-            {!isOnline ? "device unreachable" : "no pipes installed"}
+            {!isOnline ? "device unreachable" : "no tasks installed"}
           </div>
         )}
       </CardContent>

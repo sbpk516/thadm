@@ -2979,8 +2979,8 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           <PipeAIIcon size={18} animated={false} className="text-foreground" />
         </div>
         <div className="flex-1">
-          <h2 className="font-semibold text-sm tracking-tight">Pipe AI</h2>
-          <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">Screen Activity Assistant</p>
+          <h2 className="font-semibold text-sm tracking-tight">Thadm AI</h2>
+          <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">Your Screen Memory</p>
         </div>
         <Button
           variant="default"

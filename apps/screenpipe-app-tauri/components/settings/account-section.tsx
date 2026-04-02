@@ -261,7 +261,7 @@ export function AccountSection() {
           <div className="mt-4 pt-4 border-t border-border/50">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">pipe sync across devices</p>
+                <p className="text-sm font-medium">task sync across devices</p>
                 <p className="text-xs text-muted-foreground">
                   sync your pipes & configs to all devices linked to your account
                 </p>
@@ -274,10 +274,10 @@ export function AccountSection() {
                     onCheckedChange={async (checked) => {
                       await updateSettings({ pipeSyncEnabled: checked });
                       toast({
-                        title: checked ? "pipe sync enabled" : "pipe sync disabled",
+                        title: checked ? "task sync enabled" : "task sync disabled",
                         description: checked
-                          ? "pipes will sync across your devices"
-                          : "pipes will no longer sync",
+                          ? "tasks will sync across your devices"
+                          : "tasks will no longer sync",
                       });
                     }}
                   />
@@ -296,7 +296,7 @@ export function AccountSection() {
                       try {
                         await fetch("http://localhost:3030/sync/pipes/pull", { method: "POST" });
                         await fetch("http://localhost:3030/sync/pipes/push", { method: "POST" });
-                        toast({ title: "pipes synced" });
+                        toast({ title: "tasks synced" });
                       } catch (e: any) {
                         toast({ title: "sync failed", description: e.message, variant: "destructive" });
                       } finally {
@@ -399,7 +399,7 @@ export function AccountSection() {
           <Card className="p-4 opacity-75">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">pipe sync across devices</p>
+                <p className="text-sm font-medium">task sync across devices</p>
                 <p className="text-xs text-muted-foreground">
                   sync your pipes & configs to all devices linked to your account
                 </p>
@@ -492,7 +492,7 @@ export function AccountSection() {
           <Card className="p-4 opacity-75">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium">pipe sync across devices</p>
+                <p className="text-sm font-medium">task sync across devices</p>
                 <p className="text-xs text-muted-foreground">
                   sync your pipes & configs to all devices linked to your account
                 </p>

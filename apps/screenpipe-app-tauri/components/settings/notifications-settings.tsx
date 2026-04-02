@@ -81,7 +81,7 @@ export function NotificationsSettings() {
         {/* Pipe suggestions */}
         <div className="flex items-center justify-between py-3 border-b border-border">
           <div>
-            <p className="text-sm font-medium">Pipe suggestions</p>
+            <p className="text-sm font-medium">Task suggestions</p>
             <p className="text-xs text-muted-foreground">
               AI automation ideas based on your data
             </p>
@@ -136,9 +136,9 @@ export function NotificationsSettings() {
         {/* Pipe notifications */}
         <div className="flex items-center justify-between py-3 border-b border-border">
           <div>
-            <p className="text-sm font-medium">Pipe notifications</p>
+            <p className="text-sm font-medium">Task notifications</p>
             <p className="text-xs text-muted-foreground">
-              Alerts from installed pipes
+              Alerts from installed tasks
             </p>
           </div>
           <Switch
@@ -152,7 +152,7 @@ export function NotificationsSettings() {
       {(prefs.mutedPipes?.length ?? 0) > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-            Muted pipes
+            Muted tasks
           </p>
           <div className="flex flex-wrap gap-1.5">
             {prefs.mutedPipes.map((pipe) => (

@@ -147,7 +147,7 @@ export function PipeInstallDialog() {
       setSection("pipes");
     } catch (err: any) {
       toast({
-        title: "failed to install pipe",
+        title: "failed to install task",
         description: err.message,
         variant: "destructive",
       });
@@ -172,11 +172,11 @@ export function PipeInstallDialog() {
       <AlertDialog open={!!request} onOpenChange={(open) => !open && handleCancel()}>
         <AlertDialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <AlertDialogHeader>
-            <AlertDialogTitle className="text-sm">install pipe?</AlertDialogTitle>
+            <AlertDialogTitle className="text-sm">install task?</AlertDialogTitle>
             <AlertDialogDescription className="text-xs">
               {isRegistry
-                ? "a pipe from the store wants to install. review the permissions below before installing."
-                : "a pipe from an external link wants to install. pipes are AI agents that run on your screen data — review the prompt below before installing."}
+                ? "a task from the store wants to install. review the permissions below before installing."
+                : "a task from an external link wants to install. tasks are AI agents that run on your screen data — review the prompt below before installing."}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -187,7 +187,7 @@ export function PipeInstallDialog() {
           {loading ? (
             <div className="flex items-center gap-2 py-4 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin" />
-              {isRegistry ? "loading pipe details..." : "loading pipe content..."}
+              {isRegistry ? "loading task details..." : "loading task content..."}
             </div>
           ) : isRegistry && registryDetail ? (
             <div className="space-y-3">
@@ -218,7 +218,7 @@ export function PipeInstallDialog() {
             </div>
           ) : (
             <p className="text-xs text-muted-foreground py-2">
-              could not preview pipe content. you can still install it.
+              could not preview task content. you can still install it.
             </p>
           )}
 

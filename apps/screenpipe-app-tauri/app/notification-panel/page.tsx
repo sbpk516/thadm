@@ -159,7 +159,7 @@ export default function NotificationPanelPage() {
         } else if (actionStr === "open_pipe_suggestions") {
           await showChatWithPrefill({
             context: PIPE_SUGGESTION_PROMPT,
-            prompt: "what pipes should i create based on my recent activity?",
+            prompt: "what tasks should i create based on my recent activity?",
             autoSend: true,
             source: "pipe-suggestion-notification",
           });

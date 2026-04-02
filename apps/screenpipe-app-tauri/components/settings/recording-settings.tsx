@@ -1969,7 +1969,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                     Workflow events
                     <span className="text-[10px] font-normal text-muted-foreground bg-muted px-1.5 py-0.5 rounded">cloud</span>
                   </h3>
-                  <p className="text-xs text-muted-foreground">AI detects your workflow patterns and triggers event-based pipes</p>
+                  <p className="text-xs text-muted-foreground">AI detects your workflow patterns and triggers event-based tasks</p>
                 </div>
               </div>
               <Switch

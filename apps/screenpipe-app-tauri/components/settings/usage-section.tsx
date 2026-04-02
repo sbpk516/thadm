@@ -387,7 +387,7 @@ export function UsageSection() {
         <Card>
           <CardContent className="pt-6">
             <div className="text-2xl font-bold">{filteredPipeExecs}</div>
-            <p className="text-xs text-muted-foreground">Pipe runs</p>
+            <p className="text-xs text-muted-foreground">Task runs</p>
           </CardContent>
         </Card>
       </div>

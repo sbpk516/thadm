@@ -220,7 +220,7 @@ function normalizePipe(raw: any): any {
   if (!raw) return raw;
   return {
     ...raw,
-    title: raw.title || raw.slug || "untitled pipe",
+    title: raw.title || raw.slug || "untitled task",
     author: raw.author || raw.author_name || "",
     author_id: raw.author_id || null,
     rating: raw.rating ?? raw.avg_rating ?? 0,
@@ -322,7 +322,7 @@ export function PipeStoreView() {
   const [activeTab, setActiveTab] = useState<"discover" | "my-pipes">("my-pipes");
 
   const tabs = [
-    { key: "my-pipes" as const, label: "My Pipes" },
+    { key: "my-pipes" as const, label: "My Tasks" },
     { key: "discover" as const, label: "Discover" },
   ];
 
@@ -519,7 +519,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
     } catch (err) {
       console.error("failed to fetch pipe detail:", err);
       toast({
-        title: "failed to load pipe details",
+        title: "failed to load task details",
         variant: "destructive",
       });
       setShowDetail(false);
@@ -560,7 +560,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
 
       toast({
         title: `"${pipeName}" installed`,
-        description: "switch to my pipes to configure and run it",
+        description: "switch to my tasks to configure and run it",
       });
       // Invalidate cache and update installed names
       apiCache.invalidate("pipes/installed");
@@ -575,7 +575,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       onInstalled?.();
     } catch (err: any) {
       toast({
-        title: "failed to install pipe",
+        title: "failed to install task",
         description: err.message,
         variant: "destructive",
       });
@@ -636,7 +636,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       fetchPipes();
     } catch (err: any) {
       toast({
-        title: "failed to unpublish pipe",
+        title: "failed to unpublish task",
         description: err.message,
         variant: "destructive",
       });
@@ -699,7 +699,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">
-            browse, install, and review community pipes
+            browse and install community tasks
           </p>
         </div>
         <Button variant="outline" size="sm" onClick={() => setPublishOpen(true)}>
@@ -714,7 +714,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="search pipes..."
+              placeholder="search tasks..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               className="pl-9 h-9"
@@ -775,7 +775,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       ) : pipes.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center text-muted-foreground">
-            <p className="text-sm">No pipes found</p>
+            <p className="text-sm">No tasks found</p>
             {debouncedQuery && (
               <p className="text-xs mt-1.5">try a different search term</p>
             )}
@@ -804,7 +804,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
         token={token}
         onPublished={() => {
           fetchPipes();
-          toast({ title: "pipe published to store" });
+          toast({ title: "task published to store" });
         }}
       />
 
@@ -952,7 +952,7 @@ function PipeDetailPanel({
         <div className="min-w-0 flex-1">
           <div className="flex items-start justify-between gap-3">
             <div>
-              <h2 className="text-xl font-semibold tracking-tight">{pipe.title || pipe.slug || "untitled pipe"}</h2>
+              <h2 className="text-xl font-semibold tracking-tight">{pipe.title || pipe.slug || "untitled task"}</h2>
               <div className="flex items-center gap-2 mt-1 flex-wrap">
                 {pipe.author ? (
                   <div className="flex items-center gap-1 text-sm text-muted-foreground">
@@ -1273,7 +1273,7 @@ export function PublishDialog({
         const { redacted, count } = redactSecrets(sourceMd);
         if (count > 0) {
           sourceMd = redacted;
-          toast({ title: `redacted ${count} secret(s) from pipe before publishing` });
+          toast({ title: `redacted ${count} secret(s) from task before publishing` });
         }
       }
 
@@ -1306,7 +1306,7 @@ export function PublishDialog({
       setPublishCategory("Other");
     } catch (err: any) {
       toast({
-        title: "failed to publish pipe",
+        title: "failed to publish task",
         description: err.message,
         variant: "destructive",
       });
@@ -1319,26 +1319,26 @@ export function PublishDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
         <DialogHeader>
-          <DialogTitle>publish your pipe</DialogTitle>
+          <DialogTitle>publish your task</DialogTitle>
           <DialogDescription>
-            share your pipe with the community
+            share your task with the community
           </DialogDescription>
         </DialogHeader>
 
         {!token ? (
           <p className="text-sm text-muted-foreground py-4">
-            sign in to publish pipes to the store
+            sign in to publish tasks to the store
           </p>
         ) : (
           <div className="space-y-3">
             <div>
-              <Label className="text-xs">pipe</Label>
+              <Label className="text-xs">task</Label>
               {loadingPipes ? (
                 <Skeleton className="h-8 w-full mt-1" />
               ) : (
                 <Select value={selectedPipe} onValueChange={setSelectedPipe}>
                   <SelectTrigger className="h-8 text-sm mt-1">
-                    <SelectValue placeholder="select a pipe" />
+                    <SelectValue placeholder="select a task" />
                   </SelectTrigger>
                   <SelectContent>
                     {localPipes.map((p) => (
@@ -1355,7 +1355,7 @@ export function PublishDialog({
               <Input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                placeholder="my awesome pipe"
+                placeholder="my awesome task"
                 className="h-8 text-sm mt-1"
                 spellCheck={false}
                 autoCorrect="off"
@@ -1366,7 +1366,7 @@ export function PublishDialog({
               <Textarea
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
-                placeholder="what does this pipe do?"
+                placeholder="what does this task do?"
                 className="text-xs min-h-[60px] mt-1"
                 spellCheck={false}
                 autoCorrect="off"
