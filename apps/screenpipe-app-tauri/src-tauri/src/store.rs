@@ -992,25 +992,39 @@ impl LicenseStore {
     pub fn is_trial_expired(&self) -> bool {
         let now = chrono::Utc::now();
 
-        // Clock rollback detection: if last_seen_at is in the future, treat as expired
+        // Clock rollback detection: if last_seen_at is in the future, treat as expired.
+        // Parse failure is suspicious (possible tampering) — treat as expired.
         if let Some(ref last_seen) = self.last_seen_at {
-            if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_seen) {
-                if last.with_timezone(&chrono::Utc) > now + chrono::Duration::minutes(5) {
+            match chrono::DateTime::parse_from_rfc3339(last_seen) {
+                Ok(last) => {
+                    if last.with_timezone(&chrono::Utc) > now + chrono::Duration::minutes(5) {
+                        return true;
+                    }
+                }
+                Err(_) => {
+                    tracing::warn!("last_seen_at parse failure (possible tampering), treating as expired");
                     return true;
                 }
             }
         }
 
-        // Check if trial period has elapsed
-        if let Some(ref first_seen) = self.first_seen_at {
-            if let Ok(start) = chrono::DateTime::parse_from_rfc3339(first_seen) {
+        // No first_seen_at means store corruption or tampering — treat as expired
+        // (a legitimate fresh install sets first_seen_at in init_license_store)
+        let Some(ref first_seen) = self.first_seen_at else {
+            return true;
+        };
+
+        // Parse failure on first_seen_at is suspicious — treat as expired
+        match chrono::DateTime::parse_from_rfc3339(first_seen) {
+            Ok(start) => {
                 let elapsed = now.signed_duration_since(start.with_timezone(&chrono::Utc));
-                return elapsed.num_days() >= Self::TRIAL_DAYS;
+                elapsed.num_days() >= Self::TRIAL_DAYS
+            }
+            Err(_) => {
+                tracing::warn!("first_seen_at parse failure (possible tampering), treating as expired");
+                true
             }
         }
-
-        // No first_seen_at means trial hasn't started yet — not expired
-        false
     }
 
     pub fn is_licensed(&self) -> bool {
@@ -1032,26 +1046,73 @@ impl LicenseStore {
     }
 
     pub fn days_remaining(&self) -> i64 {
-        if let Some(ref first_seen) = self.first_seen_at {
-            if let Ok(start) = chrono::DateTime::parse_from_rfc3339(first_seen) {
+        // No first_seen_at or parse failure → 0 days remaining (fail-closed)
+        let Some(ref first_seen) = self.first_seen_at else {
+            return 0;
+        };
+        match chrono::DateTime::parse_from_rfc3339(first_seen) {
+            Ok(start) => {
                 let now = chrono::Utc::now();
                 let elapsed = now.signed_duration_since(start.with_timezone(&chrono::Utc));
                 let remaining = Self::TRIAL_DAYS - elapsed.num_days();
-                return remaining.max(0);
+                remaining.max(0)
             }
+            Err(_) => 0,
         }
-        Self::TRIAL_DAYS
     }
 }
 
 pub fn init_license_store(app: &AppHandle) -> Result<(), String> {
     tracing::info!("Initializing license store");
+
+    // Check if the store file exists. If it does but first_seen_at is None,
+    // that's suspicious — possible corruption or tampering. Log a warning.
+    // With the fail-closed changes, a None first_seen_at will be treated as expired
+    // by is_trial_expired() and days_remaining(), so only grant a fresh trial if
+    // the store is genuinely empty (new install).
+    let base_dir = get_base_dir(app, None).map_err(|e| e.to_string())?;
+    let store_file_exists = base_dir.join("store.bin").exists();
+
     LicenseStore::update(app, |license| {
         let now = chrono::Utc::now().to_rfc3339();
+
         if license.first_seen_at.is_none() {
-            license.first_seen_at = Some(now.clone());
+            if store_file_exists {
+                // Store file exists but first_seen_at is missing — possible corruption.
+                // Do NOT grant a fresh trial; leave it None so is_trial_expired() returns true.
+                tracing::warn!(
+                    "license store file exists but first_seen_at is None — possible corruption or tampering, \
+                     trial will be treated as expired"
+                );
+            } else {
+                // Genuinely new install — start the trial
+                license.first_seen_at = Some(now.clone());
+            }
         }
-        license.last_seen_at = Some(now);
+
+        license.last_seen_at = Some(now.clone());
+
+        // Fix 3: If license is stale (validated >7 days ago or never validated),
+        // clear license_validated_at so is_licensed() returns false. The user will
+        // need to be online for the frontend to auto-retry validation.
+        if license.license_key.is_some() {
+            let stale = match &license.license_validated_at {
+                None => true,
+                Some(validated_at) => {
+                    chrono::DateTime::parse_from_rfc3339(validated_at)
+                        .map(|v| {
+                            let elapsed = chrono::Utc::now()
+                                .signed_duration_since(v.with_timezone(&chrono::Utc));
+                            elapsed.num_days() >= LicenseStore::VALIDATION_STALE_DAYS
+                        })
+                        .unwrap_or(true) // parse failure → treat as stale
+                }
+            };
+            if stale {
+                tracing::info!("license validation is stale (>7 days or missing), clearing validated_at for re-validation");
+                license.license_validated_at = None;
+            }
+        }
     })
 }
 
@@ -1064,7 +1125,10 @@ pub async fn validate_license_key(app: AppHandle, key: String) -> Result<serde_j
     })?;
 
     // Call LemonSqueezy API
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| e.to_string())?;
     let res = client
         .post("https://api.lemonsqueezy.com/v1/licenses/validate")
         .json(&serde_json::json!({ "license_key": key.trim() }))
@@ -1094,6 +1158,16 @@ pub async fn validate_license_key(app: AppHandle, key: String) -> Result<serde_j
             license.license_validated_at = Some(chrono::Utc::now().to_rfc3339());
             license.license_plan = Some(plan);
         })?;
+    } else {
+        // API explicitly rejected this key — clear it so the user isn't stuck
+        // with an invalid key that blocks re-entry. This is NOT a network error
+        // (those are caught above as Err), this is a definitive "invalid key" response.
+        tracing::warn!("license key rejected by API (valid=false), clearing stored key");
+        LicenseStore::update(&app, |license| {
+            license.license_key = None;
+            license.license_validated_at = None;
+            license.license_plan = None;
+        }).map_err(|e| e.to_string())?;
     }
 
     Ok(body)
@@ -1105,12 +1179,14 @@ pub fn get_license_status(app: AppHandle) -> Result<serde_json::Value, String> {
     let license = LicenseStore::get(&app).map_err(|e| e.to_string())?.unwrap_or_default();
     let status = if license.is_licensed() {
         "licensed"
-    } else if license.license_key.is_some() && !license.is_licensed() {
-        "pending"
-    } else if license.days_remaining() <= 5 && license.days_remaining() > 0 {
-        "trial_expiring"
     } else if license.is_trial_expired() {
+        // Expired takes priority over "pending" — don't hide expiry behind a pending key
         "expired"
+    } else if license.license_key.is_some() {
+        // Trial still active but key saved and awaiting validation
+        "pending"
+    } else if license.days_remaining() <= 5 {
+        "trial_expiring"
     } else {
         "trial"
     };
