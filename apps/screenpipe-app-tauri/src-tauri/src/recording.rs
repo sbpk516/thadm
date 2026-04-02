@@ -5,6 +5,7 @@
 use crate::config;
 use crate::embedded_server::{start_embedded_server, EmbeddedServerHandle};
 use crate::permissions::do_permissions_check;
+use crate::store::LicenseStore;
 use crate::store::SettingsStore;
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -349,7 +350,17 @@ pub async fn spawn_screenpipe(
     }
 
     // Build config from store
-    let config = store.to_recording_config(data_dir);
+    let mut config = store.to_recording_config(data_dir);
+
+    // License gate: if trial expired and no valid license, disable capture
+    let license = LicenseStore::get(&app).ok().flatten().unwrap_or_default();
+    if !license.is_recording_allowed() {
+        info!("[LICENSE] trial expired and no valid license — recording disabled");
+        config.disable_vision = true;
+        config.disable_audio = true;
+        let _ = app.emit("license-recording-blocked", ());
+    }
+
     let recording_state_inner = state.handle.clone();
 
     // Create pipe output callback that emits Tauri events to the frontend

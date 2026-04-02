@@ -951,3 +951,174 @@ impl PipeSuggestionsSettingsStore {
         store.save().map_err(|e| e.to_string())
     }
 }
+
+// ─── License Store ──────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LicenseStore {
+    pub first_seen_at: Option<String>,         // ISO 8601 — trial start
+    pub last_seen_at: Option<String>,          // ISO 8601 — for clock rollback detection
+    pub license_key: Option<String>,           // THADM-XXXX-XXXX-XXXX-XXXX
+    pub license_validated_at: Option<String>,  // ISO 8601 — last successful validation
+    pub license_plan: Option<String>,          // "annual" | "lifetime"
+}
+
+impl LicenseStore {
+    const STORE_KEY: &'static str = "license";
+    const TRIAL_DAYS: i64 = 15;
+    const VALIDATION_STALE_DAYS: i64 = 7;
+
+    pub fn get(app: &AppHandle) -> Result<Option<Self>, String> {
+        let store = get_store(app, None).map_err(|e| e.to_string())?;
+        if store.is_empty() {
+            return Ok(None);
+        }
+        let license = serde_json::from_value(store.get(Self::STORE_KEY).unwrap_or(Value::Null));
+        match license {
+            Ok(license) => Ok(license),
+            Err(_) => Ok(None),
+        }
+    }
+
+    pub fn update(app: &AppHandle, f: impl FnOnce(&mut Self)) -> Result<(), String> {
+        let store = get_store(app, None).map_err(|e| format!("Failed to get license store: {}", e))?;
+        let mut license = Self::get(app)?.unwrap_or_default();
+        f(&mut license);
+        store.set(Self::STORE_KEY, json!(license));
+        store.save().map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    pub fn is_trial_expired(&self) -> bool {
+        let now = chrono::Utc::now();
+
+        // Clock rollback detection: if last_seen_at is in the future, treat as expired
+        if let Some(ref last_seen) = self.last_seen_at {
+            if let Ok(last) = chrono::DateTime::parse_from_rfc3339(last_seen) {
+                if last.with_timezone(&chrono::Utc) > now + chrono::Duration::minutes(5) {
+                    return true;
+                }
+            }
+        }
+
+        // Check if trial period has elapsed
+        if let Some(ref first_seen) = self.first_seen_at {
+            if let Ok(start) = chrono::DateTime::parse_from_rfc3339(first_seen) {
+                let elapsed = now.signed_duration_since(start.with_timezone(&chrono::Utc));
+                return elapsed.num_days() >= Self::TRIAL_DAYS;
+            }
+        }
+
+        // No first_seen_at means trial hasn't started yet — not expired
+        false
+    }
+
+    pub fn is_licensed(&self) -> bool {
+        if self.license_key.is_none() {
+            return false;
+        }
+        if let Some(ref validated_at) = self.license_validated_at {
+            if let Ok(validated) = chrono::DateTime::parse_from_rfc3339(validated_at) {
+                let now = chrono::Utc::now();
+                let elapsed = now.signed_duration_since(validated.with_timezone(&chrono::Utc));
+                return elapsed.num_days() < Self::VALIDATION_STALE_DAYS;
+            }
+        }
+        false
+    }
+
+    pub fn is_recording_allowed(&self) -> bool {
+        self.is_licensed() || !self.is_trial_expired()
+    }
+
+    pub fn days_remaining(&self) -> i64 {
+        if let Some(ref first_seen) = self.first_seen_at {
+            if let Ok(start) = chrono::DateTime::parse_from_rfc3339(first_seen) {
+                let now = chrono::Utc::now();
+                let elapsed = now.signed_duration_since(start.with_timezone(&chrono::Utc));
+                let remaining = Self::TRIAL_DAYS - elapsed.num_days();
+                return remaining.max(0);
+            }
+        }
+        Self::TRIAL_DAYS
+    }
+}
+
+pub fn init_license_store(app: &AppHandle) -> Result<(), String> {
+    tracing::info!("Initializing license store");
+    LicenseStore::update(app, |license| {
+        let now = chrono::Utc::now().to_rfc3339();
+        if license.first_seen_at.is_none() {
+            license.first_seen_at = Some(now.clone());
+        }
+        license.last_seen_at = Some(now);
+    })
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn validate_license_key(app: AppHandle, key: String) -> Result<serde_json::Value, String> {
+    // Save key immediately (crash safety)
+    LicenseStore::update(&app, |license| {
+        license.license_key = Some(key.trim().to_string());
+    })?;
+
+    // Call LemonSqueezy API
+    let client = reqwest::Client::new();
+    let res = client
+        .post("https://api.lemonsqueezy.com/v1/licenses/validate")
+        .json(&serde_json::json!({ "license_key": key.trim() }))
+        .send()
+        .await
+        .map_err(|e| format!("network error: {}", e))?;
+
+    let body: serde_json::Value = res.json().await.map_err(|e| e.to_string())?;
+
+    let valid = body.get("valid").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    if valid {
+        let plan = body
+            .pointer("/meta/product_name")
+            .and_then(|v| v.as_str())
+            .map(|s| {
+                if s.to_lowercase().contains("lifetime") {
+                    "lifetime"
+                } else {
+                    "annual"
+                }
+            })
+            .unwrap_or("annual")
+            .to_string();
+
+        LicenseStore::update(&app, |license| {
+            license.license_validated_at = Some(chrono::Utc::now().to_rfc3339());
+            license.license_plan = Some(plan);
+        })?;
+    }
+
+    Ok(body)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub fn get_license_status(app: AppHandle) -> Result<serde_json::Value, String> {
+    let license = LicenseStore::get(&app).map_err(|e| e.to_string())?.unwrap_or_default();
+    let status = if license.is_licensed() {
+        "licensed"
+    } else if license.license_key.is_some() && !license.is_licensed() {
+        "pending"
+    } else if license.days_remaining() <= 5 && license.days_remaining() > 0 {
+        "trial_expiring"
+    } else if license.is_trial_expired() {
+        "expired"
+    } else {
+        "trial"
+    };
+
+    Ok(serde_json::json!({
+        "status": status,
+        "daysRemaining": license.days_remaining(),
+        "plan": license.license_plan,
+        "isRecordingAllowed": license.is_recording_allowed(),
+    }))
+}

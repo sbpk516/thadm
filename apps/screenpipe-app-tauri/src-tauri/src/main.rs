@@ -619,6 +619,9 @@ async fn main() {
                 config::validate_data_dir,
                 // Hardware detection
                 hardware::get_hardware_capability,
+                // License commands
+                store::validate_license_key,
+                store::get_license_status,
             ])
             .typ::<SettingsStore>()
             .typ::<OnboardingStore>()
@@ -905,6 +908,9 @@ async fn main() {
             remote_sync_commands::remote_sync_stop_scheduler,
             remote_sync_commands::remote_sync_scheduler_status,
             commands::set_native_theme,
+            // License commands
+            store::validate_license_key,
+            store::get_license_status,
         ])
         .setup(move |app| {
             //deep link register_all
@@ -1149,6 +1155,11 @@ async fn main() {
                 store::OnboardingStore::default()
             });
             app.manage(onboarding_store.clone());
+
+            // Initialize license store (trial tracking, clock rollback detection)
+            if let Err(e) = store::init_license_store(&app.handle()) {
+                error!("Failed to init license store (non-fatal): {}", e);
+            }
 
             // E2E seed: when SCREENPIPE_E2E_SEED contains "onboarding", mark onboarding complete
             let e2e_flags = get_e2e_seed_flags();

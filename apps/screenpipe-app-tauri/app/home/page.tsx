@@ -61,6 +61,7 @@ import { useSettings } from "@/lib/hooks/use-settings";
 import { useTeam } from "@/lib/hooks/use-team";
 import { useEnterprisePolicy } from "@/lib/hooks/use-enterprise-policy";
 import { EnterpriseLicensePrompt } from "@/components/enterprise-license-prompt";
+import { TrialBanner } from "@/components/trial-banner";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { commands } from "@/lib/utils/tauri";
 import { toast } from "@/components/ui/use-toast";
@@ -757,6 +758,7 @@ function SettingsPageContent() {
 
           {/* Content */}
           <div className={cn("flex-1 flex flex-col h-full bg-background min-h-0 relative", isTranslucent ? "rounded-none" : "rounded-tr-lg")}>
+            <TrialBanner />
             {isFullHeight ? (
               <div className="flex-1 min-h-0 overflow-hidden">
                 {renderMainSection()}
