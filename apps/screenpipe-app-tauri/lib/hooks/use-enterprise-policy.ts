@@ -102,7 +102,7 @@ export function useEnterprisePolicy() {
       cachePolicy(result);
       // Push hidden sections to Rust so tray menu can use them
       try {
-        await commands.setEnterprisePolicy(result.hiddenSections);
+        await commands.setEnterprisePolicy();
       } catch (e) {
         console.warn("[enterprise] failed to push policy to Rust:", e);
       }

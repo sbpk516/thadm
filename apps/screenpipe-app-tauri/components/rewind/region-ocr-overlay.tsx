@@ -153,7 +153,7 @@ export const RegionOcrOverlay: FC<RegionOcrOverlayProps> = ({
         //   "https://api.screenpi.pe/v1/chat/completions",
         //   { ... }
         // );
-        const extractedText = ""; // THADM: disabled cloud OCR
+        const extractedText: string = ""; // THADM: disabled cloud OCR
 
         if (!extractedText) {
           toast({
