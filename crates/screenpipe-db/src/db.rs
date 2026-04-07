@@ -2620,6 +2620,8 @@ impl DatabaseManager {
                         end_str.as_deref(),
                         limit,
                         offset,
+                        None,
+                        None,
                     )
                     .await?;
                 results.extend(memory_results.into_iter().map(SearchResult::Memory));
@@ -4138,7 +4140,8 @@ impl DatabaseManager {
                     ac.file_path,
                     at.transcription,
                     at.start_time,
-                    at.end_time
+                    at.end_time,
+                    CAST(unixepoch(at.timestamp) AS INTEGER) as abs_timestamp
                 FROM speakers s
                 JOIN audio_transcriptions at ON s.id = at.speaker_id
                 JOIN audio_chunks ac ON at.audio_chunk_id = ac.id
@@ -4176,7 +4179,8 @@ impl DatabaseManager {
                             'path', rap.file_path,
                             'transcript', rap.transcription,
                             'start_time', rap.start_time,
-                            'end_time', rap.end_time
+                            'end_time', rap.end_time,
+                            'timestamp', rap.abs_timestamp
                         )
                     ))
                     ELSE json_patch(
@@ -4186,7 +4190,8 @@ impl DatabaseManager {
                                 'path', rap.file_path,
                                 'transcript', rap.transcription,
                                 'start_time', rap.start_time,
-                                'end_time', rap.end_time
+                                'end_time', rap.end_time,
+                                'timestamp', rap.abs_timestamp
                             )
                         ))
                     )
@@ -4269,7 +4274,8 @@ impl DatabaseManager {
                     ac.file_path,
                     at2.transcription,
                     at2.start_time,
-                    at2.end_time
+                    at2.end_time,
+                    CAST(unixepoch(at2.timestamp) AS INTEGER) as abs_timestamp
                 FROM NamedSpeakers ns
                 JOIN audio_transcriptions at2 ON at2.speaker_id IN (
                     SELECT s2.id FROM speakers s2 WHERE s2.name = ns.name AND s2.hallucination = 0
@@ -4295,7 +4301,8 @@ impl DatabaseManager {
                             'path', rap.file_path,
                             'transcript', rap.transcription,
                             'start_time', rap.start_time,
-                            'end_time', rap.end_time
+                            'end_time', rap.end_time,
+                            'timestamp', rap.abs_timestamp
                         )
                     ))
                 END as metadata
@@ -5209,7 +5216,8 @@ impl DatabaseManager {
                     ac.file_path,
                     at.transcription,
                     at.start_time,
-                    at.end_time
+                    at.end_time,
+                    CAST(unixepoch(at.timestamp) AS INTEGER) as abs_timestamp
                 FROM speakers s
                 JOIN audio_transcriptions at ON s.id = at.speaker_id
                 JOIN audio_chunks ac ON at.audio_chunk_id = ac.id
@@ -5235,7 +5243,8 @@ impl DatabaseManager {
                         'path', rap.file_path,
                         'transcript', rap.transcription,
                         'start_time', rap.start_time,
-                        'end_time', rap.end_time
+                        'end_time', rap.end_time,
+                        'timestamp', rap.abs_timestamp
                     )))
                     ELSE json_patch(
                         json(s.metadata),
@@ -5243,7 +5252,8 @@ impl DatabaseManager {
                             'path', rap.file_path,
                             'transcript', rap.transcription,
                             'start_time', rap.start_time,
-                            'end_time', rap.end_time
+                            'end_time', rap.end_time,
+                            'timestamp', rap.abs_timestamp
                         )))
                     )
                 END as metadata
@@ -6628,6 +6638,104 @@ LIMIT ? OFFSET ?
         Ok(())
     }
 
+    /// Collect text typed during a meeting's time interval from ui_events.
+    /// Returns deduplicated text grouped by app+window, or None if nothing was typed.
+    pub async fn get_meeting_typed_text(&self, id: i64) -> Result<Option<String>, SqlxError> {
+        // Get meeting time range
+        let row: Option<(String, Option<String>)> = sqlx::query_as(
+            "SELECT meeting_start, meeting_end FROM meetings WHERE id = ?1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+
+        let (start, end) = match row {
+            Some((s, Some(e))) => (s, e),
+            _ => return Ok(None),
+        };
+
+        // Query typed text during meeting (text events contain batched words)
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT COALESCE(text_content, '') as txt
+            FROM ui_events
+            WHERE timestamp >= ?1 AND timestamp <= ?2
+                AND text_content IS NOT NULL
+                AND text_content != ''
+                AND event_type = 'text'
+            ORDER BY timestamp ASC
+            LIMIT 5000"#,
+        )
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let mut all_text = String::new();
+        for (txt,) in &rows {
+            all_text.push_str(txt);
+        }
+
+        // Trim and truncate
+        let all_text = all_text.trim().to_string();
+        if all_text.is_empty() {
+            return Ok(None);
+        }
+
+        let display = if all_text.len() > 5000 {
+            format!("{}… (truncated)", &all_text[..5000])
+        } else {
+            all_text
+        };
+
+        Ok(Some(format!("## typed during meeting\n\n{}", display)))
+    }
+
+    /// End a meeting and optionally append typed text to its note.
+    pub async fn end_meeting_with_typed_text(
+        &self,
+        id: i64,
+        meeting_end: &str,
+        append_typed_text: bool,
+    ) -> Result<(), SqlxError> {
+        // First end the meeting so the time range is set
+        self.end_meeting(id, meeting_end).await?;
+
+        if !append_typed_text {
+            return Ok(());
+        }
+
+        // Collect typed text
+        if let Ok(Some(typed_text)) = self.get_meeting_typed_text(id).await {
+            // Append to existing note
+            let existing_note: Option<(Option<String>,)> =
+                sqlx::query_as("SELECT note FROM meetings WHERE id = ?1")
+                    .bind(id)
+                    .fetch_optional(&self.pool)
+                    .await?;
+
+            let new_note = match existing_note {
+                Some((Some(existing),)) if !existing.is_empty() => {
+                    format!("{}\n\n{}", existing, typed_text)
+                }
+                _ => typed_text,
+            };
+
+            let mut tx = self.begin_immediate_with_retry().await?;
+            sqlx::query("UPDATE meetings SET note = ?1 WHERE id = ?2")
+                .bind(&new_note)
+                .bind(id)
+                .execute(&mut **tx.conn())
+                .await?;
+            tx.commit().await?;
+        }
+
+        Ok(())
+    }
+
     pub async fn reopen_meeting(&self, id: i64) -> Result<(), SqlxError> {
         let mut tx = self.begin_immediate_with_retry().await?;
         sqlx::query("UPDATE meetings SET meeting_end = NULL WHERE id = ?1")
@@ -6987,6 +7095,8 @@ LIMIT ? OFFSET ?
         end_time: Option<&str>,
         limit: u32,
         offset: u32,
+        order_by: Option<&str>,
+        order_dir: Option<&str>,
     ) -> Result<Vec<MemoryRecord>, SqlxError> {
         let use_fts = query.is_some_and(|q| !q.is_empty());
 
@@ -7025,7 +7135,16 @@ LIMIT ? OFFSET ?
             sql.push_str(" AND created_at <= ?6");
         }
 
-        sql.push_str(" ORDER BY importance DESC, created_at DESC LIMIT ?7 OFFSET ?8");
+        // Allow caller to control sort order; default to newest first
+        let order_col = match order_by {
+            Some("importance") => "importance",
+            _ => "created_at",
+        };
+        let order_direction = match order_dir {
+            Some("asc") => "ASC",
+            _ => "DESC",
+        };
+        sql.push_str(&format!(" ORDER BY {} {} LIMIT ?7 OFFSET ?8", order_col, order_direction));
 
         let fts_query = query.map(crate::text_normalizer::sanitize_fts5_query);
 

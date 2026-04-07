@@ -158,6 +158,8 @@ export type Settings = SettingsStore & {
 	offlineMode?: boolean;
 	/** Pause all screen capture when a DRM streaming app (Netflix, Disney+, etc.) is focused */
 	pauseOnDrmContent?: boolean;
+	/** Auto-append typed text to meeting notes when a meeting ends */
+	appendTypedTextToMeetingNotes?: boolean;
 	/** Auto-delete local data older than retention days (free alternative to cloud archive) */
 	localRetentionEnabled?: boolean;
 	/** Days to keep data locally before auto-deleting (default: 30) */
@@ -335,6 +337,7 @@ let DEFAULT_SETTINGS: Settings = {
 			filterMusic: false,
 			ignoreIncognitoWindows: true,
 			pauseOnDrmContent: false,
+			appendTypedTextToMeetingNotes: true,
 			localRetentionEnabled: true,
 			localRetentionDays: 14,
 		};
@@ -508,27 +511,36 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
-		// Migration: Auto-detect hardware and adjust engine for weak machines (one-time only)
-		// Migration: Switch to Parakeet as default engine (one-time)
-		// - Paid cloud subscribers → screenpipe-cloud (better accuracy)
-		// - macOS users → whisper-large-v3-turbo-quantized (parakeet/MLX is experimental on macOS)
-		// - Windows/Linux users → parakeet (stable on these platforms)
+		// Migration: Set default transcription engine (one-time only)
+		// - macOS → whisper-large-v3-turbo-quantized
+		// - Windows/Linux → parakeet
+		// Does NOT set screenpipe-cloud here because user may not be logged in yet.
+		// Cloud switch happens in account-section.tsx when subscription is confirmed.
 		if (!(settings as any)._parakeetDefaultMigrationDone) {
 			const engine = settings.audioTranscriptionEngine;
 			const isWhisperVariant = engine?.includes("whisper");
 			if (isWhisperVariant || engine === "screenpipe-cloud" || engine === "parakeet") {
-				if (settings.user?.cloud_subscribed) {
-					settings.audioTranscriptionEngine = "screenpipe-cloud";
-				} else {
-					const { platform: getPlatform } = await import("@tauri-apps/plugin-os");
-					const os = getPlatform();
-					settings.audioTranscriptionEngine = os === "macos"
-						? "whisper-large-v3-turbo-quantized"
-						: "parakeet";
-				}
+				const { platform: getPlatform } = await import("@tauri-apps/plugin-os");
+				const os = getPlatform();
+				settings.audioTranscriptionEngine = os === "macos"
+					? "whisper-large-v3-turbo-quantized"
+					: "parakeet";
 				needsUpdate = true;
 			}
 			(settings as any)._parakeetDefaultMigrationDone = true;
+			needsUpdate = true;
+		}
+
+		// Post-migration: if user is a paid subscriber but still on a local engine
+		// (because migration ran before login), switch to cloud once.
+		// _cloudEngineApplied prevents overriding if user manually switches back later.
+		if (
+			settings.user?.cloud_subscribed &&
+			settings.audioTranscriptionEngine !== "screenpipe-cloud" &&
+			!(settings as any)._cloudEngineApplied
+		) {
+			settings.audioTranscriptionEngine = "screenpipe-cloud";
+			(settings as any)._cloudEngineApplied = true;
 			needsUpdate = true;
 		}
 

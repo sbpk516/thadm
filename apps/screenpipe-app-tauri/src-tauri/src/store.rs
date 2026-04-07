@@ -441,7 +441,7 @@ impl Default for SettingsStore {
             "Parted".to_string(),
         ]);
 
-        // Default free AI preset - works without login
+        // Default AI preset - works without login
         let default_free_preset = AIPreset {
             id: "default".to_string(),
             prompt: r#"IMPORTANT: At the start of every conversation, read the files in .pi/skills/ directory (e.g. .pi/skills/screenpipe-api/SKILL.md and .pi/skills/screenpipe-cli/SKILL.md) before responding.

@@ -125,25 +125,9 @@ jobs:
             echo "windows_runner=windows-2022" >> $GITHUB_OUTPUT
             echo "⚠️ Forcing GitHub-hosted runners (manual override)"
           else
-            # macOS aarch64: MacBook only (Apple Intelligence requires local Xcode 26 SDK)
-            MACBOOK=$(check_runner "macos-26")
-
-            if [ "$MACBOOK" = "available" ]; then
-              echo "macos_arm_runner=macos-26" >> $GITHUB_OUTPUT
-              echo "✅ MacBook (macos-26) is available"
-            elif [ "$MACBOOK" = "busy" ]; then
-              RESULT=$(wait_for_runner "macos-26" 300)
-              if [ "$RESULT" = "available" ]; then
-                echo "macos_arm_runner=macos-26" >> $GITHUB_OUTPUT
-                echo "✅ MacBook (macos-26) became available"
-              else
-                echo "macos_arm_runner=macos-26" >> $GITHUB_OUTPUT
-                echo "⚠️ MacBook still busy after 5 min — queuing anyway (will wait for runner)"
-              fi
-            else
-              echo "macos_arm_runner=macos-26" >> $GITHUB_OUTPUT
-              echo "⚠️ MacBook offline — job will wait until it comes online"
-            fi
+            # macOS aarch64: GitHub-hosted macos-26 runner
+            echo "macos_arm_runner=macos-26" >> $GITHUB_OUTPUT
+            echo "✅ Using GitHub-hosted macos-26 runner"
 
             # Always use GH-hosted Windows — self-hosted is unreliable for builds
             echo "windows_runner=windows-2022" >> $GITHUB_OUTPUT
@@ -180,8 +164,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Self-hosted macOS 26 runner (MacBook Pro) for Apple Silicon + Apple Intelligence
-          # Falls back to macos-latest (GH-hosted) if runner is offline
+          # GitHub-hosted macOS 26 runner for Apple Silicon + Apple Intelligence
           - platform: ${{ needs.check_commit.outputs.macos_arm_runner || 'macos-latest' }}
             args: "--target aarch64-apple-darwin --features metal,parakeet-mlx"
             target: aarch64-apple-darwin
@@ -210,7 +193,7 @@ jobs:
             tauri-args: "--target x86_64-unknown-linux-gnu --features official-build"
             os_type: "linux"
 
-    runs-on: ${{ matrix.platform == 'macos-26' && fromJSON('["self-hosted", "macos-26"]') || matrix.platform == 'windows-desktop-test' && fromJSON('["self-hosted", "windows-desktop-test"]') || matrix.platform }}
+    runs-on: ${{ matrix.platform == 'windows-desktop-test' && fromJSON('["self-hosted", "windows-desktop-test"]') || matrix.platform }}
     timeout-minutes: 120
     steps:
       - name: Detect Xcode version and set Apple Intelligence feature
@@ -703,6 +686,11 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CI: true
+          GGML_NATIVE: "OFF"
+          GGML_AVX512: "OFF"
+          GGML_AVX512_VBMI: "OFF"
+          GGML_AVX512_VNNI: "OFF"
+          GGML_AVX512_BF16: "OFF"
           CMAKE_ARGS: -DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF
           NO_STRIP: true
         run: |
@@ -805,18 +793,25 @@ jobs:
           CARGO_PROFILE_RELEASE_STRIP: none
           CARGO_PROFILE_RELEASE_PANIC: abort
           CARGO_PROFILE_RELEASE_INCREMENTAL: "false"
-          RUSTFLAGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-C link-arg=/LTCG' || '' }}
-          # Cap MSVC codegen at AVX2 — prevents LTCG from auto-vectorizing C deps
-          # (e.g. sqlite-vec) to AVX-512 on CI Xeon runners. Lunar Lake and other
-          # consumer CPUs lack AVX-512, causing STATUS_ILLEGAL_INSTRUCTION (0xc000001d).
-          # Only set for x86_64 — clang on ARM64 doesn't understand /arch:AVX2.
+          # LTCG removed: MSVC has known bugs where LTCG ignores /arch:AVX2 and
+          # emits AVX-512 instructions on Xeon CI runners, causing STATUS_ILLEGAL_INSTRUCTION
+          # (0xc000001d) on consumer CPUs without AVX-512 (Arrow Lake, Panther Lake, Lunar Lake).
+          # See: https://developercommunity.visualstudio.com/content/problem/848627
+          RUSTFLAGS: ""
           CFLAGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '/arch:AVX2' || '' }}
           CXXFLAGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '/arch:AVX2' || '' }}
-          # Fix whisper.cpp crash on newer CPUs (Lunar Lake, Arrow Lake, etc.) that lack AVX-512
-          # GGML_NATIVE=ON compiles with -march=native, causing illegal instruction on CPUs without AVX-512
-          # CMAKE_C_FLAGS/CMAKE_CXX_FLAGS=/arch:AVX2 caps CMake-built deps (whisper.cpp/GGML) at AVX2.
-          # CFLAGS/CXXFLAGS only affects cc-crate builds (sqlite-vec), NOT cmake-crate builds.
-          # Without this, MSVC auto-vectorizes GGML code to AVX-512 on Xeon CI runners.
+          # Fix whisper.cpp/GGML AVX-512 crash on Lunar Lake, Arrow Lake, etc.
+          # whisper-rs build.rs passes env vars starting with GGML_ as cmake defines.
+          # CMAKE_ARGS as a single string gets passed as -DCMAKE_ARGS="..." which cmake ignores.
+          # Individual GGML_* env vars are the ONLY way to control the whisper-rs cmake build.
+          # Without GGML_NATIVE=OFF, FindSIMD.cmake detects AVX-512 on CI Xeon runners
+          # and overrides GGML_AVX512 to ON, producing 512-bit ZMM instructions that crash
+          # on CPUs without full AVX-512 support (STATUS_ILLEGAL_INSTRUCTION 0xc000001d).
+          GGML_NATIVE: "OFF"
+          GGML_AVX512: "OFF"
+          GGML_AVX512_VBMI: "OFF"
+          GGML_AVX512_VNNI: "OFF"
+          GGML_AVX512_BF16: "OFF"
           CMAKE_ARGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-DGGML_NATIVE=OFF -DGGML_AVX512=OFF -DGGML_AVX512_VBMI=OFF -DGGML_AVX512_VNNI=OFF -DGGML_AVX512_BF16=OFF -DCMAKE_C_FLAGS=/arch:AVX2 -DCMAKE_CXX_FLAGS=/arch:AVX2' || '-DGGML_NATIVE=OFF' }}
           OPENBLAS_PATH: ${{ github.workspace }}/apps/screenpipe-app-tauri/src-tauri/openblas
         run: bunx tauri build --verbose ${{ matrix.tauri-args }}

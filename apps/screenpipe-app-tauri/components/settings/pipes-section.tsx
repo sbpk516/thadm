@@ -50,6 +50,10 @@ import { ChatPrefillData } from "@/lib/chat-utils";
 import { commands } from "@/lib/utils/tauri";
 import { cn } from "@/lib/utils";
 import {
+  isNotificationsDenied,
+  toggleNotificationInContent,
+} from "@/lib/utils/notification-toggle";
+import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
@@ -1179,6 +1183,26 @@ export function PipesSection() {
     }
   }, []);
 
+  const toggleNotifications = useCallback(async (pipeName: string, enabled: boolean) => {
+    const pipe = pipes.find((p) => p.config.name === pipeName);
+    if (!pipe) return;
+
+    const rawContent = promptDrafts[pipeName] ?? pipe.raw_content;
+    const content = toggleNotificationInContent(rawContent, enabled);
+
+    await savePipeContent(pipeName, content);
+    setPipes((prev) =>
+      prev.map((p) =>
+        p.config.name === pipeName ? { ...p, raw_content: content } : p
+      )
+    );
+    setPromptDrafts((prev) => {
+      const next = { ...prev };
+      delete next[pipeName];
+      return next;
+    });
+  }, [pipes, promptDrafts, savePipeContent]);
+
   const handlePipeEdit = useCallback((name: string, value: string) => {
     setPromptDrafts((prev) => ({ ...prev, [name]: value }));
     pendingSaves.current[name] = value;
@@ -1359,10 +1383,6 @@ export function PipesSection() {
             }}>
               {refreshing ? <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" /> : <RefreshCw className="h-3.5 w-3.5" />}
             </Button>
-            <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setSection("connections")}>
-              <Link className="h-3.5 w-3.5 mr-1" />
-              connections
-            </Button>
           </div>
         </div>
         <p className="text-sm text-muted-foreground">
@@ -1483,28 +1503,6 @@ export function PipesSection() {
         </Card>
       ) : (
         <div className="border border-border rounded-md divide-y divide-border">
-          {/* Global daily limit / credits exhausted banner — shown once at top */}
-          {(() => {
-            const errors = filteredPipes
-              .filter((p) => p.last_success === false && p.last_error)
-              .map((p) => parsePipeError(p.last_error!));
-            const limitError = errors.find(
-              (e) => e.type === "credits_exhausted" || e.type === "daily_limit"
-            );
-            if (!limitError) return null;
-            return (
-              <div className="flex items-center gap-2 text-xs px-4 py-2">
-                <span className="text-muted-foreground">
-                  {limitError.type === "credits_exhausted"
-                    ? "daily ai usage limit reached — try a lighter model or wait until tomorrow"
-                    : limitError.message}
-                  {limitError.resets_at && (
-                    <> · resets {new Date(limitError.resets_at).toLocaleTimeString()}</>
-                  )}
-                </span>
-              </div>
-            );
-          })()}
           {filteredPipes.map((pipe) => {
             const recentExecs = pipeExecutions[pipe.config.name] || [];
             const isRunning = pipe.is_running || runningPipe === pipe.config.name;
@@ -1655,6 +1653,17 @@ export function PipesSection() {
                         : <Play className="h-3.5 w-3.5" />}
                     </Button>
                   )}
+
+                  {/* Publish button */}
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-7 w-7"
+                    onClick={() => setPublishPipeName(pipe.config.name)}
+                    title="publish to store"
+                  >
+                    <Upload className="h-3.5 w-3.5" />
+                  </Button>
 
                   {/* Overflow menu */}
                   <DropdownMenu>
@@ -2011,6 +2020,54 @@ export function PipesSection() {
                           })()}
                         </div>
 
+                        {/* Timeout */}
+                        <div>
+                          <Label className="text-xs mb-2 block cursor-help" title="max execution time before the pipe is killed — increase for slow LLMs or complex pipes">timeout</Label>
+                          <Select
+                            value={String(pipe.config.timeout || 600)}
+                            onValueChange={(value) => {
+                              const pipeName = pipe.config.name;
+                              const timeout = Number(value);
+                              setPipes((prev) =>
+                                prev.map((p) =>
+                                  p.config.name === pipeName
+                                    ? { ...p, config: { ...p.config, timeout } }
+                                    : p
+                                )
+                              );
+                              const savePromise = fetch(`${apiBase}/pipes/${pipeName}/config`, {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({ timeout }),
+                              }).then(() => {
+                                delete pendingConfigSaves.current[pipeName];
+                                fetchPipes();
+                              }).catch(() => {
+                                delete pendingConfigSaves.current[pipeName];
+                              });
+                              pendingConfigSaves.current[pipeName] = savePromise;
+                            }}
+                          >
+                            <SelectTrigger className="mt-1 h-8 text-xs">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {[
+                                { value: "120", label: "2 minutes" },
+                                { value: "300", label: "5 minutes" },
+                                { value: "600", label: "10 minutes" },
+                                { value: "900", label: "15 minutes" },
+                                { value: "1800", label: "30 minutes" },
+                                { value: "3600", label: "1 hour" },
+                              ].map((opt) => (
+                                <SelectItem key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </div>
+
                         {/* Connections */}
                         <div>
                           <Label className="text-xs mb-2 block cursor-help" title="give the agent access to your apps (Slack, Obsidian, CRM, etc.) — credentials are fetched at runtime">connections</Label>
@@ -2164,6 +2221,15 @@ export function PipesSection() {
                               </form>
                             </div>
                           </div>}
+
+                        {/* Notifications toggle */}
+                        <div className="flex items-center justify-between border px-3 py-2.5">
+                          <span className="text-xs font-medium cursor-help" title="allow this pipe to send notifications">notifications</span>
+                          <Switch
+                            checked={!isNotificationsDenied(promptDrafts[pipe.config.name] ?? pipe.raw_content)}
+                            onCheckedChange={(checked) => toggleNotifications(pipe.config.name, checked)}
+                          />
+                        </div>
 
                       </TabsContent>
 

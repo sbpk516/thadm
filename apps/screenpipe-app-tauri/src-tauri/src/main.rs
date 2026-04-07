@@ -103,6 +103,7 @@ mod health;
 mod log_files;
 mod native_notification;
 mod native_shortcut_reminder;
+mod notifications;
 mod safe_icon;
 mod shortcuts;
 mod vault;
@@ -597,6 +598,7 @@ async fn main() {
                 oauth::oauth_connect,
                 oauth::oauth_status,
                 oauth::oauth_disconnect,
+                oauth::oauth_list_instances,
                 // Pipe suggestions scheduler commands
                 pipe_suggestions_scheduler::pipe_suggestions_get_settings,
                 pipe_suggestions_scheduler::pipe_suggestions_update_settings,
@@ -864,6 +866,7 @@ async fn main() {
             oauth::oauth_connect,
             oauth::oauth_status,
             oauth::oauth_disconnect,
+            oauth::oauth_list_instances,
             // Pipe suggestions scheduler commands
             pipe_suggestions_scheduler::pipe_suggestions_get_settings,
             pipe_suggestions_scheduler::pipe_suggestions_update_settings,
@@ -1013,12 +1016,12 @@ async fn main() {
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_writer(file_appender)
                 .with_ansi(false)
-                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn"));
+                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn,audiopipe=warn"));
 
             // Create a custom layer for console logging
             let console_layer = tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stdout)
-                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn"));
+                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn,audiopipe=warn"));
 
             // Initialize the tracing subscriber with both layers + optional Sentry layer
             // The Sentry layer captures error!() and warn!() events (not just panics)

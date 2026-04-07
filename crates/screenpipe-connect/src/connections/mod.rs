@@ -10,9 +10,16 @@
 pub mod airtable;
 pub mod asana;
 pub mod brex;
+pub mod calcom;
+pub mod calendly;
+pub mod clickup;
+pub mod confluence;
 pub mod discord;
 pub mod email;
 pub mod github_issues;
+pub mod glean;
+pub mod gmail;
+pub mod granola;
 pub mod hubspot;
 pub mod intercom;
 pub mod jira;
@@ -20,6 +27,7 @@ pub mod limitless;
 pub mod linear;
 pub mod logseq;
 pub mod make;
+pub mod microsoft365;
 pub mod monday;
 pub mod n8n;
 pub mod notion;
@@ -28,6 +36,7 @@ pub mod obsidian;
 pub mod perplexity;
 pub mod pipedrive;
 pub mod pushover;
+pub mod salesforce;
 pub mod sentry;
 pub mod slack;
 pub mod stripe;
@@ -35,9 +44,11 @@ pub mod teams;
 pub mod telegram;
 pub mod todoist;
 pub mod toggl;
+pub mod trello;
 pub mod vercel;
 pub mod whatsapp;
 pub mod zapier;
+pub mod zendesk;
 
 use crate::oauth;
 use anyhow::Result;
@@ -117,6 +128,7 @@ pub fn all_integrations() -> Vec<Box<dyn Integration>> {
         Box::new(zapier::Zapier),
         Box::new(github_issues::GithubIssues),
         Box::new(jira::Jira),
+        Box::new(granola::Granola),
         Box::new(hubspot::HubSpot),
         Box::new(limitless::Limitless),
         Box::new(airtable::Airtable),
@@ -125,6 +137,12 @@ pub fn all_integrations() -> Vec<Box<dyn Integration>> {
         Box::new(ntfy::Ntfy),
         Box::new(toggl::Toggl),
         Box::new(brex::Brex),
+        Box::new(clickup::ClickUp),
+        Box::new(confluence::Confluence),
+        Box::new(salesforce::Salesforce),
+        Box::new(microsoft365::Microsoft365),
+        Box::new(trello::Trello),
+        Box::new(zendesk::Zendesk),
         Box::new(stripe::Stripe),
         Box::new(sentry::Sentry),
         Box::new(vercel::Vercel),
@@ -132,6 +150,10 @@ pub fn all_integrations() -> Vec<Box<dyn Integration>> {
         Box::new(intercom::Intercom),
         Box::new(monday::Monday),
         Box::new(asana::Asana),
+        Box::new(calcom::CalCom),
+        Box::new(calendly::Calendly),
+        Box::new(glean::Glean),
+        Box::new(gmail::Gmail),
     ]
 }
 
@@ -191,7 +213,7 @@ impl ConnectionManager {
                 let def = i.def();
                 let is_oauth = i.oauth_config().is_some();
                 let connected = if is_oauth {
-                    oauth::read_oauth_token(def.id).is_some()
+                    !oauth::list_oauth_instances(def.id).is_empty()
                 } else {
                     store
                         .get(def.id)

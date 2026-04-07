@@ -338,13 +338,27 @@ pub async fn event_driven_capture_loop(
 
         // After unlock or wake, invalidate persistent SCStream handles so
         // the next capture picks up fresh frames instead of stale ones.
+        // Use spawn_blocking to avoid blocking the tokio thread — the
+        // underlying sck_rs::stop_all_streams() is a synchronous C call
+        // that can block on system I/O and previously caused deadlocks.
         #[cfg(target_os = "macos")]
         if screenpipe_screen::stream_invalidation::take() {
             info!(
                 "invalidating persistent streams after unlock/wake for monitor {}",
                 monitor_id
             );
-            screenpipe_screen::stream_invalidation::invalidate_streams();
+            let invalidate_result = tokio::time::timeout(
+                Duration::from_secs(5),
+                tokio::task::spawn_blocking(|| {
+                    screenpipe_screen::stream_invalidation::invalidate_streams();
+                }),
+            )
+            .await;
+            match invalidate_result {
+                Ok(Ok(())) => {}
+                Ok(Err(e)) => warn!("stream invalidation task failed: {}", e),
+                Err(_) => warn!("stream invalidation timed out after 5s, continuing"),
+            }
         }
 
         // Skip capture while DRM streaming content is focused
@@ -555,12 +569,13 @@ pub async fn event_driven_capture_loop(
                             }
 
                             debug!(
-                                "event capture: trigger={}, frame_id={}, text_source={:?}, dur={}ms, elements_deduped={}",
+                                "event capture: trigger={}, frame_id={}, text_source={:?}, dur={}ms, elements_deduped={}, monitor={}",
                                 trigger.as_str(),
                                 result.frame_id,
                                 result.text_source,
                                 result.duration_ms,
-                                output.elements_deduped
+                                output.elements_deduped,
+                                monitor_id
                             );
                         } else {
                             // Content dedup or window filter — capture skipped
@@ -759,12 +774,22 @@ async fn do_capture(
     // reduced max_nodes and timeout to avoid blocking their UI thread.
     let mut config = tree_walker_config.clone();
 
-    // Check if the trigger carries an app name we can use for pre-walk budgeting.
-    // For triggers without an app name, the walk runs at current config limits
-    // and the budget is updated afterwards for future walks.
+    // Get the focused app name for budget decisions. AppSwitch triggers carry
+    // the name directly; for all other triggers (visual change, idle, manual)
+    // we do a lightweight AX query to get the focused app. This ensures the
+    // walk budget applies to ALL captures, not just app switches.
     let trigger_app = match trigger {
         CaptureTrigger::AppSwitch { app_name } => Some(app_name.clone()),
-        _ => None,
+        _ => {
+            #[cfg(target_os = "macos")]
+            {
+                get_focused_app_name_lightweight()
+            }
+            #[cfg(not(target_os = "macos"))]
+            {
+                None
+            }
+        }
     };
 
     use screenpipe_a11y::tree::TreeWalkResult;
@@ -1055,4 +1080,19 @@ mod tests {
         assert_eq!(config.visual_check_interval_ms, 3_000);
         assert!((config.visual_change_threshold - 0.05).abs() < f64::EPSILON);
     }
+}
+
+/// Cheaply get the focused app name via AX APIs without walking the tree.
+/// Used to apply the walk budget to non-AppSwitch triggers (visual change,
+/// idle, manual) so that expensive apps like Chrome get throttled even
+/// when the capture wasn't triggered by an app switch.
+#[cfg(target_os = "macos")]
+fn get_focused_app_name_lightweight() -> Option<String> {
+    use cidre::{ax, ns};
+    let sys = ax::UiElement::sys_wide();
+    let app = sys.focused_app().ok()?;
+    let pid = app.pid().ok()?;
+    ns::RunningApp::with_pid(pid)
+        .and_then(|app| app.localized_name())
+        .map(|s| s.to_string())
 }
