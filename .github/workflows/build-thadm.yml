@@ -208,6 +208,7 @@ jobs:
             libxi-dev \
             libgl1-mesa-dev \
             libgbm-dev \
+            libfuse2t64 \
             libsecret-1-dev \
             libopenblas-dev
           # antirez-asr-sys build script emits -llibopenblas (double lib prefix).
