@@ -28,6 +28,7 @@ jobs:
   build-macos:
     if: ${{ github.event.inputs.platforms == 'all' || github.event.inputs.platforms == 'macos' }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - target: aarch64-apple-darwin
@@ -76,6 +77,10 @@ jobs:
       - name: Install dependencies
         working-directory: apps/screenpipe-app-tauri
         run: bun install
+
+      - name: Run pre_build.js
+        working-directory: apps/screenpipe-app-tauri
+        run: bun ./scripts/pre_build.js
 
       - name: Build Tauri app
         working-directory: apps/screenpipe-app-tauri
@@ -135,6 +140,10 @@ jobs:
         working-directory: apps/screenpipe-app-tauri
         run: bun install
 
+      - name: Run pre_build.js
+        working-directory: apps/screenpipe-app-tauri
+        run: bun ./scripts/pre_build.js
+
       - name: Build Tauri app
         working-directory: apps/screenpipe-app-tauri
         run: |
@@ -171,7 +180,36 @@ jobs:
             libxdo-dev \
             tesseract-ocr \
             libtesseract-dev \
-            ffmpeg
+            ffmpeg \
+            pkg-config \
+            build-essential \
+            libglib2.0-dev \
+            clang \
+            cmake \
+            libavutil-dev \
+            libavformat-dev \
+            libavfilter-dev \
+            libavdevice-dev \
+            libpulse-dev \
+            libpipewire-0.3-dev \
+            libsamplerate-dev \
+            libwebrtc-audio-processing-dev \
+            libsqlite3-dev \
+            libbz2-dev \
+            zlib1g-dev \
+            libonig-dev \
+            libxrandr-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libgl1-mesa-dev \
+            libsecret-1-dev \
+            libopenblas-dev
+          # antirez-asr-sys build script emits -llibopenblas (double lib prefix).
+          # Create a symlink so the linker finds it, and set OPENBLAS_PATH with lib/ subdir.
+          sudo mkdir -p /usr/lib/x86_64-linux-gnu/openblas/lib
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libopenblas.so /usr/lib/x86_64-linux-gnu/openblas/lib/liblibopenblas.so
+          sudo ln -sf /usr/lib/x86_64-linux-gnu/libopenblas.a /usr/lib/x86_64-linux-gnu/openblas/lib/liblibopenblas.a
+          echo "OPENBLAS_PATH=/usr/lib/x86_64-linux-gnu/openblas" >> $GITHUB_ENV
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
@@ -194,6 +232,10 @@ jobs:
       - name: Install dependencies
         working-directory: apps/screenpipe-app-tauri
         run: bun install
+
+      - name: Run pre_build.js
+        working-directory: apps/screenpipe-app-tauri
+        run: bun ./scripts/pre_build.js
 
       - name: Build Tauri app
         working-directory: apps/screenpipe-app-tauri
