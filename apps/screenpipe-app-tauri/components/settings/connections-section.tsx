@@ -96,7 +96,7 @@ async function getInstalledMcpVersion(): Promise<string | null> {
     const configPath = await getClaudeConfigPath();
     if (!configPath) return null;
     const config = JSON.parse(await readTextFile(configPath));
-    return config?.mcpServers?.screenpipe ? "installed" : null;
+    return config?.mcpServers?.thadm ? "installed" : null;
   } catch { return null; }
 }
 
@@ -117,7 +117,7 @@ async function installCursorMcp(): Promise<void> {
   let config: Record<string, unknown> = {};
   try { config = JSON.parse(await readTextFile(configPath)); } catch { /* fresh */ }
   if (!config.mcpServers || typeof config.mcpServers !== "object") config.mcpServers = {};
-  (config.mcpServers as Record<string, unknown>).thadm = { command: "npx", args: ["-y", "screenpipe-mcp"] };
+  (config.mcpServers as Record<string, unknown>).thadm = { command: "npx", args: ["-y", "thadm-mcp"] };
   await writeFile(configPath, new TextEncoder().encode(JSON.stringify(config, null, 2)));
 }
 
@@ -398,17 +398,13 @@ function ClaudePanel({ onConnected }: { onConnected?: () => void }) {
   const handleConnect = async () => {
     try {
       setDownloadState("downloading");
-      const release = await getLatestMcpRelease();
-      const response = await tauriFetch(release.url, { method: "GET" });
-      if (!response.ok) throw new Error("failed to download .mcpb file");
-      const data = new Uint8Array(await response.arrayBuffer());
-      const tmp = await tempDir();
-      const filePath = await join(tmp, "screenpipe.mcpb");
-      await writeFile(filePath, data);
-      setMcpbPath(filePath);
-      const os = platform();
-      if (os === "macos") await Command.create("open", [filePath]).execute();
-      else if (os === "windows") await Command.create("cmd", ["/c", "start", "", filePath]).execute();
+      const configPath = await getClaudeConfigPath();
+      if (!configPath) throw new Error("could not find claude desktop config path");
+      let config: Record<string, unknown> = {};
+      try { config = JSON.parse(await readTextFile(configPath)); } catch { /* fresh config */ }
+      if (!config.mcpServers || typeof config.mcpServers !== "object") config.mcpServers = {};
+      (config.mcpServers as Record<string, unknown>).thadm = { command: "npx", args: ["-y", "thadm-mcp"] };
+      await writeFile(configPath, new TextEncoder().encode(JSON.stringify(config, null, 2)));
       setDownloadState("downloaded");
       onConnected?.();
     } catch (error) {
@@ -485,7 +481,7 @@ function CursorPanel() {
       console.error("failed to install cursor mcp:", error);
       await message(
         "Failed to write Cursor MCP config.\n\nManually add to ~/.cursor/mcp.json:\n\n" +
-        JSON.stringify({ mcpServers: { screenpipe: { command: "npx", args: ["-y", "screenpipe-mcp"] } } }, null, 2),
+        JSON.stringify({ mcpServers: { thadm: { command: "npx", args: ["-y", "thadm-mcp"] } } }, null, 2),
         { title: "Cursor MCP Setup", kind: "error" }
       );
       setState("idle");
@@ -520,7 +516,7 @@ function CursorPanel() {
 
 function ClaudeCodePanel() {
   const [copied, setCopied] = useState(false);
-  const cmd = "claude mcp add screenpipe -- npx -y screenpipe-mcp";
+  const cmd = "claude mcp add thadm -- npx -y thadm-mcp";
   const handleCopy = useCallback(async () => {
     try {
       await navigator.clipboard.writeText(cmd);
@@ -546,9 +542,9 @@ function AnythingLLMPanel() {
   const [copied, setCopied] = useState(false);
   const config = JSON.stringify({
     mcpServers: {
-      screenpipe: {
+      thadm: {
         command: "npx",
-        args: ["-y", "screenpipe-mcp"],
+        args: ["-y", "thadm-mcp"],
       },
     },
   }, null, 2);
@@ -588,7 +584,7 @@ function MstyPanel() {
   const [copied, setCopied] = useState(false);
   const config = JSON.stringify({
     command: "npx",
-    args: ["-y", "screenpipe-mcp"],
+    args: ["-y", "thadm-mcp"],
   }, null, 2);
   const handleCopy = useCallback(async () => {
     try {
@@ -674,7 +670,7 @@ function OllamaPanel() {
 function LMStudioPanel() {
   const [status, setStatus] = useState<"idle" | "checking" | "connected" | "error">("idle");
   const [models, setModels] = useState<string[]>([]);
-  const deeplink = "lmstudio://add_mcp?name=screenpipe&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInNjcmVlbnBpcGUtbWNwIl19";
+  const deeplink = "lmstudio://add_mcp?name=thadm&config=eyJjb21tYW5kIjoibnB4IiwiYXJncyI6WyIteSIsInRoYWRtLW1jcCJdfQo=";
 
   const handleCheck = async () => {
     setStatus("checking");
@@ -993,7 +989,7 @@ function OAuthPanel({ integrationId, integrationName }: { integrationId: string;
   const [displayName, setDisplayName] = useState<string | null>(null);
 
   useEffect(() => {
-    commands.oauthStatus(integrationId).then(res => {
+    commands.oauthStatus(integrationId, null).then(res => {
       if (res.status === "ok" && res.data.connected) {
         setStatus("connected");
         setDisplayName(res.data.display_name ?? null);
@@ -1004,7 +1000,7 @@ function OAuthPanel({ integrationId, integrationName }: { integrationId: string;
   const handleConnect = async () => {
     setStatus("loading");
     try {
-      const res = await commands.oauthConnect(integrationId);
+      const res = await commands.oauthConnect(integrationId, null);
       if (res.status === "ok" && res.data.connected) {
         setStatus("connected");
         setDisplayName(res.data.display_name ?? null);
@@ -1017,7 +1013,7 @@ function OAuthPanel({ integrationId, integrationName }: { integrationId: string;
   };
 
   const handleDisconnect = async () => {
-    await commands.oauthDisconnect(integrationId);
+    await commands.oauthDisconnect(integrationId, null);
     setStatus("idle");
     setDisplayName(null);
   };
@@ -1423,10 +1419,10 @@ export function ConnectionsSection() {
 
   const refreshStatus = useCallback(() => {
     getInstalledMcpVersion().then(v => {
-      const installed = !!v || localStorage.getItem("screenpipe_claude_connected") === "true";
+      const installed = !!v || localStorage.getItem("thadm_claude_connected") === "true";
       setClaudeInstalled(installed);
     }).catch(() => {
-      setClaudeInstalled(localStorage.getItem("screenpipe_claude_connected") === "true");
+      setClaudeInstalled(localStorage.getItem("thadm_claude_connected") === "true");
     });
     isCursorMcpInstalled().then(setCursorInstalled).catch(() => {});
     commands.chatgptOauthStatus().then(res => {
@@ -1523,7 +1519,7 @@ export function ConnectionsSection() {
   const renderPanel = () => {
     if (!selected) return null;
     switch (selected) {
-      case "claude": return <ClaudePanel onConnected={() => { localStorage.setItem("screenpipe_claude_connected", "true"); setClaudeInstalled(true); }} />;
+      case "claude": return <ClaudePanel onConnected={() => { localStorage.setItem("thadm_claude_connected", "true"); setClaudeInstalled(true); }} />;
       case "cursor": return <CursorPanel />;
       case "claude-code": return <ClaudeCodePanel />;
       case "chatgpt": return <ChatGptPanel />;

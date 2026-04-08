@@ -22,7 +22,7 @@ export function GmailCard() {
 
   const fetchAccounts = useCallback(async () => {
     try {
-      const res = await commands.oauthStatus("gmail");
+      const res = await commands.oauthStatus("gmail", null);
       if (res.status === "ok" && res.data.connected) {
         setAccounts([{ instance: null, displayName: (res.data as any).display_name ?? null }]);
       } else {
@@ -40,7 +40,7 @@ export function GmailCard() {
   const handleConnect = async () => {
     setIsConnecting(true);
     try {
-      const res = await commands.oauthConnect("gmail");
+      const res = await commands.oauthConnect("gmail", null);
       if (res.status === "ok" && res.data.connected) {
         posthog.capture("gmail_connected");
         await fetchAccounts();
@@ -55,7 +55,7 @@ export function GmailCard() {
     const key = instance ?? "__default__";
     setDisconnecting(key);
     try {
-      await commands.oauthDisconnect("gmail");
+      await commands.oauthDisconnect("gmail", null);
       posthog.capture("gmail_disconnected", { instance });
       await fetchAccounts();
     } catch (e) {

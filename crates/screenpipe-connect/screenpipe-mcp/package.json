@@ -1,11 +1,11 @@
 {
-  "name": "screenpipe-mcp",
+  "name": "thadm-mcp",
   "version": "0.13.0",
-  "description": "MCP server for screenpipe - search your screen recordings and audio transcriptions",
+  "description": "MCP server for thadm - search your screen recordings and audio transcriptions",
   "main": "dist/index.js",
   "bin": {
-    "screenpipe-mcp": "dist/index.js",
-    "screenpipe-mcp-http": "dist/http-server.js"
+    "thadm-mcp": "dist/index.js",
+    "thadm-mcp-http": "dist/http-server.js"
   },
   "scripts": {
     "build": "tsc",
@@ -19,7 +19,7 @@
   },
   "keywords": [
     "mcp",
-    "screenpipe",
+    "thadm",
     "model-context-protocol",
     "claude",
     "ai",
@@ -27,7 +27,7 @@
     "ocr",
     "audio-transcription"
   ],
-  "author": "Mediar AI",
+  "author": "Thadm",
   "license": "MIT",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
