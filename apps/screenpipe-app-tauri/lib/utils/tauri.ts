@@ -1216,6 +1216,12 @@ useAllMonitors: boolean;
  */
 videoQuality: string; 
 /**
+ * Maximum width for stored snapshots. Images wider than this are downscaled
+ * (preserving aspect ratio) before JPEG encoding. 0 = no limit (store at
+ * native resolution). Default: 1920.
+ */
+maxSnapshotWidth?: number; 
+/**
  * Window titles to exclude from capture.
  */
 ignoredWindows: string[]; 
@@ -1348,6 +1354,10 @@ scheduleRules?: ScheduleRule[] }) &
  */
 disableOcr?: boolean; showShortcutOverlay?: boolean; 
 /**
+ * Overlay size: "small" (default), "medium" (1.5x), "large" (2x)
+ */
+shortcutOverlaySize?: string; 
+/**
  * Unique device ID for AI usage tracking (generated on first launch)
  */
 deviceId?: string; 
@@ -1356,6 +1366,12 @@ deviceId?: string;
  * When disabled, users must click "update now" in the tray menu.
  */
 autoUpdate?: boolean; 
+/**
+ * Auto-update store-installed pipes that haven't been locally modified.
+ */
+autoUpdatePipes?: boolean;
+/** Use screenpipe cloud for AI features like suggestions (zero data retention). */
+enhancedAI?: boolean;
 /**
  * Timeline overlay mode: "fullscreen" (floating panel above everything) or
  * "window" (normal resizable window with title bar).
