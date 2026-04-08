@@ -1,10 +1,54 @@
 #!/bin/bash
 # build.sh — Build thadm for production distribution (signed + notarized)
+#
+# Usage:
+#   ./build.sh                          # native arm64
+#   ./build.sh --target x86_64-apple-darwin   # cross-compile Intel
+#   ./build.sh --target aarch64-apple-darwin  # explicit arm64
+#   ./build.sh --all                    # build both architectures
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 APP_DIR="$SCRIPT_DIR/apps/screenpipe-app-tauri"
 LOG_FILE="$SCRIPT_DIR/.thadm-build.log"
+
+# Parse arguments
+TARGET=""
+BUILD_ALL=false
+for arg in "$@"; do
+  case "$arg" in
+    --target=*) TARGET="${arg#--target=}" ;;
+    --target) ;; # next arg is the target value
+    --all) BUILD_ALL=true ;;
+    *)
+      # Handle --target VALUE (two-arg form)
+      if [ "$prev" = "--target" ]; then TARGET="$arg"; fi
+      ;;
+  esac
+  prev="$arg"
+done
+
+# If --all, build both then exit
+if [ "$BUILD_ALL" = true ]; then
+  echo "Building both architectures..."
+  echo ""
+  echo "======== ARM64 (native) ========"
+  "$0" --target aarch64-apple-darwin
+  echo ""
+  echo "======== x86_64 (cross-compile) ========"
+  "$0" --target x86_64-apple-darwin
+  exit 0
+fi
+
+# Build target flag for tauri/cargo
+TARGET_FLAG=""
+BUNDLE_SUBDIR="release"
+if [ -n "$TARGET" ]; then
+  TARGET_FLAG="--target $TARGET"
+  BUNDLE_SUBDIR="$TARGET/release"
+  # Ensure the Rust target is installed
+  rustup target add "$TARGET" 2>/dev/null || true
+fi
 
 phase() { echo ""; echo "=== [$1/6] $2 ==="; echo ""; }
 
@@ -87,8 +131,8 @@ phase 4 "Cleaning stale artifacts and installing dependencies"
 cd "$APP_DIR"
 
 # Remove old build output so we don't accidentally ship stale .dmg
-rm -rf src-tauri/target/release/bundle/dmg 2>/dev/null && echo "cleaned: old dmg"
-rm -rf src-tauri/target/release/bundle/macos 2>/dev/null && echo "cleaned: old app"
+rm -rf "src-tauri/target/$BUNDLE_SUBDIR/bundle/dmg" 2>/dev/null && echo "cleaned: old dmg"
+rm -rf "src-tauri/target/$BUNDLE_SUBDIR/bundle/macos" 2>/dev/null && echo "cleaned: old app"
 
 bun install || { echo "FAIL: bun install failed"; exit 1; }
 
@@ -97,6 +141,7 @@ phase 5 "Building production app (this takes 10-20 min)"
 # -------------------------------------------------------
 echo "building with:"
 echo "  - config: tauri.prod.conf.json (productName: thadm)"
+echo "  - target: ${TARGET:-native}"
 echo "  - release optimizations (LTO)"
 echo "  - Apple code signing"
 echo "  - notarization (requires internet)"
@@ -108,7 +153,7 @@ echo "--------------------------------------------"
 > "$LOG_FILE"
 
 # Build with PROD config, redact password from log
-bun run tauri build --config src-tauri/tauri.prod.conf.json 2>&1 \
+bun run tauri build $TARGET_FLAG --config src-tauri/tauri.prod.conf.json 2>&1 \
   | sed "s/$APPLE_PASSWORD/***REDACTED***/g" \
   | tee "$LOG_FILE"
 
@@ -130,8 +175,8 @@ fi
 # -------------------------------------------------------
 phase 6 "Verifying signature and notarization"
 # -------------------------------------------------------
-APP=$(find src-tauri/target/release/bundle/macos -name "*.app" 2>/dev/null | head -1)
-DMG=$(find src-tauri/target/release/bundle/dmg -name "*.dmg" 2>/dev/null | head -1)
+APP=$(find "src-tauri/target/$BUNDLE_SUBDIR/bundle/macos" -name "*.app" 2>/dev/null | head -1)
+DMG=$(find "src-tauri/target/$BUNDLE_SUBDIR/bundle/dmg" -name "*.dmg" 2>/dev/null | head -1)
 
 if [ -z "$APP" ]; then
   echo "FAIL: no .app found in build output"
