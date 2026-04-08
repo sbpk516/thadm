@@ -812,10 +812,11 @@ async chatgptOauthModels() : Promise<Result<string[], string>> {
 /**
  * Start the OAuth flow for any integration that has `oauth_config()` set.
  * `integration_id` must match the integration's `def().id`.
+ * `instance` is an optional name for multi-account support (e.g. email address).
  */
-async oauthConnect(integrationId: string) : Promise<Result<OAuthStatus, string>> {
+async oauthConnect(integrationId: string, instance: string | null) : Promise<Result<OAuthStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("oauth_connect", { integrationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("oauth_connect", { integrationId, instance }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -824,20 +825,31 @@ async oauthConnect(integrationId: string) : Promise<Result<OAuthStatus, string>>
 /**
  * Check whether a valid (non-expired) OAuth token exists for the given integration.
  */
-async oauthStatus(integrationId: string) : Promise<Result<OAuthStatus, string>> {
+async oauthStatus(integrationId: string, instance: string | null) : Promise<Result<OAuthStatus, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("oauth_status", { integrationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("oauth_status", { integrationId, instance }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
 }
 },
 /**
- * Remove the stored OAuth token for the given integration.
+ * Remove the stored OAuth token for the given integration instance.
  */
-async oauthDisconnect(integrationId: string) : Promise<Result<boolean, string>> {
+async oauthDisconnect(integrationId: string, instance: string | null) : Promise<Result<boolean, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("oauth_disconnect", { integrationId }) };
+    return { status: "ok", data: await TAURI_INVOKE("oauth_disconnect", { integrationId, instance }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * List all connected OAuth instances for a given integration.
+ */
+async oauthListInstances(integrationId: string) : Promise<Result<OAuthInstanceInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("oauth_list_instances", { integrationId }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1062,6 +1074,7 @@ export type IcsCalendarEntry = { name: string; url: string; enabled: boolean }
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key in string]: JsonValue }
 export type LogFile = { name: string; path: string; modified_at: bigint }
 export type MonitorDevice = { id: number; stableId: string; name: string; isDefault: boolean; width: number; height: number }
+export type OAuthInstanceInfo = { instance: string | null; display_name: string | null }
 export type OAuthStatus = { connected: boolean; display_name: string | null }
 export type OSPermission = "screenRecording" | "microphone" | "accessibility" | "automation"
 export type OSPermissionStatus = "notNeeded" | "empty" | "granted" | "denied"
@@ -1219,9 +1232,15 @@ ignoredUrls?: string[];
  */
 ignoreIncognitoWindows: boolean; 
 /**
- * Pause all screen capture when a DRM streaming app (Netflix, etc.) is focused.
+ * Experimental: pause screen capture when a DRM streaming app or site is focused.
+ * Off by default; engine-only pause (no full app shutdown).
  */
 pauseOnDrmContent?: boolean; 
+/**
+ * Automatically append text typed during a meeting to the meeting's note
+ * when the meeting ends. Groups typed text by app/window context.
+ */
+appendTypedTextToMeetingNotes?: boolean; 
 /**
  * Languages for transcription (ISO 639-1 codes).
  */
