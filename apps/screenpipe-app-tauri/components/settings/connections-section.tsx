@@ -1005,7 +1005,7 @@ function OAuthPanel({ integrationId, integrationName }: { integrationId: string;
       }
     } catch { /* fallback below */ }
     try {
-      const res = await commands.oauthStatus(integrationId);
+      const res = await commands.oauthStatus(integrationId, null);
       if (res.status === "ok" && res.data.connected) {
         setStatus("connected");
         setDisplayName(res.data.display_name ?? null);
