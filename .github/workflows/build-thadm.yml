@@ -261,5 +261,4 @@ jobs:
           name: thadm-linux-x64
           path: |
             apps/screenpipe-app-tauri/src-tauri/target/release/bundle/deb/*.deb
-            apps/screenpipe-app-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
           retention-days: 30

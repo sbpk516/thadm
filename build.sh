@@ -98,6 +98,8 @@ export APPLE_ID="${APPLE_ID:-}"
 export APPLE_PASSWORD="${APPLE_PASSWORD:-}"
 export APPLE_TEAM_ID="${APPLE_TEAM_ID:-}"
 export APPLE_SIGNING_IDENTITY="${APPLE_SIGNING_IDENTITY:-}"
+export TAURI_SIGNING_PRIVATE_KEY="${TAURI_SIGNING_PRIVATE_KEY:-}"
+export TAURI_SIGNING_PRIVATE_KEY_PASSWORD="${TAURI_SIGNING_PRIVATE_KEY_PASSWORD:-}"
 
 # Read from credentials file if env vars not set
 if [ -f "$CREDS_FILE" ]; then
@@ -105,6 +107,14 @@ if [ -f "$CREDS_FILE" ]; then
   [ -z "$APPLE_PASSWORD" ] && APPLE_PASSWORD=$(grep "APPLE_PASSWORD:" "$CREDS_FILE" | head -1 | sed 's/.*: *//' | tr -d '[:space:]') && export APPLE_PASSWORD
   [ -z "$APPLE_TEAM_ID" ] && APPLE_TEAM_ID=$(grep "APPLE_TEAM_ID:" "$CREDS_FILE" | head -1 | sed 's/.*: *//' | tr -d '[:space:]') && export APPLE_TEAM_ID
   [ -z "$APPLE_SIGNING_IDENTITY" ] && APPLE_SIGNING_IDENTITY=$(grep "APPLE_SIGNING_IDENTITY:" "$CREDS_FILE" | head -1 | sed 's/.*: *//' | tr -d '\r\n') && export APPLE_SIGNING_IDENTITY
+  [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ] && TAURI_SIGNING_PRIVATE_KEY_PASSWORD=$(grep "TAURI_SIGNING_PRIVATE_KEY_PASSWORD:" "$CREDS_FILE" | head -1 | sed 's/.*: *//' | tr -d '[:space:]') && export TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+fi
+
+# Tauri updater signing key (file contents, not path)
+TAURI_KEY_FILE="$HOME/.tauri/thadm.key"
+if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ] && [ -f "$TAURI_KEY_FILE" ]; then
+  TAURI_SIGNING_PRIVATE_KEY=$(cat "$TAURI_KEY_FILE")
+  export TAURI_SIGNING_PRIVATE_KEY
 fi
 
 # Validate all required vars
