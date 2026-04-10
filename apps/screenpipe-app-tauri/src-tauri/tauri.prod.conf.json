@@ -20,7 +20,6 @@
       "app",
       "dmg",
       "deb",
-      "appimage",
       "nsis"
     ],
     "externalBin": [

@@ -164,6 +164,14 @@ int lt_hide(void) { return -1; }
 int lt_destroy(void) { return -1; }
 
 void lt_free_string(char* ptr) { if (ptr) free(ptr); }
+
+int lt_prefetch(const char* paths_json) { (void)paths_json; return -1; }
+
+int lt_set_guard_rect(const char* key, double x, double y, double w, double h) {
+    (void)key; (void)x; (void)y; (void)w; (void)h; return -1;
+}
+
+int lt_remove_guard(const char* key) { (void)key; return -1; }
 "#,
     )
     .expect("failed to write livetext stub");

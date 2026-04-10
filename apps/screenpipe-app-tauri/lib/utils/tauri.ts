@@ -990,6 +990,17 @@ async forceRegenerateSuggestions() : Promise<Result<CachedSuggestions, string>> 
 }
 },
 /**
+ * Enable or disable enhanced AI suggestions (uses screenpipe cloud).
+ */
+async setEnhancedAiSuggestions(enabled: boolean, token: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("set_enhanced_ai_suggestions", { enabled, token }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Tauri command: validate that a path is usable as a data directory.
  * Called from the frontend before saving the setting.
  */
@@ -1369,9 +1380,12 @@ autoUpdate?: boolean;
 /**
  * Auto-update store-installed pipes that haven't been locally modified.
  */
-autoUpdatePipes?: boolean;
-/** Use screenpipe cloud for AI features like suggestions (zero data retention). */
-enhancedAI?: boolean;
+autoUpdatePipes?: boolean; 
+/**
+ * Use screenpipe cloud for AI-powered features like suggestions.
+ * Better quality but sends activity context to the cloud (zero data retention).
+ */
+enhancedAI?: boolean; 
 /**
  * Timeline overlay mode: "fullscreen" (floating panel above everything) or
  * "window" (normal resizable window with title bar).
