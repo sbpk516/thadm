@@ -18,7 +18,8 @@ use crate::{
     routes::{
         activity_summary::get_activity_summary,
         audio::{
-            api_list_audio_devices, start_audio, start_audio_device, stop_audio, stop_audio_device,
+            api_list_audio_devices, audio_device_status, start_audio, start_audio_device,
+            stop_audio, stop_audio_device,
         },
         content::{
             add_tags, add_to_database, execute_raw_sql, get_tags_batch, merge_frames_handler,
@@ -41,7 +42,7 @@ use crate::{
         },
         memories::{
             create_memory_handler, delete_memory_handler, get_memory_handler,
-            list_memories_handler, update_memory_handler,
+            list_memories_handler, list_memory_tags_handler, update_memory_handler,
         },
         search::{keyword_search_handler, search},
         speakers::{
@@ -125,6 +126,9 @@ pub struct AppState {
     pub ws_connection_count: Arc<AtomicUsize>,
     /// LRU cache for search results (10x faster for repeated queries)
     pub search_cache: SearchCache,
+    /// Limits concurrent pipe DB queries to prevent pipes from starving recording.
+    /// When all permits are taken, pipe requests get 503 instead of queueing.
+    pub pipe_query_semaphore: Arc<tokio::sync::Semaphore>,
     /// Enable PII removal from text content
     pub use_pii_removal: bool,
     /// Cloud search client for hybrid local + cloud queries
@@ -162,6 +166,12 @@ pub struct AppState {
     pub manual_meeting: Arc<tokio::sync::RwLock<Option<i64>>>,
     /// Browser extension bridge — relays JS eval requests to the connected extension
     pub browser_bridge: Arc<crate::routes::browser::BrowserBridge>,
+    /// When true, non-localhost requests require Authorization: Bearer <api_key>
+    pub api_auth: bool,
+    /// The API key to validate against (from SCREENPIPE_API_KEY or auth.json)
+    pub api_auth_key: Option<String>,
+    /// Unified credential store for OAuth tokens, API keys, etc.
+    pub secret_store: Option<Arc<screenpipe_secrets::SecretStore>>,
 }
 
 pub struct SCServer {
@@ -186,6 +196,12 @@ pub struct SCServer {
         Arc<DashMap<String, Arc<screenpipe_core::pipes::permissions::PipePermissions>>>,
     /// Shared manual meeting lock — pass in from binary so persister and server share the same state.
     pub manual_meeting: Option<Arc<tokio::sync::RwLock<Option<i64>>>>,
+    /// Require auth for remote API access
+    pub api_auth: bool,
+    /// API key for remote auth validation
+    pub api_auth_key: Option<String>,
+    /// Unified credential store for OAuth tokens, API keys, etc.
+    pub secret_store: Option<Arc<screenpipe_secrets::SecretStore>>,
 }
 
 impl SCServer {
@@ -218,6 +234,9 @@ impl SCServer {
             power_manager: None,
             pipe_permissions: Arc::new(DashMap::new()),
             manual_meeting: None,
+            api_auth: false,
+            api_auth_key: None,
+            secret_store: None,
         }
     }
 
@@ -446,6 +465,9 @@ impl SCServer {
             // queue rather than thrashing CPU with 15+ parallel ffmpeg processes
             // (typical when search results load all thumbnails at once).
             frame_extraction_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
+            // Limit pipe queries to 3 concurrent — protects recording from pipe overload.
+            // Pipes get 503 when all permits are taken; recording writes are unaffected.
+            pipe_query_semaphore: Arc::new(tokio::sync::Semaphore::new(3)),
             hot_frame_cache,
             archive_state: crate::archive::ArchiveState::new(),
             retention_state: crate::retention::RetentionState::new(),
@@ -456,6 +478,9 @@ impl SCServer {
                 .clone()
                 .unwrap_or_else(|| Arc::new(tokio::sync::RwLock::new(None))),
             browser_bridge: crate::routes::browser::BrowserBridge::new(),
+            api_auth: self.api_auth,
+            api_auth_key: self.api_auth_key.clone(),
+            secret_store: self.secret_store.clone(),
         });
 
         let cors = CorsLayer::new()
@@ -504,6 +529,7 @@ impl SCServer {
             .put("/meetings/:id", update_meeting_handler)
             .post("/memories", create_memory_handler)
             .get("/memories", list_memories_handler)
+            .get("/memories/tags", list_memory_tags_handler)
             .get("/memories/:id", get_memory_handler)
             .put("/memories/:id", update_memory_handler)
             .delete("/memories/:id", delete_memory_handler)
@@ -514,9 +540,39 @@ impl SCServer {
             .get("/search/keyword", keyword_search_handler)
             .post("/audio/device/start", start_audio_device)
             .post("/audio/device/stop", stop_audio_device)
+            .get("/audio/device/status", audio_device_status)
             .get("/elements", search_elements)
             .get("/frames/:frame_id/elements", get_frame_elements)
             .get("/activity-summary", get_activity_summary)
+            // Vault routes
+            .get("/vault/status", crate::routes::vault::vault_status)
+            .post("/vault/lock", crate::routes::vault::vault_lock)
+            .post("/vault/unlock", crate::routes::vault::vault_unlock)
+            .post("/vault/setup", crate::routes::vault::vault_setup)
+            // Cloud Sync API routes
+            .post("/sync/init", sync_api::sync_init)
+            .get("/sync/status", sync_api::sync_status)
+            .post("/sync/trigger", sync_api::sync_trigger)
+            .post("/sync/lock", sync_api::sync_lock)
+            .post("/sync/download", sync_api::sync_download)
+            .post("/sync/pipes/push", sync_api::sync_pipes_push)
+            .post("/sync/pipes/pull", sync_api::sync_pipes_pull)
+            // Cloud Archive API routes
+            .post("/archive/init", crate::archive::archive_init)
+            .post("/archive/configure", crate::archive::archive_configure)
+            .get("/archive/status", crate::archive::archive_status)
+            .post("/archive/run", crate::archive::archive_run)
+            // Local data retention (auto-delete old data)
+            .post(
+                "/retention/configure",
+                crate::retention::retention_configure,
+            )
+            .get("/retention/status", crate::retention::retention_status)
+            .post("/retention/run", crate::retention::retention_run)
+            // Data management
+            .post("/data/delete-range", delete_time_range_handler)
+            .post("/data/delete-device", delete_device_data_handler)
+            .get("/data/device-storage", device_storage_handler)
             .route_yaml_spec("/openapi.yaml")
             .route_json_spec("/openapi.json")
             .freeze();
@@ -524,82 +580,20 @@ impl SCServer {
         // Build the main router with all routes
         let router = Router::new()
             .merge(server.into_router())
-            // Vault lock/unlock routes
-            .route("/vault/status", get(crate::routes::vault::vault_status))
-            .route(
-                "/vault/lock",
-                axum::routing::post(crate::routes::vault::vault_lock),
-            )
-            .route(
-                "/vault/unlock",
-                axum::routing::post(crate::routes::vault::vault_unlock),
-            )
-            .route(
-                "/vault/setup",
-                axum::routing::post(crate::routes::vault::vault_setup),
-            )
-            // Cloud Sync API routes
-            .route("/sync/init", axum::routing::post(sync_api::sync_init))
-            .route("/sync/status", get(sync_api::sync_status))
-            .route("/sync/trigger", axum::routing::post(sync_api::sync_trigger))
-            .route("/sync/lock", axum::routing::post(sync_api::sync_lock))
-            .route(
-                "/sync/download",
-                axum::routing::post(sync_api::sync_download),
-            )
-            .route(
-                "/sync/pipes/push",
-                axum::routing::post(sync_api::sync_pipes_push),
-            )
-            .route(
-                "/sync/pipes/pull",
-                axum::routing::post(sync_api::sync_pipes_pull),
-            )
-            // Cloud Archive API routes
-            .route(
-                "/archive/init",
-                axum::routing::post(crate::archive::archive_init),
-            )
-            .route(
-                "/archive/configure",
-                axum::routing::post(crate::archive::archive_configure),
-            )
-            .route("/archive/status", get(crate::archive::archive_status))
-            .route(
-                "/archive/run",
-                axum::routing::post(crate::archive::archive_run),
-            )
-            // Local data retention (auto-delete old data)
-            .route(
-                "/retention/configure",
-                axum::routing::post(crate::retention::retention_configure),
-            )
-            .route("/retention/status", get(crate::retention::retention_status))
-            .route(
-                "/retention/run",
-                axum::routing::post(crate::retention::retention_run),
-            )
-            // Vision status endpoint (not in OpenAPI spec to avoid oasgen registration issues)
+            // Vision status endpoint (not in OpenAPI spec — no State param)
             .route("/vision/status", get(api_vision_status))
-            // Vision pipeline metrics (not in OpenAPI spec)
+            // Vision/audio pipeline metrics (not in OpenAPI spec — external types)
             .route("/vision/metrics", get(vision_metrics_handler))
             .route("/audio/metrics", get(audio_metrics_handler))
-            // Data management (not in OpenAPI spec)
-            .route(
-                "/data/delete-range",
-                axum::routing::post(delete_time_range_handler),
-            )
-            .route(
-                "/data/delete-device",
-                axum::routing::post(delete_device_data_handler),
-            )
-            .route(
-                "/data/device-storage",
-                axum::routing::get(device_storage_handler),
-            )
+            // Retranscribe/transcribe (not in OpenAPI spec — opaque Response / multipart)
             .route(
                 "/audio/retranscribe",
                 axum::routing::post(crate::routes::retranscribe::retranscribe_handler),
+            )
+            .route(
+                "/v1/audio/transcriptions",
+                axum::routing::post(crate::routes::transcribe::transcribe_handler)
+                    .layer(axum::extract::DefaultBodyLimit::max(250 * 1024 * 1024)), // 250MB
             );
 
         // Apple Intelligence — generic OpenAI-compatible endpoint (macOS only)
@@ -714,7 +708,10 @@ impl SCServer {
             }
         }
 
-        let router = router.nest("/connections", crate::connections_api::router(cm, wa));
+        let router = router.nest(
+            "/connections",
+            crate::connections_api::router(cm, wa, self.secret_store.clone()),
+        );
 
         // Power management routes (if power manager is available)
         let router = if let Some(ref pm) = self.power_manager {
@@ -774,6 +771,10 @@ impl SCServer {
             .with_state(app_state.clone())
             .layer(axum::middleware::from_fn_with_state(
                 app_state.clone(),
+                crate::pipe_permissions_middleware::pipe_backpressure_layer,
+            ))
+            .layer(axum::middleware::from_fn_with_state(
+                app_state.clone(),
                 crate::pipe_permissions_middleware::pipe_permissions_layer,
             ))
             .layer(axum::middleware::from_fn_with_state(
@@ -792,6 +793,57 @@ impl SCServer {
             .layer(axum::middleware::from_fn(
                 crate::routes::timezone::timestamp_middleware,
             ))
+            .layer({
+                // Remote API auth middleware — when api_auth is enabled,
+                // non-localhost requests must include a valid bearer token.
+                let auth_enabled = self.api_auth;
+                let auth_key = self.api_auth_key.clone();
+                axum::middleware::from_fn(
+                    move |req: axum::extract::Request, next: axum::middleware::Next| {
+                        let auth_enabled = auth_enabled;
+                        let auth_key = auth_key.clone();
+                        async move {
+                            if !auth_enabled {
+                                return next.run(req).await;
+                            }
+
+                            // Always allow localhost
+                            let is_localhost = req
+                                .extensions()
+                                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+                                .map(|ci| ci.0.ip().is_loopback())
+                                .unwrap_or(true); // default to allow if no connect info
+
+                            if is_localhost {
+                                return next.run(req).await;
+                            }
+
+                            // Check bearer token
+                            let authorized = req
+                                .headers()
+                                .get(axum::http::header::AUTHORIZATION)
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|v| v.strip_prefix("Bearer "))
+                                .map(|token| {
+                                    auth_key.as_deref() == Some(token)
+                                })
+                                .unwrap_or(false);
+
+                            if authorized {
+                                next.run(req).await
+                            } else {
+                                axum::response::Response::builder()
+                                    .status(403)
+                                    .header("Content-Type", "application/json")
+                                    .body(axum::body::Body::from(
+                                        r#"{"error":"unauthorized: remote API access requires authentication. Pass Authorization: Bearer <SCREENPIPE_API_KEY>"}"#,
+                                    ))
+                                    .unwrap()
+                            }
+                        }
+                    },
+                )
+            })
             .layer(cors)
             .layer(TraceLayer::new_for_http().make_span_with(DefaultMakeSpan::default()))
     }

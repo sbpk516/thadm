@@ -110,7 +110,7 @@ export const Providers = forwardRef<
     <Suspense>
     <NuqsAdapter>
       <SettingsProvider>
-        <ThemeProvider defaultTheme="light" storageKey="thadm-ui-theme">
+        <ThemeProvider defaultTheme="system" storageKey="thadm-ui-theme">
           <ChangelogDialogProvider>
             <PermissionMonitorProvider>
               <PostHogProvider client={posthog}>{children}</PostHogProvider>

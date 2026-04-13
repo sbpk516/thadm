@@ -514,6 +514,7 @@ impl DatabaseManager {
     }
 
     /// Insert a synced frame via the write queue. Returns the frame ID (0 if skipped due to conflict).
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_insert_frame(
         &self,
         sync_id: &str,
@@ -570,6 +571,7 @@ impl DatabaseManager {
     }
 
     /// Insert a synced transcription via the write queue. Returns the audio_chunk_id.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_insert_transcription(
         &self,
         sync_id: &str,
@@ -600,6 +602,7 @@ impl DatabaseManager {
     }
 
     /// Insert a synced accessibility record via the write queue.
+    #[allow(clippy::too_many_arguments)]
     pub async fn sync_insert_accessibility(
         &self,
         sync_id: &str,
@@ -842,6 +845,23 @@ impl DatabaseManager {
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
+    }
+
+    /// Returns true if there are audio transcriptions from output devices
+    /// within the given number of seconds. Used by meeting detection to keep
+    /// browser-based meetings alive when the user switches tabs but audio is
+    /// still flowing (i.e. the meeting is still going).
+    pub async fn has_recent_output_audio(&self, within_secs: i64) -> Result<bool, sqlx::Error> {
+        let count = sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM audio_transcriptions
+             WHERE is_input_device = 0
+               AND timestamp >= datetime('now', ?1)
+             LIMIT 1",
+        )
+        .bind(format!("-{} seconds", within_secs))
+        .fetch_one(&self.pool)
+        .await?;
+        Ok(count > 0)
     }
 
     /// Returns recently transcribed chunks that still have no assigned speaker.
@@ -1102,6 +1122,7 @@ impl DatabaseManager {
     /// Replace all transcription rows for an audio chunk with a single new transcription.
     /// Used by the re-transcribe endpoint. Deletes existing rows first to avoid
     /// UNIQUE constraint violations on (audio_chunk_id, transcription).
+    #[allow(clippy::too_many_arguments)]
     pub async fn replace_audio_transcription(
         &self,
         audio_chunk_id: i64,
@@ -4514,14 +4535,8 @@ impl DatabaseManager {
         .await?;
         let audio_chunks_deleted = audio_chunks_result.rows_affected();
 
-        // 9. Delete accessibility records
-        let accessibility_result =
-            sqlx::query("DELETE FROM accessibility WHERE timestamp BETWEEN ?1 AND ?2")
-                .bind(&start_str)
-                .bind(&end_str)
-                .execute(&mut **tx.conn())
-                .await?;
-        let accessibility_deleted = accessibility_result.rows_affected();
+        // 9. accessibility table was dropped by migration 20260312000000
+        let accessibility_deleted: u64 = 0;
 
         // 10. Delete ui_events — triggers ui_events_fts delete
         let ui_events_result =
@@ -4706,14 +4721,8 @@ impl DatabaseManager {
         .await?;
         let audio_chunks_deleted = audio_chunks_result.rows_affected();
 
-        // 11. Delete accessibility records
-        let accessibility_result =
-            sqlx::query("DELETE FROM accessibility WHERE timestamp BETWEEN ?1 AND ?2")
-                .bind(&start_str)
-                .bind(&end_str)
-                .execute(&mut **tx.conn())
-                .await?;
-        let accessibility_deleted = accessibility_result.rows_affected();
+        // 11. accessibility table was dropped by migration 20260312000000
+        let accessibility_deleted: u64 = 0;
 
         // 12. Delete ui_events
         let ui_events_result =
@@ -4901,14 +4910,8 @@ impl DatabaseManager {
 
         // NO orphan audio_chunks cleanup here — done separately
 
-        // Delete accessibility records
-        let accessibility_result =
-            sqlx::query("DELETE FROM accessibility WHERE timestamp BETWEEN ?1 AND ?2")
-                .bind(&start_str)
-                .bind(&end_str)
-                .execute(&mut **tx.conn())
-                .await?;
-        let accessibility_deleted = accessibility_result.rows_affected();
+        // accessibility table was dropped by migration 20260312000000
+        let accessibility_deleted: u64 = 0;
 
         // Delete ui_events
         let ui_events_result =
@@ -6766,6 +6769,15 @@ LIMIT ? OFFSET ?
         Ok(row.0 > 0)
     }
 
+    pub async fn get_most_recent_active_meeting_id(&self) -> Result<Option<i64>, SqlxError> {
+        let row: Option<(i64,)> = sqlx::query_as(
+            "SELECT id FROM meetings WHERE meeting_end IS NULL ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|r| r.0))
+    }
+
     pub async fn list_meetings(
         &self,
         start_time: Option<&str>,
@@ -6831,6 +6843,7 @@ LIMIT ? OFFSET ?
         Ok(rows)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn update_meeting(
         &self,
         id: i64,
@@ -6975,7 +6988,7 @@ LIMIT ? OFFSET ?
             .to_string();
         let meeting = sqlx::query_as::<_, MeetingRecord>(
             "SELECT id, meeting_start, meeting_end, meeting_app, title, attendees, \
-             detection_source, created_at \
+             note, detection_source, created_at \
              FROM meetings \
              WHERE meeting_app = ?1 \
                AND meeting_end IS NOT NULL \
@@ -7084,6 +7097,7 @@ LIMIT ? OFFSET ?
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn list_memories(
         &self,
         query: Option<&str>,
@@ -7214,6 +7228,18 @@ LIMIT ? OFFSET ?
             .bind(end_time)
             .fetch_one(&self.pool)
             .await
+    }
+
+    pub async fn list_memory_tags(&self) -> Result<Vec<String>, SqlxError> {
+        // Tags are stored as JSON arrays. Extract all unique tag values across all memories.
+        let rows: Vec<(String,)> = sqlx::query_as(
+            "SELECT DISTINCT j.value FROM memories, json_each(memories.tags) j \
+             WHERE j.value IS NOT NULL AND j.value != '' \
+             ORDER BY j.value",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows.into_iter().map(|r| r.0).collect())
     }
 }
 

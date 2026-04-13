@@ -967,7 +967,8 @@ async trainVoice(name: string, startTime: string, endTime: string) : Promise<Res
 }
 },
 /**
- * Return cached suggestions or default idle suggestions if cache is empty.
+ * Return cached suggestions. If cache is empty (first load), generate
+ * template suggestions from current activity data so the UI is never generic.
  */
 async getCachedSuggestions() : Promise<Result<CachedSuggestions, string>> {
     try {
@@ -1026,6 +1027,17 @@ async validateLicenseKey(key: string) : Promise<Result<JsonValue, string>> {
 async getLicenseStatus() : Promise<Result<JsonValue, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("get_license_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tauri command: re-encrypt store.bin after frontend saves.
+ */
+async reencryptStore() : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("reencrypt_store") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1352,7 +1364,11 @@ scheduleEnabled?: boolean;
 /**
  * Per-day schedule rules (only used when schedule_enabled is true)
  */
-scheduleRules?: ScheduleRule[] }) & 
+scheduleRules?: ScheduleRule[]; 
+/**
+ * Require authentication for remote (non-localhost) API access.
+ */
+apiAuth?: boolean }) & 
 /**
  * Catch-all for fields added by the frontend (e.g. chatHistory)
  * that the Rust struct doesn't know about. Without this, `save()` would
@@ -1414,7 +1430,15 @@ translucentSidebar?: boolean;
  */
 uiTheme?: string }
 export type ShowRewindWindow = "Main" | { Home: { page: string | null } } | { Search: { query: string | null } } | "Onboarding" | "Chat" | "PermissionRecovery"
-export type Suggestion = { text: string }
+export type Suggestion = { text: string; 
+/**
+ * Short preview with real data (e.g. "1h20m in VS Code — auth.rs, api.rs")
+ */
+preview?: string | null; 
+/**
+ * Priority: 1 = hero card (most relevant), 2+ = supporting cards
+ */
+priority?: number }
 /**
  * Sync configuration.
  */

@@ -62,6 +62,7 @@ mod server;
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 mod space_monitor;
+mod secrets;
 mod store;
 mod suggestions;
 mod sync;
@@ -369,9 +370,21 @@ async fn main() {
 
     // Check if telemetry is disabled via store setting (analyticsEnabled) or offline mode
     let store_path = screenpipe_core::paths::default_screenpipe_data_dir().join("store.bin");
-    let store_json = std::fs::read_to_string(&store_path)
+    let store_json = std::fs::read(&store_path)
         .ok()
-        .and_then(|contents| serde_json::from_str::<serde_json::Value>(&contents).ok());
+        .and_then(|data| {
+            if data.len() >= 8 && &data[..8] == b"SPSTORE1" {
+                // Encrypted store — try to decrypt with keychain key
+                let key = match secrets::get_key() {
+                    secrets::KeyResult::Found(k) => k,
+                    _ => return None,
+                };
+                let plain = screenpipe_vault::crypto::decrypt_small(&data[8..], &key).ok()?;
+                serde_json::from_slice::<serde_json::Value>(&plain).ok()
+            } else {
+                serde_json::from_slice::<serde_json::Value>(&data).ok()
+            }
+        });
     // Helper: look up a bool key in the store JSON (check both top-level and nested "settings")
     let store_bool = |key: &str| -> Option<bool> {
         store_json.as_ref().and_then(|data| {
@@ -398,6 +411,14 @@ async fn main() {
     // This is critical because panics inside `tao::send_event` (called from Obj-C)
     // hit `panic_cannot_unwind` → `abort()`, and the default hook's output may be lost.
     // By logging here we capture the actual panic message for diagnosis.
+    //
+    // Truncate the crash log at startup so it only contains panics from THIS launch.
+    // The hook appends (not truncates) so that both the original panic and the
+    // subsequent panic_cannot_unwind are preserved in the same file.
+    {
+        let log_dir = screenpipe_core::paths::default_screenpipe_data_dir();
+        let _ = std::fs::File::create(log_dir.join("last-panic.log")); // truncate
+    }
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         // Log the actual panic first — before any processing. Once unwinding hits
@@ -434,7 +455,13 @@ async fn main() {
         // (send_event, did_finish_launching) where panic_cannot_unwind → abort()
         let log_dir = screenpipe_core::paths::default_screenpipe_data_dir();
         let crash_path = log_dir.join("last-panic.log");
-        if let Ok(mut f) = std::fs::File::create(&crash_path) {
+        // Append instead of truncate — when panic_cannot_unwind fires after
+        // the original panic, both messages are preserved in the file.
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&crash_path)
+        {
             use std::io::Write;
             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S%.3f");
             let _ = writeln!(f, "[{}] {}", timestamp, crash_msg);
@@ -464,19 +491,24 @@ async fn main() {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         if env::var("OLLAMA_ORIGINS").is_err() {
-            let output = std::process::Command::new("setx")
+            match std::process::Command::new("setx")
                 .args(&["OLLAMA_ORIGINS", "*"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
-                .expect("failed to execute process");
-
-            if !output.status.success() {
-                error!(
-                    "failed to set OLLAMA_ORIGINS: {}",
-                    String::from_utf8_lossy(&output.stderr)
-                );
-            } else {
-                info!("permanently set OLLAMA_ORIGINS=* for user");
+            {
+                Ok(output) => {
+                    if !output.status.success() {
+                        error!(
+                            "failed to set OLLAMA_ORIGINS: {}",
+                            String::from_utf8_lossy(&output.stderr)
+                        );
+                    } else {
+                        info!("permanently set OLLAMA_ORIGINS=* for user");
+                    }
+                }
+                Err(e) => {
+                    warn!("setx not available, skipping OLLAMA_ORIGINS setup: {}", e);
+                }
             }
         }
     }
@@ -624,6 +656,8 @@ async fn main() {
                 // License commands
                 store::validate_license_key,
                 store::get_license_status,
+                // Store encryption
+                store::reencrypt_store,
             ])
             .typ::<SettingsStore>()
             .typ::<OnboardingStore>()
@@ -820,6 +854,7 @@ async fn main() {
             commands::copy_frame_to_clipboard,
             commands::copy_deeplink_to_clipboard,
             commands::copy_text_to_clipboard,
+            commands::open_note_path,
             // Overlay commands (Windows)
             commands::enable_overlay_click_through,
             commands::disable_overlay_click_through,
@@ -915,6 +950,7 @@ async fn main() {
             // License commands
             store::validate_license_key,
             store::get_license_status,
+            store::reencrypt_store,
         ])
         .setup(move |app| {
             //deep link register_all
@@ -969,7 +1005,7 @@ async fn main() {
                             // Defer off event stack (same as tray: runs from tao::send_event).
                             let app_for_closure = app_handle.clone();
                             let _ = app_handle.run_on_main_thread(move || {
-                                let _ = ShowRewindWindow::Home { page: None }.show(&app_for_closure);
+                                let _ = ShowRewindWindow::Home { page: Some("general".to_string()) }.show(&app_for_closure);
                             });
                         }
                         "check_for_updates" => {
@@ -1415,7 +1451,8 @@ async fn main() {
 
                             if server_running {
                                 info!("Server already running, skipping embedded server start");
-                                return; // is_starting stays true — the running server is fine
+                                is_starting_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+                                return;
                             }
 
                             // Check permissions before starting
@@ -1505,7 +1542,7 @@ async fn main() {
 
             debug!(
                 "registered for autostart? {}",
-                autostart_manager.is_enabled().unwrap()
+                autostart_manager.is_enabled().unwrap_or(false)
             );
 
             // Use persistent analytics_id for PostHog (consistent across frontend and backend)
@@ -1571,11 +1608,13 @@ async fn main() {
                     if store.enhanced_ai {
                         let token = store.user.token.clone().unwrap_or_default();
                         if !token.is_empty() {
-                            let mut guard = suggestions_state.enhanced_ai.blocking_lock();
-                            *guard = Some(suggestions::EnhancedAIConfig {
-                                enabled: true,
-                                token,
-                            });
+                            // Use try_lock — blocking_lock panics inside a tokio runtime context
+                            if let Ok(mut guard) = suggestions_state.enhanced_ai.try_lock() {
+                                *guard = Some(suggestions::EnhancedAIConfig {
+                                    enabled: true,
+                                    token,
+                                });
+                            }
                         }
                     }
                 }

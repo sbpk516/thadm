@@ -23,6 +23,7 @@ import { convertFileSrc } from "@tauri-apps/api/core";
 import { AIPresetsSelector } from "@/components/rewind/ai-presets-selector";
 import { AIPreset } from "@/lib/utils/tauri";
 import remarkGfm from "remark-gfm";
+import rehypeRaw from "rehype-raw";
 // OpenAI SDK no longer used directly — all providers route through Pi agent
 import posthog from "posthog-js";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
@@ -132,12 +133,14 @@ BEHAVIOR RULES:
 - Act immediately on clear requests. NEVER ask for confirmation when the user's intent is obvious.
 - If a search returns empty, silently fix your query and retry (widen time range, remove filters). Do NOT list "possibilities" or ask the user what to do.
 - Be concise. Cite timestamps when relevant. Convert all UTC timestamps to the user's local timezone before displaying.
+- Never show raw process names (.exe) to the user. Translate to human-readable app names — strip the .exe suffix and title-case if unknown.
+- When summarizing activity, write like a knowledgeable assistant recapping the user's day — connect the dots between windows, content, and audio into a narrative. Name specific projects, files, people, and URLs. Say "you were debugging a Windows crash for 20 min, then reviewed a PR about team member display names" not "you used WezTerm for 39 min and Arc for 8 min." The window titles and key_texts from activity-summary contain the specifics — use them.
 
 TOOL SELECTION (use the right tool for the job):
 - "meeting", "call", "conversation", "what did I/they say" → search with content_type: "audio", NO q param
 - "how long", "time spent", "which apps", "most used" → use activity-summary (NOT raw frame counts or SQL)
 - "what was on screen", "what was I reading/looking at" → search with content_type: "all" or "accessibility"
-- Broad overview ("what was I doing?") → activity-summary FIRST, then drill into search-content
+- Broad overview ("what was I doing?") → activity-summary FIRST. The windows field shows exactly what the user was working on (window titles, URLs, time per tab). Usually sufficient without further searches.
 
 CRITICAL SEARCH RULES (database has 600k+ entries):
 1. ALWAYS include start_time in EVERY search - NEVER search without a time range
@@ -172,14 +175,18 @@ FULL API REFERENCE:
 For the complete list of 60+ screenpipe API endpoints (frames, audio, pipes, tags, etc.), fetch: https://docs.screenpi.pe/llms-full.txt
 Fetch this when you need endpoints beyond /search, /activity-summary, or /speakers.
 
-VISUALIZATION:
-When the user asks for diagrams, flowcharts, or visualizations, generate Mermaid diagrams using fenced code blocks with the "mermaid" language tag.
-
 DEEP LINKS & MEDIA:
 - Frame (PREFERRED): [10:30 AM — Chrome](thadm://frame/12345) — use frame_id from screen text search results. NEVER invent frame IDs.
 - Timeline (audio only): [meeting at 3pm](thadm://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from audio search results.
 - Video/Image: use markdown ![description](/path/to/file.mp4)
 NEVER fabricate frame IDs or timestamps — only use values from actual search results.
+
+RENDERING COMPONENTS:
+You can embed these in your response when they genuinely add value. Don't force them into simple answers.
+
+- Mermaid diagrams: \`\`\`mermaid fenced blocks for flowcharts, sequence diagrams, timelines.
+- App usage breakdown: \`\`\`app-stats fenced blocks, one row per app, format "App Name|minutes_as_decimal". Deduplicate — merge variants like "discord.exe" and "Discord" into one row with summed minutes.
+- Collapsible sections: <details><summary>label</summary> content </details> for optional / secondary info the user can expand.
 
 Current time: ${now.toISOString()}
 User's timezone: ${timezone} (UTC${offsetStr})
@@ -517,6 +524,98 @@ function ThinkingBlock({ text, isThinking, durationMs }: { text: string; isThink
   );
 }
 
+// --- App stats helpers ---
+
+const APP_STAT_COLORS = [
+  "#3b82f6", "#8b5cf6", "#ec4899", "#f97316", "#14b8a6",
+  "#06b6d4", "#84cc16", "#f59e0b", "#6366f1", "#ef4444",
+];
+
+function nameToColor(name: string): string {
+  let hash = 0;
+  for (let i = 0; i < name.length; i++) {
+    hash = (hash * 31 + name.charCodeAt(i)) & 0xffffffff;
+  }
+  return APP_STAT_COLORS[Math.abs(hash) % APP_STAT_COLORS.length];
+}
+
+function formatMinutes(minutes: number): string {
+  if (minutes < 1) return "<1m";
+  if (minutes < 60) return `${Math.round(minutes)}m`;
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return m > 0 ? `${h}h ${m}m` : `${h}h`;
+}
+
+function AppIcon({ name }: { name: string }) {
+  const color = nameToColor(name);
+  const [iconFailed, setIconFailed] = React.useState(false);
+  const iconUrl = `http://localhost:11435/app-icon?name=${encodeURIComponent(name)}`;
+  return (
+    <div className="w-5 h-5 rounded-sm flex-shrink-0 flex items-center justify-center overflow-hidden">
+      {iconFailed ? (
+        <span
+          className="w-full h-full flex items-center justify-center text-[10px] font-semibold text-white rounded-sm"
+          style={{ backgroundColor: color }}
+        >
+          {name.charAt(0).toUpperCase()}
+        </span>
+      ) : (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={iconUrl}
+          alt={name}
+          className="w-full h-full object-contain"
+          onError={() => setIconFailed(true)}
+        />
+      )}
+    </div>
+  );
+}
+
+function AppStatsBlock({ content }: { content: string }) {
+  const items = content
+    .trim()
+    .split("\n")
+    .map((line) => {
+      const [app, mins] = line.split("|");
+      return { app: app?.trim() ?? "", minutes: parseFloat(mins?.trim() ?? "0") };
+    })
+    .filter((item) => item.app && !isNaN(item.minutes) && item.minutes > 0);
+
+  if (items.length === 0) return null;
+
+  const maxMinutes = Math.max(...items.map((i) => i.minutes));
+
+  return (
+    <div className="space-y-2 px-3 pt-1 pb-3">
+      {items.map(({ app, minutes }) => {
+        const color = nameToColor(app);
+        const pct = maxMinutes > 0 ? (minutes / maxMinutes) * 100 : 0;
+        return (
+          <div key={app} className="flex items-center gap-2.5">
+            <AppIcon name={app} />
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between mb-1">
+                <span className="text-xs text-foreground truncate">{app}</span>
+                <span className="text-xs tabular-nums text-muted-foreground ml-2 shrink-0">
+                  {formatMinutes(minutes)}
+                </span>
+              </div>
+              <div className="h-[2px] bg-border rounded-full overflow-hidden">
+                <div
+                  className="h-full rounded-full transition-all"
+                  style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.6 }}
+                />
+              </div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // Markdown renderer for text blocks
 function MarkdownBlock({ text, isUser }: { text: string; isUser: boolean }) {
   return (
@@ -528,9 +627,37 @@ function MarkdownBlock({ text, isUser }: { text: string; isUser: boolean }) {
           : "dark:prose-invert"
       )}
       remarkPlugins={[remarkGfm]}
+      rehypePlugins={[rehypeRaw]}
       components={{
         p({ children }) {
           return <p className="mb-2 last:mb-0 leading-relaxed">{children}</p>;
+        },
+        details({ children, ...props }) {
+          return (
+            <details
+              className="mt-4 border border-border rounded-md overflow-hidden not-prose"
+              {...(props as React.HTMLAttributes<HTMLDetailsElement>)}
+            >
+              {children}
+            </details>
+          );
+        },
+        summary({ children, ...props }) {
+          return (
+            <summary
+              className="px-3 py-2 text-xs font-medium text-muted-foreground cursor-pointer select-none list-none flex items-center gap-2 hover:bg-muted/50 hover:text-foreground transition-colors"
+              {...(props as React.HTMLAttributes<HTMLElement>)}
+            >
+              <svg
+                className="w-2.5 h-2.5 transition-transform [[open]_&]:rotate-90"
+                viewBox="0 0 6 10"
+                fill="currentColor"
+              >
+                <path d="M1 1l4 4-4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" fill="none" />
+              </svg>
+              {children}
+            </summary>
+          );
         },
         a({ href, children, ...props }) {
           const isMediaLink = href?.toLowerCase().match(/\.(mp4|mp3|wav|webm)$/);
@@ -633,6 +760,10 @@ function MarkdownBlock({ text, isUser }: { text: string; isUser: boolean }) {
 
           if (language === "mermaid") {
             return <MermaidDiagram chart={content} />;
+          }
+
+          if (language === "app-stats") {
+            return <AppStatsBlock content={content} />;
           }
 
           if (isMedia) {
@@ -899,7 +1030,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   const { settings, updateSettings, isSettingsLoaded, reloadStore } = useSettings();
   const { isMac } = usePlatform();
   const { items: appItems } = useSqlAutocomplete("app");
-  const { suggestions: autoSuggestions } = useAutoSuggestions();
+  const { suggestions: autoSuggestions, refreshing: suggestionsRefreshing, forceRefresh: refreshSuggestions } = useAutoSuggestions();
   const { templatePipes, loading: pipesLoading } = usePipes();
 
   // Custom summary templates (persisted in settings)
@@ -3219,6 +3350,8 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           <SummaryCards
             onSendMessage={sendMessage}
             autoSuggestions={autoSuggestions}
+            suggestionsRefreshing={suggestionsRefreshing}
+            onRefreshSuggestions={refreshSuggestions}
             customTemplates={customTemplates}
             onSaveCustomTemplate={saveCustomTemplate}
             onDeleteCustomTemplate={deleteCustomTemplate}
@@ -3555,20 +3688,28 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           )}
         </AnimatePresence>
 
-        {/* Auto-suggestions above input */}
+        {/* Persistent auto-suggestions above input */}
         {messages.length > 0 && !isLoading && autoSuggestions.length > 0 && (
-          <div className="px-3 pt-2 flex flex-wrap gap-1.5">
-            {autoSuggestions.slice(0, 3).map((s, i) => (
+          <div className="px-3 pt-2 flex flex-wrap gap-1.5 items-center">
+            {autoSuggestions.slice(0, 4).map((s, i) => (
               <button
                 key={i}
                 type="button"
                 onClick={() => sendMessage(s.text)}
-                className="px-2.5 py-1 text-[11px] bg-muted/20 hover:bg-muted/50 rounded-full border border-border/20 hover:border-border/50 text-muted-foreground hover:text-foreground transition-colors cursor-pointer max-w-[280px] truncate"
-                title={s.text}
+                className="px-2.5 py-1 text-[11px] font-mono bg-muted/20 hover:bg-foreground hover:text-background border border-border/20 hover:border-foreground text-muted-foreground transition-all duration-150 cursor-pointer max-w-[280px] truncate"
+                title={s.preview ? `${s.text} — ${s.preview}` : s.text}
               >
                 {s.text}
               </button>
             ))}
+            <button
+              onClick={refreshSuggestions}
+              disabled={suggestionsRefreshing}
+              className="p-0.5 text-muted-foreground/30 hover:text-foreground transition-colors duration-150 disabled:opacity-30 cursor-pointer"
+              title="refresh suggestions"
+            >
+              <RefreshCw className={`w-3 h-3 ${suggestionsRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+            </button>
           </div>
         )}
 

@@ -11,14 +11,14 @@ use crate::{
 use tauri::{Emitter, Manager};
 use tracing::{debug, error, info, warn};
 
-use std::sync::OnceLock;
-
 /// Global app handle stored so the native notification action callback can emit events.
-static GLOBAL_APP_HANDLE: OnceLock<tauri::AppHandle> = OnceLock::new();
+#[cfg(target_os = "macos")]
+static GLOBAL_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::OnceLock::new();
 
 /// Callback invoked from Swift when user clicks a notification action.
 /// Handles "manage" directly in Rust (opens home window to notifications settings).
 /// Other actions are forwarded as Tauri events to JS.
+#[cfg(target_os = "macos")]
 extern "C" fn native_notif_action_callback(json_ptr: *const std::os::raw::c_char) {
     if json_ptr.is_null() {
         return;
@@ -57,6 +57,7 @@ extern "C" fn native_notif_action_callback(json_ptr: *const std::os::raw::c_char
 }
 
 /// Callback invoked from Swift when user clicks a shortcut reminder action.
+#[cfg(target_os = "macos")]
 extern "C" fn native_shortcut_action_callback(action_ptr: *const std::os::raw::c_char) {
     if action_ptr.is_null() {
         return;
@@ -92,6 +93,31 @@ extern "C" fn native_shortcut_action_callback(action_ptr: *const std::os::raw::c
                     native_shortcut_reminder::hide();
                 }
                 "toggle_meeting" => {
+                    // Directly call the meetings API instead of relying on JS
+                    // (the Main window may not be loaded when using the Swift overlay)
+                    let status: Option<bool> =
+                        reqwest::blocking::get("http://localhost:3030/meetings/status")
+                            .ok()
+                            .and_then(|r| r.json::<serde_json::Value>().ok())
+                            .and_then(|v| v["active"].as_bool());
+                    match status {
+                        Some(true) => {
+                            let _ = reqwest::blocking::Client::new()
+                                .post("http://localhost:3030/meetings/stop")
+                                .send();
+                        }
+                        Some(false) => {
+                            let _ = reqwest::blocking::Client::new()
+                                .post("http://localhost:3030/meetings/start")
+                                .header("Content-Type", "application/json")
+                                .body(r#"{"app":"manual"}"#)
+                                .send();
+                        }
+                        None => {
+                            warn!("failed to check meeting status");
+                        }
+                    }
+                    // Also emit to JS so the home page UI updates immediately if open
                     let _ = app_clone.emit("native-shortcut-toggle-meeting", "");
                 }
                 _ => {}
@@ -721,14 +747,14 @@ pub async fn show_window(
 /// gestures (magnifyWithEvent:) reach the WKWebView for zoom handling.
 #[tauri::command]
 #[specta::specta]
-pub async fn ensure_webview_focus(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn ensure_webview_focus(_app_handle: tauri::AppHandle) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     {
         use crate::window::run_on_main_thread_safe;
         use tauri_nspanel::ManagerExt;
 
-        let app = app_handle.clone();
-        run_on_main_thread_safe(&app_handle, move || {
+        let app = _app_handle.clone();
+        run_on_main_thread_safe(&_app_handle, move || {
             for label in &["main", "main-window"] {
                 if let Ok(panel) = app.get_webview_panel(label) {
                     unsafe {
@@ -940,7 +966,7 @@ pub async fn complete_onboarding(app_handle: tauri::AppHandle) -> Result<(), Str
 
     tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
     close_window(app_handle.clone(), ShowRewindWindow::Onboarding).await?;
-    show_window(app_handle.clone(), ShowRewindWindow::Main).await?;
+    show_window(app_handle.clone(), ShowRewindWindow::Home { page: None }).await?;
 
     Ok(())
 }
@@ -1096,9 +1122,13 @@ pub async fn show_shortcut_reminder(
         }
     };
 
-    // If window exists, reposition to current screen and show
+    // If window exists, resize, reposition to current screen, and show
     if let Some(window) = app_handle.get_webview_window(label) {
-        info!("shortcut-reminder window exists, repositioning and showing");
+        info!("shortcut-reminder window exists, resizing/repositioning and showing");
+        let _ = window.set_size(tauri::Size::Logical(tauri::LogicalSize::new(
+            window_width,
+            window_height,
+        )));
         let _ = window.set_position(tauri::Position::Logical(tauri::LogicalPosition::new(x, y)));
         let _ = app_handle.emit_to(label, "shortcut-reminder-update", &shortcut);
         let _ = window.show();
@@ -1762,6 +1792,53 @@ pub async fn copy_text_to_clipboard(text: String) -> Result<(), String> {
         .set_text(text)
         .map_err(|e| format!("failed to set clipboard: {}", e))?;
     Ok(())
+}
+
+/// Open a local markdown note in Obsidian (if available), then fallback to OS default app.
+#[tauri::command]
+#[specta::specta]
+pub async fn open_note_path(path: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        let obsidian_uri = format!("obsidian://open?path={}", urlencoding::encode(&path));
+        // Treat successful process launch as success. `open` can return
+        // non-zero even when LaunchServices still opens the target app.
+        if Command::new("open").arg(&obsidian_uri).spawn().is_ok()
+            || Command::new("open").arg(&path).spawn().is_ok()
+        {
+            Ok(())
+        } else {
+            Err(format!("failed to open note path: {}", path))
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        let obsidian_uri = format!("obsidian://open?path={}", urlencoding::encode(&path));
+        if Command::new("cmd")
+            .args(["/C", "start", "", &obsidian_uri])
+            .spawn()
+            .is_ok()
+            || Command::new("cmd")
+                .args(["/C", "start", "", &path])
+                .spawn()
+                .is_ok()
+        {
+            Ok(())
+        } else {
+            Err(format!("failed to open note path: {}", path))
+        }
+    }
+    #[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
+    {
+        use std::process::Command;
+        if Command::new("xdg-open").arg(&path).spawn().is_ok() {
+            Ok(())
+        } else {
+            Err(format!("failed to open note path: {}", path))
+        }
+    }
 }
 
 #[tauri::command]

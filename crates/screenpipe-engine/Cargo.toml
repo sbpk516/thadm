@@ -25,6 +25,7 @@ screenpipe-apple-intelligence = { path = "../screenpipe-apple-intelligence", opt
 screenpipe-config = { path = "../screenpipe-config" }
 screenpipe-connect = { path = "../screenpipe-connect" }
 screenpipe-vault = { path = "../screenpipe-vault" }
+screenpipe-secrets = { path = "../screenpipe-secrets" }
 
 
 # Image processing
@@ -50,7 +51,7 @@ moka = { version = "0.12", features = ["future"] }
 sentry = { workspace = true }
 
 # Server
-axum = { version = "0.7.5", features = ["ws"] }
+axum = { version = "0.7.5", features = ["ws", "multipart"] }
 http-body-util = "0.1"
 tokio = { version = "1.15", features = ["full", "tracing"] }
 tokio-stream = "0.1"
