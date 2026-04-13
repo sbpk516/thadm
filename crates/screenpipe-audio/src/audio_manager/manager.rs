@@ -95,6 +95,15 @@ pub struct AudioManager {
     on_transcription_insert: Option<crate::transcription::AudioInsertCallback>,
     /// Unified transcription engine. Set after model loading in start_audio_receiver_handler.
     engine: Arc<RwLock<Option<TranscriptionEngine>>>,
+    /// Handle to the reconciliation background task so we can abort it on shutdown.
+    reconciliation_handle: Arc<RwLock<Option<JoinHandle<()>>>>,
+    /// Output devices temporarily stopped due to DRM content detection.
+    /// Stored so they can be restarted when DRM clears.
+    drm_stopped_devices: Arc<RwLock<Vec<AudioDevice>>>,
+    /// Devices explicitly disabled by the user via the API/UI.
+    /// The device monitor must never auto-start devices in this set.
+    /// Cleared on global start/stop but preserved across reconnects.
+    user_disabled_devices: Arc<RwLock<HashSet<String>>>,
 }
 
 /// Result of checking / restarting the two central handler tasks.
@@ -109,17 +118,21 @@ pub struct CentralHandlerRestartResult {
 impl AudioManager {
     pub async fn new(options: AudioManagerOptions, db: Arc<DatabaseManager>) -> Result<Self> {
         let device_manager = DeviceManager::new().await?;
-        let segmentation_manager = Arc::new(SegmentationManager::new().await?);
+        let segmentation_manager = Arc::new(SegmentationManager::new(options.is_disabled).await?);
         let status = RwLock::new(AudioManagerStatus::Stopped);
-        let vad_engine: Arc<Mutex<Box<dyn VadEngine + Send>>> = match options.vad_engine {
-            VadEngineEnum::Silero => match SileroVad::new().await {
-                Ok(vad) => Arc::new(Mutex::new(Box::new(vad))),
-                Err(e) => {
-                    warn!("silero vad unavailable, falling back to webrtc: {}", e);
-                    Arc::new(Mutex::new(Box::new(WebRtcVad::new())))
-                }
-            },
-            VadEngineEnum::WebRtc => Arc::new(Mutex::new(Box::new(WebRtcVad::new()))),
+        let vad_engine: Arc<Mutex<Box<dyn VadEngine + Send>>> = if options.is_disabled {
+            Arc::new(Mutex::new(Box::new(WebRtcVad::new())))
+        } else {
+            match options.vad_engine {
+                VadEngineEnum::Silero => match SileroVad::new().await {
+                    Ok(vad) => Arc::new(Mutex::new(Box::new(vad))),
+                    Err(e) => {
+                        warn!("silero vad unavailable, falling back to webrtc: {}", e);
+                        Arc::new(Mutex::new(Box::new(WebRtcVad::new())))
+                    }
+                },
+                VadEngineEnum::WebRtc => Arc::new(Mutex::new(Box::new(WebRtcVad::new()))),
+            }
         };
 
         let channel_config = &options.channel_config;
@@ -151,6 +164,9 @@ impl AudioManager {
             transcription_paused: Arc::new(AtomicBool::new(false)),
             on_transcription_insert: None,
             engine: Arc::new(RwLock::new(None)),
+            reconciliation_handle: Arc::new(RwLock::new(None)),
+            drm_stopped_devices: Arc::new(RwLock::new(Vec::new())),
+            user_disabled_devices: Arc::new(RwLock::new(HashSet::new())),
         };
 
         Ok(manager)
@@ -188,7 +204,7 @@ impl AudioManager {
             let options_ref = self.options.clone();
             let seg_mgr = self.segmentation_manager.clone();
             let output_path_bg = self.options.read().await.output_path.clone();
-            tokio::spawn(async move {
+            let handle = tokio::spawn(async move {
                 // Wait for model to load + initial recordings
                 tokio::time::sleep(Duration::from_secs(120)).await;
                 loop {
@@ -196,27 +212,15 @@ impl AudioManager {
                     if let Some(ref transcription_engine) = *engine_guard {
                         let opts = options_ref.read().await;
                         let audio_engine = opts.transcription_engine.clone();
-                        let key = opts.deepgram_api_key.clone();
-                        let openai_config = opts.openai_compatible_config.clone();
-                        let langs = opts.languages.clone();
-                        let vocab = opts.vocabulary.clone();
                         let batch_max_dur = opts.batch_max_duration_secs;
                         drop(opts);
-
-                        // Get whisper context from transcription engine
-                        let whisper_ctx = transcription_engine.whisper_context();
 
                         let data_dir = output_path_bg.as_deref();
                         let count = super::reconciliation::reconcile_untranscribed(
                             &db,
                             transcription_engine,
                             on_insert_bg.as_ref(),
-                            whisper_ctx,
                             audio_engine,
-                            key,
-                            openai_config,
-                            langs,
-                            &vocab,
                             Some(seg_mgr.clone()),
                             data_dir,
                             batch_max_dur,
@@ -230,6 +234,7 @@ impl AudioManager {
                     tokio::time::sleep(Duration::from_secs(120)).await;
                 }
             });
+            *self.reconciliation_handle.write().await = Some(handle);
         }
 
         start_device_monitor(self_arc.clone(), self.device_manager.clone()).await?;
@@ -263,6 +268,32 @@ impl AudioManager {
 
         stop_device_monitor().await?;
 
+        // Stop producers FIRST: abort per-device recording tasks and the OS audio streams.
+        // This must happen before killing the consumer so any audio already queued in the
+        // crossbeam channel (including the final 30s flush) can still be drained.
+        for pair in self.recording_handles.iter() {
+            let handle = pair.value();
+            handle.lock().await.abort();
+        }
+        self.recording_handles.clear();
+        self.device_manager.stop_all_devices().await?;
+
+        // Drain the channel: wait until the pipeline handler has consumed all queued chunks
+        // (or a hard timeout expires). The early persist — file write + DB insert — happens
+        // at the very start of each chunk's processing, before any deferral decision.
+        // A 5s window is enough: the persist itself takes <100ms per chunk.
+        const DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+        const DRAIN_POLL: Duration = Duration::from_millis(100);
+        let drain_start = std::time::Instant::now();
+        while drain_start.elapsed() < DRAIN_TIMEOUT {
+            if self.recording_receiver.is_empty() {
+                break;
+            }
+            tokio::time::sleep(DRAIN_POLL).await;
+        }
+
+        // Now it is safe to kill the consumer — any remaining chunks are already persisted
+        // to disk and the DB, so the background reconciliation sweep will transcribe them.
         let mut recording_receiver_handle = self.recording_receiver_handle.write().await;
         if let Some(handle) = recording_receiver_handle.take() {
             handle.abort();
@@ -273,13 +304,6 @@ impl AudioManager {
             handle.abort();
         }
 
-        for pair in self.recording_handles.iter() {
-            let handle = pair.value();
-            handle.lock().await.abort();
-        }
-
-        self.recording_handles.clear();
-        self.device_manager.stop_all_devices().await?;
         info!("audio manager stopped");
         Ok(())
     }
@@ -310,15 +334,32 @@ impl AudioManager {
             .enabled_devices
             .remove(device_name);
 
-        self.device_manager.stop_device(&device).await?;
+        self.stop_device_recording(&device).await
+    }
 
-        if let Some(pair) = self.recording_handles.get(&device) {
+    /// Stop a device's recording without removing it from enabled_devices.
+    /// Idempotent — safe to call on already-stopped devices.
+    async fn stop_device_recording(&self, device: &AudioDevice) -> Result<()> {
+        // Signal the recording loop to stop BEFORE aborting the handle,
+        // so it exits cleanly without triggering "stream dead" warnings.
+        if let Some(is_running) = self.device_manager.is_running_mut(device) {
+            is_running.store(false, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        // Ignore "already stopped" errors
+        if let Err(e) = self.device_manager.stop_device(device).await {
+            let msg = e.to_string();
+            if !msg.contains("already stopped") && !msg.contains("not running") {
+                return Err(e);
+            }
+        }
+
+        if let Some(pair) = self.recording_handles.get(device) {
             let handle = pair.value();
-
             handle.lock().await.abort();
         }
 
-        self.recording_handles.remove(&device);
+        self.recording_handles.remove(device);
 
         Ok(())
     }
@@ -327,7 +368,81 @@ impl AudioManager {
         self.status.read().await.clone()
     }
 
+    /// Temporarily pause a device without changing the configured device list.
+    /// Idempotent — safe to call if already paused. Never errors.
+    pub async fn pause_device(&self, device_name: &str) -> Result<()> {
+        // Mark as disabled FIRST so no monitor path can race and restart it
+        self.user_disabled_devices
+            .write()
+            .await
+            .insert(device_name.to_string());
+
+        // Best-effort stop — ignore all errors (already stopped, not found, etc.)
+        if let Ok(device) = parse_audio_device(device_name) {
+            let _ = self.stop_device_recording(&device).await;
+        }
+        info!("user paused audio device: {}", device_name);
+        Ok(())
+    }
+
+    /// Resume a previously paused device. Idempotent — safe to call if already running.
+    pub async fn resume_device(&self, device_name: &str) -> Result<()> {
+        // Remove from disabled FIRST so start_device gate allows it
+        self.user_disabled_devices.write().await.remove(device_name);
+
+        let device = match parse_audio_device(device_name) {
+            Ok(device) => device,
+            Err(_) => return Err(anyhow!("Device {} not found", device_name)),
+        };
+        self.start_device(&device).await?;
+        info!("user resumed audio device: {}", device_name);
+        Ok(())
+    }
+
+    /// Mark a device as user-disabled. The device monitor will not auto-start it.
+    pub async fn user_disable_device(&self, device_name: &str) {
+        self.user_disabled_devices
+            .write()
+            .await
+            .insert(device_name.to_string());
+        info!("user disabled audio device: {}", device_name);
+    }
+
+    /// Remove a device from the user-disabled set, allowing auto-start again.
+    pub async fn user_enable_device(&self, device_name: &str) {
+        self.user_disabled_devices.write().await.remove(device_name);
+        info!("user re-enabled audio device: {}", device_name);
+    }
+
+    /// Returns the set of devices the user has explicitly disabled.
+    pub async fn user_disabled_devices(&self) -> HashSet<String> {
+        self.user_disabled_devices.read().await.clone()
+    }
+
     pub async fn start_device(&self, device: &AudioDevice) -> Result<()> {
+        // Don't restart devices that are paused due to DRM content detection.
+        // The monitor watcher will call start_output_devices() when DRM clears.
+        if self
+            .drm_stopped_devices
+            .read()
+            .await
+            .iter()
+            .any(|d| d == device)
+        {
+            return Ok(());
+        }
+
+        // Don't restart devices the user explicitly disabled via API/UI.
+        if self
+            .user_disabled_devices
+            .read()
+            .await
+            .contains(&device.to_string())
+        {
+            debug!("skipping auto-start of user-disabled device: {}", device);
+            return Ok(());
+        }
+
         if let Err(e) = self.device_manager.start_device(device).await {
             let err_str = e.to_string();
 
@@ -608,18 +723,12 @@ impl AudioManager {
                                     "batch mode: audio session ended, transcribing accumulated audio"
                                 );
                             }
-                            let whisper_ctx = engine.whisper_context();
                             let data_dir = output_path.as_deref();
                             let count = super::reconciliation::reconcile_untranscribed(
                                 &db,
                                 &engine,
                                 on_insert_session.as_ref(),
-                                whisper_ctx,
                                 audio_transcription_engine.clone(),
-                                deepgram_api_key.clone(),
-                                openai_compatible_config.clone(),
-                                languages.clone(),
-                                &vocabulary,
                                 Some(segmentation_manager.clone()),
                                 data_dir,
                                 batch_max_duration_secs,
@@ -645,10 +754,6 @@ impl AudioManager {
                                 embedding_manager.clone(),
                                 embedding_extractor.clone(),
                                 &output_path.clone().unwrap(),
-                                audio_transcription_engine.clone(),
-                                deepgram_api_key.clone(),
-                                openai_compatible_config.clone(),
-                                languages.clone(),
                                 &transcription_sender.clone(),
                                 &mut session,
                                 metrics.clone(),
@@ -670,10 +775,6 @@ impl AudioManager {
                             embedding_manager.clone(),
                             embedding_extractor.clone(),
                             &output_path.clone().unwrap(),
-                            audio_transcription_engine.clone(),
-                            deepgram_api_key.clone(),
-                            openai_compatible_config.clone(),
-                            languages.clone(),
                             &transcription_sender.clone(),
                             &mut session,
                             metrics.clone(),
@@ -695,10 +796,6 @@ impl AudioManager {
                         embedding_manager.clone(),
                         embedding_extractor.clone(),
                         &output_path.clone().unwrap(),
-                        audio_transcription_engine.clone(),
-                        deepgram_api_key.clone(),
-                        openai_compatible_config.clone(),
-                        languages.clone(),
                         &transcription_sender.clone(),
                         &mut session,
                         metrics.clone(),
@@ -736,6 +833,13 @@ impl AudioManager {
 
     pub async fn shutdown(&self) -> Result<()> {
         self.stop().await?;
+
+        // Abort reconciliation first — it holds an engine read-lock during transcription,
+        // so it must be cancelled before we drop the engine to avoid use-after-free.
+        if let Some(handle) = self.reconciliation_handle.write().await.take() {
+            handle.abort();
+        }
+
         let rec = self.recording_handles.clone();
         let recording = self.recording_receiver_handle.clone();
         let transcript = self.transcription_receiver_handle.clone();
@@ -764,6 +868,69 @@ impl AudioManager {
 
     pub async fn enabled_devices(&self) -> HashSet<String> {
         self.options.read().await.enabled_devices.clone()
+    }
+
+    /// Stop all SCK-based (Output) audio devices for DRM pause.
+    /// Input (microphone) devices are left running. Unlike `stop_device()`,
+    /// this does NOT remove devices from `enabled_devices` since DRM pause
+    /// is temporary.
+    pub async fn stop_output_devices(&self) -> Result<()> {
+        use crate::core::device::DeviceType;
+
+        let output_devices: Vec<AudioDevice> = self
+            .current_devices()
+            .into_iter()
+            .filter(|d| d.device_type == DeviceType::Output)
+            .collect();
+
+        if output_devices.is_empty() {
+            return Ok(());
+        }
+
+        info!(
+            "DRM: stopping {} output (SCK) audio device(s)",
+            output_devices.len()
+        );
+
+        for device in &output_devices {
+            // Stop the underlying stream
+            if let Err(e) = self.device_manager.stop_device(device).await {
+                warn!("DRM: failed to stop audio device {}: {:?}", device, e);
+            }
+
+            // Abort the recording task
+            if let Some(pair) = self.recording_handles.get(device) {
+                pair.value().lock().await.abort();
+            }
+            self.recording_handles.remove(device);
+        }
+
+        // Store stopped devices for later restart
+        *self.drm_stopped_devices.write().await = output_devices;
+
+        Ok(())
+    }
+
+    /// Restart SCK-based (Output) audio devices after DRM clears.
+    pub async fn start_output_devices(&self) -> Result<()> {
+        let devices = std::mem::take(&mut *self.drm_stopped_devices.write().await);
+
+        if devices.is_empty() {
+            return Ok(());
+        }
+
+        info!(
+            "DRM: restarting {} output (SCK) audio device(s)",
+            devices.len()
+        );
+
+        for device in &devices {
+            if let Err(e) = self.start_device(device).await {
+                warn!("DRM: failed to restart audio device {}: {:?}", device, e);
+            }
+        }
+
+        Ok(())
     }
 
     /// Returns a reference to the meeting detector, if batch mode is active.
@@ -1167,9 +1334,14 @@ impl Drop for AudioManager {
         let rec = self.recording_handles.clone();
         let recording = self.recording_receiver_handle.clone();
         let transcript = self.transcription_receiver_handle.clone();
+        let reconciliation = self.reconciliation_handle.clone();
         let device_manager = self.device_manager.clone();
 
         tokio::spawn(async move {
+            // Abort reconciliation first to stop MLX usage before engine is dropped
+            if let Some(handle) = reconciliation.write().await.take() {
+                handle.abort();
+            }
             let _ = stop_device_monitor().await;
             let _ = device_manager.stop_all_devices().await;
             if let Some(handle) = recording.write().await.take() {
@@ -1188,6 +1360,7 @@ impl Drop for AudioManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::core::device::{AudioDevice, DeviceType};
 
     #[test]
     fn test_central_handler_restart_result_defaults() {
@@ -1196,5 +1369,106 @@ mod tests {
         assert!(!result.transcription_restarted);
         assert!(result.recording_error.is_none());
         assert!(result.transcription_error.is_none());
+    }
+
+    // ── DRM stopped devices tracking tests ─────────────────────
+
+    #[tokio::test]
+    async fn test_drm_stopped_devices_initially_empty() {
+        let devices: Arc<RwLock<Vec<AudioDevice>>> = Arc::new(RwLock::new(Vec::new()));
+        assert!(devices.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_drm_stopped_devices_stores_output_only() {
+        let drm_stopped = Arc::new(RwLock::new(Vec::new()));
+
+        let input = AudioDevice::new("MacBook Pro Mic".to_string(), DeviceType::Input);
+        let output = AudioDevice::new("System Audio".to_string(), DeviceType::Output);
+        let all_devices = vec![input.clone(), output.clone()];
+
+        // Simulate stop_output_devices: filter for Output only
+        let output_devices: Vec<AudioDevice> = all_devices
+            .into_iter()
+            .filter(|d| d.device_type == DeviceType::Output)
+            .collect();
+
+        *drm_stopped.write().await = output_devices;
+
+        let stopped = drm_stopped.read().await;
+        assert_eq!(stopped.len(), 1);
+        assert_eq!(stopped[0].name, "System Audio");
+        assert_eq!(stopped[0].device_type, DeviceType::Output);
+    }
+
+    #[tokio::test]
+    async fn test_drm_stopped_devices_start_clears_list() {
+        let drm_stopped = Arc::new(RwLock::new(vec![AudioDevice::new(
+            "System Audio".to_string(),
+            DeviceType::Output,
+        )]));
+
+        // Simulate start_output_devices: take and clear
+        let devices = std::mem::take(&mut *drm_stopped.write().await);
+        assert_eq!(devices.len(), 1);
+        assert!(drm_stopped.read().await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_drm_guard_blocks_restart_of_paused_device() {
+        let drm_stopped = Arc::new(RwLock::new(vec![AudioDevice::new(
+            "System Audio".to_string(),
+            DeviceType::Output,
+        )]));
+
+        let device_to_start = AudioDevice::new("System Audio".to_string(), DeviceType::Output);
+
+        // Simulate the guard check in start_device
+        let is_drm_blocked = drm_stopped
+            .read()
+            .await
+            .iter()
+            .any(|d| d == &device_to_start);
+
+        assert!(
+            is_drm_blocked,
+            "start_device should be blocked for a DRM-paused device"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_drm_guard_allows_input_devices() {
+        let drm_stopped = Arc::new(RwLock::new(vec![AudioDevice::new(
+            "System Audio".to_string(),
+            DeviceType::Output,
+        )]));
+
+        let mic = AudioDevice::new("MacBook Pro Mic".to_string(), DeviceType::Input);
+
+        let is_drm_blocked = drm_stopped.read().await.iter().any(|d| d == &mic);
+
+        assert!(
+            !is_drm_blocked,
+            "input devices should not be blocked by DRM guard"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_drm_guard_allows_after_clear() {
+        let drm_stopped = Arc::new(RwLock::new(vec![AudioDevice::new(
+            "System Audio".to_string(),
+            DeviceType::Output,
+        )]));
+
+        // Simulate start_output_devices clearing the list
+        let _ = std::mem::take(&mut *drm_stopped.write().await);
+
+        let device = AudioDevice::new("System Audio".to_string(), DeviceType::Output);
+        let is_drm_blocked = drm_stopped.read().await.iter().any(|d| d == &device);
+
+        assert!(
+            !is_drm_blocked,
+            "after DRM clears, device should not be blocked"
+        );
     }
 }

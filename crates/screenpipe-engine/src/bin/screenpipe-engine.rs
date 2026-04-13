@@ -588,7 +588,14 @@ async fn main() -> anyhow::Result<()> {
         return Err(anyhow::anyhow!("port already in use"));
     }
 
-    let all_monitors = list_monitors().await;
+    // Only enumerate monitors when vision is enabled — on macOS, calling
+    // SCK's ShareableContent::current() triggers the "Currently Sharing"
+    // indicator in Control Center even if we never capture a frame (#2897).
+    let all_monitors = if config.disable_vision {
+        Vec::new()
+    } else {
+        list_monitors().await
+    };
 
     let mut audio_devices = Vec::new();
 
@@ -666,7 +673,10 @@ async fn main() -> anyhow::Result<()> {
     let db_server = db.clone();
 
     let warning_audio_transcription_engine_clone = record_args.audio_transcription_engine.clone();
-    let monitor_ids: Vec<u32> = if config.monitor_ids.is_empty() {
+    let monitor_ids: Vec<u32> = if config.use_all_monitors || config.monitor_ids.is_empty() {
+        all_monitors.iter().map(|m| m.id()).collect::<Vec<_>>()
+    } else if config.monitor_ids == vec!["default"] {
+        // "default" means primary monitor only — show all for display, VisionManager filters
         all_monitors.iter().map(|m| m.id()).collect::<Vec<_>>()
     } else {
         config
@@ -793,6 +803,11 @@ async fn main() -> anyhow::Result<()> {
         let trigger_tx = vision_manager.trigger_sender();
 
         let vm_clone = vision_manager.clone();
+        let audio_manager_for_drm = if !config.disable_audio {
+            Some((*audio_manager).clone())
+        } else {
+            None
+        };
         let shutdown_tx_clone2 = shutdown_tx_clone.clone();
         let runtime = &tokio::runtime::Handle::current();
         let h = runtime.spawn(async move {
@@ -804,8 +819,8 @@ async fn main() -> anyhow::Result<()> {
                 return;
             }
 
-            // Start MonitorWatcher for dynamic detection
-            if let Err(e) = start_monitor_watcher(vm_clone.clone()).await {
+            // Start MonitorWatcher for dynamic detection (with audio DRM pause support)
+            if let Err(e) = start_monitor_watcher(vm_clone.clone(), audio_manager_for_drm).await {
                 error!("Failed to start monitor watcher: {:?}", e);
             }
 
@@ -848,6 +863,44 @@ async fn main() -> anyhow::Result<()> {
     server.hot_frame_cache = Some(hot_frame_cache);
     server.power_manager = Some(power_manager);
     server.manual_meeting = Some(manual_meeting.clone());
+    server.api_auth = config.api_auth;
+    server.api_auth_key = config.api_auth_key.clone();
+
+    // Initialize secret store for unified credential management
+    {
+        let secret_store_result = screenpipe_secrets::SecretStore::new(db.pool.clone(), None).await;
+        match secret_store_result {
+            Ok(store) => {
+                // Run startup permission sweep
+                let fixed = screenpipe_secrets::fix_secret_file_permissions(&local_data_dir);
+                if fixed > 0 {
+                    info!("fixed permissions on {} credential files", fixed);
+                }
+
+                // Run legacy migration
+                match screenpipe_secrets::migrate_legacy_secrets(&store, &local_data_dir).await {
+                    Ok(report) => {
+                        if !report.migrated.is_empty() {
+                            info!(
+                                "migrated {} legacy secrets: {:?}",
+                                report.migrated.len(),
+                                report.migrated
+                            );
+                        }
+                        if !report.errors.is_empty() {
+                            warn!("secret migration errors: {:?}", report.errors);
+                        }
+                    }
+                    Err(e) => warn!("legacy secret migration failed: {}", e),
+                }
+
+                server.secret_store = Some(Arc::new(store));
+            }
+            Err(e) => {
+                warn!("failed to initialize secret store: {}", e);
+            }
+        }
+    }
 
     // Attach sync handle if sync is enabled
     let server = if let Some(ref handle) = sync_service_handle {
@@ -947,6 +1000,10 @@ async fn main() -> anyhow::Result<()> {
     println!(
         "│ vision disabled        │ {:<34} │",
         record_args.disable_vision
+    );
+    println!(
+        "│ pause on DRM content   │ {:<34} │",
+        record_args.pause_on_drm_content
     );
     println!(
         "│ audio engine           │ {:<34} │",
@@ -1143,9 +1200,18 @@ async fn main() -> anyhow::Result<()> {
     // start recording after all this text
     if !config.disable_audio {
         let audio_manager_clone = audio_manager.clone();
+        let drm_pause = config.pause_on_drm_content;
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(10)).await;
             audio_manager_clone.start().await.unwrap();
+            // If DRM content was already focused at launch, the DRM callback
+            // fired before audio was ready. Stop the output device now so we
+            // don't hold an SCK session while DRM is active.
+            if drm_pause && screenpipe_engine::drm_detector::drm_content_paused() {
+                if let Err(e) = audio_manager_clone.stop_output_devices().await {
+                    tracing::warn!("failed to stop SCK audio after late DRM detection: {:?}", e);
+                }
+            }
         });
     }
 
@@ -1153,7 +1219,14 @@ async fn main() -> anyhow::Result<()> {
     let ui_recorder_handle = {
         if ui_recorder_config.enabled {
             info!("starting UI event capture");
-            match start_ui_recording(db.clone(), ui_recorder_config, capture_trigger_tx).await {
+            match start_ui_recording(
+                db.clone(),
+                ui_recorder_config,
+                capture_trigger_tx,
+                record_args.ignored_windows.clone(),
+            )
+            .await
+            {
                 Ok(handle) => Some(handle),
                 Err(e) => {
                     error!("failed to start UI event recording: {}", e);

@@ -83,3 +83,4 @@ ee/
 # Build logs
 .thadm-build.log
 .thadm-dev-build.log
+.serena/

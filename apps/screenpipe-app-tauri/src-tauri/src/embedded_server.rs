@@ -72,10 +72,10 @@ impl EmbeddedServerHandle {
         // device is released cleanly (avoids SIGABRT in C++ static destructors).
         if let Some(audio_manager) = self.audio_manager.take() {
             info!("Shutting down audio manager (releasing ggml Metal resources)...");
-            match tokio::time::timeout(Duration::from_secs(5), audio_manager.shutdown()).await {
+            match tokio::time::timeout(Duration::from_secs(15), audio_manager.shutdown()).await {
                 Ok(Ok(())) => info!("Audio manager shut down cleanly"),
                 Ok(Err(e)) => warn!("Audio manager shutdown error: {:?}", e),
-                Err(_) => warn!("Audio manager shutdown timed out after 5s"),
+                Err(_) => warn!("Audio manager shutdown timed out after 15s"),
             }
             drop(audio_manager);
         }
@@ -219,14 +219,6 @@ pub async fn start_embedded_server(
         .transcription_mode(config.transcription_mode.clone())
         .openai_compatible_config(openai_compatible_config);
 
-    // When audio is disabled, override transcription engine to Disabled.
-    // This downloads a 40MB tiny placeholder instead of the 834MB default model.
-    // The AudioManager type still requires a model path, but it's never used for inference.
-    if config.disable_audio {
-        audio_manager_builder =
-            audio_manager_builder.transcription_engine(AudioTranscriptionEngine::Disabled);
-    }
-
     if let Some(ref detector) = meeting_detector {
         audio_manager_builder = audio_manager_builder.meeting_detector(detector.clone());
     }
@@ -324,6 +316,11 @@ pub async fn start_embedded_server(
 
         let vm_clone = vision_manager.clone();
         let shutdown_rx = shutdown_tx_clone.subscribe();
+        let audio_manager_for_drm = if !config.disable_audio {
+            Some((*audio_manager).clone())
+        } else {
+            None
+        };
 
         tokio::spawn(async move {
             let mut shutdown_rx = shutdown_rx;
@@ -335,8 +332,8 @@ pub async fn start_embedded_server(
             }
             info!("VisionManager started successfully");
 
-            // Start MonitorWatcher for dynamic detection
-            if let Err(e) = start_monitor_watcher(vm_clone.clone()).await {
+            // Start MonitorWatcher for dynamic detection (with audio DRM pause support)
+            if let Err(e) = start_monitor_watcher(vm_clone.clone(), audio_manager_for_drm).await {
                 error!("Failed to start monitor watcher: {:?}", e);
             }
             info!("Monitor watcher started - will detect connect/disconnect");
@@ -356,10 +353,19 @@ pub async fn start_embedded_server(
     // Start audio recording
     if !config.disable_audio {
         let audio_manager_clone = audio_manager.clone();
+        let drm_pause = config.pause_on_drm_content;
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_secs(1)).await;
             if let Err(e) = audio_manager_clone.start().await {
                 error!("Failed to start audio manager: {}", e);
+            }
+            // If DRM content was already focused at launch, the DRM callback
+            // fired before audio was ready. Stop the output device now so we
+            // don't hold an SCK session while DRM is active.
+            if drm_pause && screenpipe_engine::drm_detector::drm_content_paused() {
+                if let Err(e) = audio_manager_clone.stop_output_devices().await {
+                    warn!("failed to stop SCK audio after late DRM detection: {:?}", e);
+                }
             }
         });
     }
@@ -369,7 +375,14 @@ pub async fn start_embedded_server(
     let ui_recorder_handle = {
         let ui_config = config.to_ui_recorder_config();
         let db_clone = db.clone();
-        match start_ui_recording(db_clone, ui_config, capture_trigger_tx).await {
+        match start_ui_recording(
+            db_clone,
+            ui_config,
+            capture_trigger_tx,
+            config.ignored_windows.clone(),
+        )
+        .await
+        {
             Ok(handle) => {
                 info!("UI event recording started successfully");
                 // Register stop flag with DRM detector so it can stop the UI recorder
@@ -447,6 +460,40 @@ pub async fn start_embedded_server(
     server.hot_frame_cache = Some(hot_frame_cache);
     server.power_manager = Some(power_manager);
     server.manual_meeting = Some(manual_meeting);
+    server.api_auth = config.api_auth;
+    server.api_auth_key = config.api_auth_key.clone();
+
+    // Initialize secret store for unified credential management
+    {
+        let secret_key = match crate::secrets::get_or_create_key() {
+            Some(k) => Some(k),
+            None => {
+                warn!("keychain unavailable — secret store will not encrypt");
+                None
+            }
+        };
+        match screenpipe_secrets::SecretStore::new(db.pool.clone(), secret_key).await {
+            Ok(store) => {
+                let fixed =
+                    screenpipe_secrets::fix_secret_file_permissions(&config.data_dir);
+                if fixed > 0 {
+                    info!("fixed permissions on {} credential files", fixed);
+                }
+                match screenpipe_secrets::migrate_legacy_secrets(&store, &config.data_dir).await {
+                    Ok(report) => {
+                        if !report.migrated.is_empty() {
+                            info!("migrated {} legacy secrets", report.migrated.len());
+                        }
+                    }
+                    Err(e) => warn!("legacy secret migration failed: {}", e),
+                }
+                server.secret_store = Some(std::sync::Arc::new(store));
+            }
+            Err(e) => {
+                warn!("failed to initialize secret store: {}", e);
+            }
+        }
+    }
 
     // Initialize pipe manager
     let pipes_dir = config.data_dir.join("pipes");
@@ -500,25 +547,9 @@ pub async fn start_embedded_server(
     let pipe_manager_for_shutdown = shared_pipe_manager.clone();
     let server = server.with_pipe_manager(shared_pipe_manager);
 
-    // Start workflow event classifier if enabled (cloud feature)
-    if config.enable_workflow_events {
-        if let Some(ref token) = config.user_id {
-            if !token.is_empty() {
-                let token_for_classifier = token.clone();
-                let local_port = config.port;
-                tokio::spawn(async move {
-                    screenpipe_engine::workflow_classifier::start_workflow_classifier(
-                        screenpipe_engine::workflow_classifier::DEFAULT_CLASSIFIER_URL.to_string(),
-                        token_for_classifier,
-                        local_port,
-                        std::time::Duration::from_secs(30),
-                    )
-                    .await;
-                });
-                tracing::info!("workflow event classifier started (30s polling)");
-            }
-        }
-    }
+    // Cloud workflow classifier disabled — using local heuristic events only
+    // (meeting_started, meeting_ended, pipe_completed).
+    // Classifier code preserved in workflow_classifier.rs for future use.
 
     // Install pi agent in background
     tokio::spawn(async move {

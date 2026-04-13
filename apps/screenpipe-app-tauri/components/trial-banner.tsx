@@ -6,7 +6,6 @@
 import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { invoke } from "@tauri-apps/api/core";
 import { useLicenseStatus } from "@/lib/hooks/use-license-status";
 import { validateLicense } from "@/lib/actions/validate-license";
@@ -91,7 +90,7 @@ export function TrialBanner() {
   // trial_expiring: yellow warning bar
   if (licenseStatus.status === "trial_expiring") {
     return (
-      <div className="w-full bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-center gap-3">
+      <div className="w-full bg-amber-500/10 border-b border-amber-500/20 px-4 py-2 flex items-center justify-center gap-3 relative z-20">
         <span className="text-xs text-amber-700 dark:text-amber-400">
           trial ends in {licenseStatus.daysRemaining} day
           {licenseStatus.daysRemaining !== 1 ? "s" : ""}
@@ -100,7 +99,15 @@ export function TrialBanner() {
           variant="outline"
           size="sm"
           className="h-6 text-[11px] px-2.5 border-amber-500/30 text-amber-700 dark:text-amber-400 hover:bg-amber-500/10"
-          onClick={() => openUrl(BUY_URL)}
+          onClick={async () => {
+            try {
+              const { openUrl } = await import("@tauri-apps/plugin-opener");
+              await openUrl(BUY_URL);
+            } catch (e) {
+              console.error("failed to open URL:", e);
+              window.open(BUY_URL, "_blank");
+            }
+          }}
         >
           buy now
         </Button>
@@ -111,7 +118,7 @@ export function TrialBanner() {
   // expired: prominent red/orange banner with key entry
   if (licenseStatus.status === "expired") {
     return (
-      <div className="w-full bg-red-500/10 border-b border-red-500/20 px-4 py-4">
+      <div className="w-full bg-red-500/10 border-b border-red-500/20 px-4 py-4 relative z-20">
         <div className="max-w-xl mx-auto space-y-3">
           <div className="text-center space-y-1">
             <p className="text-sm font-medium text-red-700 dark:text-red-400">
@@ -160,7 +167,15 @@ export function TrialBanner() {
           <p className="text-center">
             <button
               className="text-[11px] text-muted-foreground underline hover:text-foreground transition-colors"
-              onClick={() => openUrl(BUY_URL)}
+              onClick={async () => {
+                try {
+                  const { openUrl } = await import("@tauri-apps/plugin-opener");
+                  await openUrl(BUY_URL);
+                } catch (e) {
+                  console.error("failed to open URL:", e);
+                  window.open(BUY_URL, "_blank");
+                }
+              }}
             >
               buy license
             </button>

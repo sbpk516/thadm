@@ -43,9 +43,12 @@ Built on [screenpipe](https://github.com/screenpipe/screenpipe) (open source, MI
 
 ## specs
 
+- captures full accessibility tree, OCR as fallback, transcription, speakers, keyboard inputs, app switches
 - 5-10% cpu usage
 - 0.5-3gb ram
 - ~20gb storage/month
+- filters (window, app, chrome extensions, passwords, PII)
+- optional encryption at rest
 - works offline
 - data stored at `~/.thadm/`
 

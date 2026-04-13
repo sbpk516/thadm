@@ -54,12 +54,17 @@ commits that broke this area: `0752ea59`, `d89c5f14`, `4a64fd1a`, `fa591d6e`, `8
 - [ ] **space monitor doesn't race with show** — show overlay via shortcut. the `activateIgnoringOtherApps` call must not trigger space monitor's hide callback.
 - [ ] **Chat streaming UX** — Verify that chat streaming uses a state-aware grid dissolve loader for a smooth user experience.
 - [ ] **chat always-on-top toggle** — Toggle the "chat always-on-top" setting and verify that the chat window behaves as expected (e.g., stays on top of other applications when enabled). (`b6c363e5`)
+- [ ] **overlay hidden in OBS when screen recording toggle is off** — Verify that the overlay is NOT visible in OBS (or other screen capture tools) when the "show in screen recording" toggle is off. (`87d107a29`)
+- [ ] **resizable shortcut overlay** — Change shortcut overlay size (small/medium/large) in settings and verify it updates correctly on all spaces. (`1e1e17171`)
+- [ ] **overlay resize support for webview fallback** — Verify that the overlay can be resized even when using the webview fallback. (`d095f5994`)
 - [ ] **text selection not blocked by URL overlays** — On URL-heavy pages, verify that text selection is not blocked by clickable URL overlays. (`eb9e65b4`)
 - [ ] **macOS focused-app capture with AX observers** — On macOS, verify that focused-app capture works correctly when switching between applications, utilizing AX observers. (`22830119`)
 - [ ] **macOS native Live Text interaction** — On macOS, verify that native Live Text interaction, including text selection and data detectors, is re-enabled and functions correctly. (`e9c76934`)
 - [ ] **Livetext single worker thread** — verify no GCD thread exhaustion freeze during heavy livetext analysis. (`a3e29d42a`)
 - [ ] **VisionKit semaphore timeouts** — verify no deadlocks in vision pipeline if VisionKit hangs (10s timeout). (`397f46133`)
 - [ ] **Notification panel order_out** — verify no ghost clicks after hiding notification/shortcut panels. (`32fed7c8c`)
+- [ ] **Excluded windows from screenshots** — Verify that windows specified in the ignore list are correctly excluded from full-monitor screenshots taken via ScreenCaptureKit (SCK). (`61212c429`)
+- [ ] **Swift overlay meeting toggle** — Verify that the meeting toggle in the Swift-based overlay works correctly and reflects the recording state. (`e5e955aa6`)
 
 
 ### 2. dock icon & tray icon (macOS)
@@ -79,6 +84,7 @@ commits that broke this area: `0752ea59`, `7562ec62`, `2a2bd9b5`, `f2f7f770`, `5
 - [ ] **no recreate_tray** — recreating tray pushes icon LEFT (behind notch). must only create once (`f2f7f770`).
 - [ ] **tray upgrade button opens in-app checkout** — Verify that clicking the tray's upgrade button correctly opens the in-app checkout experience. (`078fcfb2`)
 - [ ] **modernized tray menu** — Verify the tray menu's updated layout and functionality match the modernized design. (`b6c363e5`)
+- [ ] **Recording toggle in tray** — Verify that the tray menu has a single toggle to start/stop recording (replacing separate items). (`cdc1d0fd9`)
 
 ### 3. monitor plug/unplug
 
@@ -93,6 +99,7 @@ commits: `28e5c247`
 - [ ] **specific monitor IDs setting** — with specific IDs configured, only those monitors are recorded. unplugging a non-configured monitor has no effect.
 - [ ] **resolution change (e.g., clamshell mode)** — closing MacBook lid with external monitor. recording continues on external.
 - [ ] **queue stats after unplug** — check logs. no queue stats for disconnected monitor after disconnect.
+- [ ] **--use-all-monitors flag override** — Verify that the `--use-all-monitors` CLI flag correctly overrides tier-based defaults (e.g., if a tier defaults to a single monitor, the flag should still enable all monitors). (`bd5b94328`)
 
 ### 4. audio device handling
 
@@ -127,6 +134,8 @@ commits: `28e5c247`
 - [ ] **Audio reconciliation FK constraint loop** — Verify that audio reconciliation does not enter an infinite retry loop on foreign key constraints. (`e9e2dc252`)
 - [ ] **Skip reconciliation when transcription disabled** — Disable audio transcription in settings. Verify that audio reconciliation is skipped. (`ceb77559d`)
 - [ ] **dead System Audio auto-reconnect** — Simulate a dead system audio stream. Verify it auto-reconnects and resumes capture. (`0f287761d`)
+- [ ] **per-device audio toggle** — In the tray menu, verify you can toggle recording for individual audio devices. (`3ee3defcb`)
+- [ ] **stable audio device order** — Verify that audio devices listed in the tray menu maintain a stable order across refreshes. (`4577ac8a6`)
 
 
 #### Audio device recovery (monitor unplug / device switch)
@@ -157,8 +166,13 @@ commits: calendar_speaker_id.rs, meetings.rs, meeting_persister.rs
 - [ ] **meeting detection regardless of transcription mode** — Verify that meeting detection works even when transcription is disabled. (`ef39e728d`)
 - [ ] **Windows UI Automation meeting detection** — On Windows, join a meeting in a supported app (Zoom, Teams, etc.). Verify detection works via UI element scanning rather than just process focus. (`fe905d6af`, `01eb9cf33`)
 - [ ] **macOS Zoom menu bar detection** — On macOS, join a Zoom meeting. Verify detection works even if Zoom window is not focused, by scanning menu bar items. (`849372fa9`)
+- [ ] **Stop auto-detected meeting from overlay** — During an auto-detected meeting, verify that the stop button in the overlay correctly terminates the meeting session. (`403d5b732`)
+- [ ] **MLX transcription model reuse** — Verify that the MLX transcription model is reused across requests to prevent GPU memory spikes or crashes. (`59deeba19`)
 - [ ] **Meeting detection app coverage** — Verify detection works for 35+ supported apps and various browser URL patterns. (`e6740eb38`)
 - [ ] **Meeting detection UI labels** — Verify meeting status shows "starts in Xm" and filters all-day events correctly. (`ef470d9e1`)
+- [ ] **Meeting detection support for Signal, WhatsApp, Telegram, and Teams 2** — Verify that meetings from these apps are correctly detected and recorded. (`8d2f1a542`, `a74e393e1`)
+- [ ] **Browser meetings splitting fix** — Verify that meetings in the browser are correctly split into separate events. (`d8ba1dad3`)
+- [ ] **OpenAI-compatible transcription endpoint** — Verify that the `/v1/audio/transcriptions` endpoint works as expected, following the OpenAI specification. (`5a14e9a92`)
 
 ### 5. frame comparison & OCR pipeline
 
@@ -255,6 +269,7 @@ commits: `94531265`, `d794176a`, `9070639c`, `0378cab1`, `4a3313d3`, `7ffdd4f1`,
 - [ ] **capture stall detection** — Simulate or observe a capture stall. Verify that a notification appears with a "Restart" button to recover. (`d3ead88eb`)
 - [ ] **DB write stall detection** — if DB writes stall, verify a notification appears with a "Restart" button. (`1b4bf7918`)
 - [ ] **clean startup after unclean shutdown on Windows** — On Windows, verify that the app starts cleanly after an unclean shutdown (e.g., force quit), without port 3030 binding failures. (`a8413fe2`)
+- [ ] **sleep/wake detection on Windows and Linux** — Verify that recording resumes correctly after sleep/wake on Windows and Linux. (`f519281b5`)
 
 ### 9. database & storage
 
@@ -278,6 +293,9 @@ commits: `eea0c865`, `cc09de61`, `e61501da`, `d25191d7`, `60096fb9`
 - [ ] **Pi's native auto-compaction for pipe session history** — Verify that Pi's native auto-compaction feature for pipe session history works as expected, preventing indefinite growth of history and maintaining performance. (`8f49e2cf`)
 - [ ] **UTF-8 panic with long multi-byte strings** — Introduce long strings with multi-byte UTF-8 characters (e.g., in window titles, chat input, search queries). Verify no panics occur when these strings are truncated, stored, or processed.
 - [ ] **fsync snapshots before DB commit** — verify data integrity by force-quitting during heavy capture; snapshots should match DB entries. (`2e63282b8`)
+- [ ] **Data directory setting location** — Verify that the data directory setting is now located in the "Storage" tab of the settings menu. (`0d3ffe30a`)
+- [ ] **store.bin encryption** — Enable "Encrypt store.bin" in settings (Privacy > Security). Verify that `store.bin` is encrypted and correctly decrypted on startup using the OS keychain. (`143875207`, `aee1cd2b5`, `85ecd7935`)
+- [ ] **graceful keychain denial** — On macOS, deny keychain access for store encryption. Verify the app handles it gracefully and falls back to unencrypted store if necessary or warns the user. (`b9c01b916`)
 
 - [ ] **slow DB insert warning** — check logs. "Slow DB batch insert" warnings should be <1s in normal operation. >3s indicates contention.
 - [ ] **concurrent DB access** — UI queries + recording inserts happening simultaneously. no "database is locked" errors.
@@ -300,12 +318,18 @@ commits: `8a5f51dd`, `0b0d8090`, `7e58564e`, `2522a7e2`, `f3e55dbc`, `79f2913f`
 - [ ] **language/OCR engine setting** — change OCR language. new language used on next capture cycle.
 - [ ] **video quality setting** — low/balanced/high/max. affects FFmpeg encoding params (`21bddd0f`).
 - [ ] **Settings UI sentence case** — All settings UI elements (billing, pipes, team) should use consistent sentence case.
+- [ ] **Sidebar text visibility in Auto theme** — On macOS, switch between Light, Dark, and Auto system theme modes. Verify that sidebar text remains visible and legible in all modes. (`16d38570d`)
 - [ ] **Billing page links to website** — Verify that the in-app billing page correctly links to the *new* website billing page.
 - [ ] **Non-pro subscriber Whisper fallback** — As a non-pro subscriber, verify that audio transcription defaults to `whisper-large-v3-turbo-quantized` and functions correctly.
 - [ ] **Pi restart on preset switch** — Switch between different AI presets. Verify that the Pi agent restarts if required by the new preset.
 - [ ] **Web search disabled for non-cloud providers** — When using a non-cloud AI provider, verify that web search functionality is correctly disabled.
 - [ ] **Credit balance in billing UI and errors** — Verify that the billing UI accurately displays the credit balance and clearly differentiates between `credits_exhausted` and other LLM-related errors.
 - [ ] **Unknown AI provider type sanitization** — Configure a malformed or unknown AI provider type (e.g., by manual config edit). Verify the app doesn't crash on startup or when navigating to settings, and gracefully handles the unknown type.
+- [ ] **standalone settings page** — Verify that clicking settings in the tray menu opens a standalone `/settings` page instead of a modal overlay. (`ec2a5789e`)
+- [ ] **optional API auth** — Enable API auth in settings (or via `--api-auth`). Verify that remote access to the API requires the configured token. (`09f18141a`, `cfc1a74e1`)
+- [ ] **privacy settings reordering** — Verify that the Security section appears first in the Privacy settings tab. (`4718785b6`)
+- [ ] **password field filtering** — Verify that password fields are skipped in the accessibility tree and not stored as OCR/text. (`8159641f5`, `d39e42e5b`)
+- [ ] **browser extension popup filtering** — Verify that browser extension popups (like Bitwarden) are filtered and not captured in the accessibility tree or as black frames. (`52d20987a`, `449ae7a68`, `931db40b6`)
 
 commits: `8a5f51dd`, `0b0d8090`
 
@@ -325,6 +349,7 @@ commits: `87abb00d`, `9464fdc9`, `0f9e43aa`, `7ea15f32`, `bf1f1004`
 - [ ] **fresh install flow** — onboarding appears, permissions requested, user completes setup.
 - [ ] **auto-advance after engine starts** — status screen advances automatically after 15-20 seconds once engine is running (`87abb00d`, `9464fdc9`).
 - [ ] **skip onboarding** — user can skip and get to main app. settings use defaults.
+- [ ] **Onboarding completion destination** — After completing onboarding, verify that the home window opens instead of the timeline overlay. (`6ddc33a94`, `3cf668c76`)
 - [ ] **shortcut gate** — onboarding teaches the shortcut. user must press it to proceed (`0f9e43aa`).
 - [ ] **onboarding window size** — window is correctly sized, no overflow (`7ea15f32`).
 - [ ] **onboarding doesn't re-show** — after completing onboarding, restart app. main window shows, not onboarding.
@@ -353,6 +378,8 @@ commits: `f1255eac`, `25cbdc6b`, `2529367d`, `d9821624`, `e61501da`, `039d5fea`,
 - [ ] **Collapsible timeline filters** — Verify that timeline filters can be collapsed and expanded correctly. (`0ff93b167`)
 - [ ] **daily summary in timeline** — Apple Intelligence summary shows in timeline, compact when no summary (`d9821624`).
 - [ ] **window-focused refresh** — opening app via shortcut/tray refreshes timeline data immediately (`0b057046`).
+- [ ] **code block colors in memories** — Verify that code block colors in the memories page match the current app theme. (`1c8d785fc`)
+- [ ] **memories page pagination** — Verify that memories page pagination works correctly and tags are loaded from the API. (`3e00b70b4`)
 - [ ] **frame deep link navigation** — `screenpipe://frame/N` or `screenpipe://frames/N` opens main window and jumps to frame N. works from cold start; invalid IDs show clear error.
 - [ ] **missing frames return 404** — Attempt to access a non-existent frame via the API. Verify that it returns a 404 error. (`2e63282b8`)
 - [ ] **Search result exact navigation** — Click a search result. Verify it navigates exactly to the associated `frame_id`. (`a98fa2991`)
@@ -417,6 +444,8 @@ commits: `2f6b2af5`, `ea7f1f61`, `5cb100ea`
 - [ ] **Encrypted pipe sync (Pro) and locked toggle (non-Pro)** — As a Pro user, enable encrypted pipe sync and verify pipes sync encrypted. As a non-Pro user, verify the encrypted pipe sync toggle is locked and inaccessible.
 - [ ] **Arc URL extraction and pipe_config blobs** — If Arc Browser is supported, verify accurate URL extraction. Verify that `pipe_config` blobs are correctly skipped during sync (requires inspection of sync data or logs).
 - [ ] **Per-device record counts in sync** — In sync settings, verify that record counts are displayed for each synchronized device and that sync configuration persists across restarts. (`0e7baaedb`)
+- [ ] **transcription daily cost cap** — Verify that the daily cost cap for transcription is correctly enforced and prevents further transcription once reached. (`2f67a1041`)
+- [ ] **local Google Calendar OAuth** — Connect Google Calendar. Verify it uses the local OAuth flow instead of a cloud-based one. (`0177fdf2b`)
 
 ### 14. Region OCR (Shift+Drag)
 
@@ -584,6 +613,7 @@ commits: `8f334c0a`, `fda40d2c`
 - [ ] **updater artifacts** — release includes `.tar.gz` + `.sig` for macOS, `.nsis.zip` + `.sig` for Windows.
 - [ ] **prod config used** — CI copies `tauri.prod.conf.json` to `tauri.conf.json` before building. identifier is `screenpi.pe` not `screenpi.pe.dev`.
 - [ ] **draft then publish** — `workflow_dispatch` creates draft. manual publish or `release-app-publish` commit publishes.
+- [ ] **macOS E2E workflow** — Verify the macOS E2E workflow in CI ensures stability across releases. (`18ca34d55`)
 
 ### 16. MCP / Claude integration
 
@@ -643,6 +673,14 @@ commits: `fa887407`, `815f52e6`, `60840155`, `e66c3ff8`, `c905ffbf`, `01147096`,
 - [ ] **Pipe Suggestions Scheduler** — Verify that pipe suggestions are displayed according to the scheduled intervals. (`41c8b8085`)
 - [ ] **Pipe store stability** — verify null guards, sharp corners, unpublish functionality, and data unwrap fixes. (`603c84f7b`)
 - [ ] **Pi agent & search timeouts** — Run a long-running search or Pi agent task. Verify it doesn't timeout prematurely at 60s (should allow up to 120s for search). (`f01213cf5`)
+- [ ] **allow schedule + triggers together in pipe config UI** — Verify that both schedule and triggers can be configured together in the pipe config UI without conflicts. (`f32bf9230`)
+- [ ] **local event triggers for pipes** — Verify that pipes can be triggered by local events such as meeting start/end and pipe chaining. (`508b68ff7`, `776587aa7`)
+- [ ] **tool call indicators in pipe run output** — Verify that tool call indicators are displayed in the pipe run output. (`dda33a6a7`)
+- [ ] **align copy and chat icons in pipe run history** — Verify that copy and chat icons are properly aligned in the pipe run history. (`f8fe5cff4`)
+- [ ] **Live pipe output streaming** — Open the "Runs" tab for a running pipe. Verify that the output streams live as the pipe executes. (`4c1fab276`)
+- [ ] **Rich activity-summary** — Verify that activity summaries include details about windows, URLs, and audio transcriptions. (`f2d8ba1dad3`)
+- [ ] **OpenAI-compatible transcription endpoint** — Verify that the `/v1/audio/transcriptions` endpoint works correctly with standard OpenAI clients. (`59deeba19`)
+- [ ] **Mermaid diagram XSS sanitization** — Verify that mermaid diagrams in the UI are correctly sanitized to prevent XSS attacks. (`3405e9793`)
 
 commits: `fa887407`, `815f52e6`, `60840155`, `e66c3ff8`, `c905ffbf`, `01147096`, `5908d7f4`, `46422869`, `4f43da70`, `71a1a537`, `6abaaa36`
 
@@ -705,6 +743,7 @@ commits: `ad431b513`, `d9722bccc`, `4df21e83d`
 - [ ] **Incognito window detection** — Verify that private browsing/incognito windows are correctly detected for major browsers (Chrome, Safari, Firefox, etc.). (`ad431b513`)
 - [ ] **Ignore incognito toggle** — Verify that the "Ignore Incognito Windows" toggle in settings correctly prevents recording of private windows. (`d9722bccc`)
 - [ ] **Incognito detection UI feedback** — Verify that the UI correctly reflects when an incognito window is being ignored.
+- [ ] **DRM pause behavior** — Play DRM-protected content (e.g., Netflix in Safari). Verify that Screenpipe pauses recording gracefully and resumes automatically once the DRM content is closed, without crashing the server. (`3d9f0e8bb`)
 
 commits: `fc830b43`
 
@@ -714,6 +753,7 @@ commits: `fc830b43`
 ### 23. GPU & Performance Telemetry
 
 - [ ] **GPU error handling & telemetry** — Verify that GPU errors are handled gracefully and CPU/GPU telemetry is correctly reported in logs. (`0d42ea221`)
+- [ ] **Clipboard thread leak** — Verify that long-running sessions do not exhibit gradual input lag or memory growth due to clipboard thread leaks. (`0718c2e03`, `f0adcddd0`)
 
 ### 24. Data Management
 
@@ -804,6 +844,7 @@ commits: `cf2dcd5f8`, `ad1d00d8f`, `6f623b30a`, `aaf031169`
 ### 23. Notifications
 
 - [ ] **Restart notifications toggle** — Toggle "restart notifications" in settings. Verify notifications only appear when enabled. (`f82b4f350`)
+- [ ] **Notification text selection** — Verify that text can be selected in notification inbox messages. (`3449197c3`)
 
 ### 26. Onboarding & Fleet UX
 
@@ -820,6 +861,8 @@ commits: `c8769545b`, `4f522325b`, `54000c295`
 - [ ] **Multi-instance connections** — Add two different accounts for the same service (e.g., two Slack workspaces). Verify both work independently. (`c8769545b`)
 - [ ] **Post-install connection modal** — After installing a pipe, verify the connection modal appears if the pipe requires a service connection. (`c8769545b`)
 - [ ] **New service connections** — Verify Brex, Stripe, Sentry, Vercel, Pipedrive, Intercom, and Limitless connections can be authorized and sync data. (`4f522325b`, `54000c295`)
+- [ ] **Multi-instance OAuth for GitHub and Notion** — Verify that multi-instance OAuth works for GitHub and Notion, including fetching identity after token exchange. (`5d6ee5da3`)
+- [ ] **Glean icon in connections grid** — Verify that the Glean icon is displayed in the connections grid. (`ec6374e1d`)
 
 ### 28. Deployment & Remote Management
 

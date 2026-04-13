@@ -70,7 +70,7 @@ export function GmailCard() {
     const key = instance ?? "__default__";
     setDisconnecting(key);
     try {
-      await commands.oauthDisconnect("gmail", instance);
+      await commands.oauthDisconnect("gmail", instance ?? null);
       posthog.capture("gmail_disconnected", { instance });
       await fetchAccounts();
     } catch (e) {

@@ -136,16 +136,17 @@ impl UpdatesManager {
         let update_menu_item = if is_enterprise_build(app) {
             None
         } else {
+            // THADM: hide auto-update menu item for source builds
             let (menu_text, enabled) = if is_source_build(app) {
-                ("Auto-updates unavailable (source build)", true) // Enable to show info dialog
+                (None, false)
             } else {
-                ("thadm is up to date", false)
+                (Some("thadm is up to date"), false)
             };
-            Some(
-                MenuItemBuilder::with_id("update_now", menu_text)
+            menu_text.map(|text| {
+                MenuItemBuilder::with_id("update_now", text)
                     .enabled(enabled)
-                    .build(app)?,
-            )
+                    .build(app)
+            }).transpose()?
         };
 
         Ok(Self {
