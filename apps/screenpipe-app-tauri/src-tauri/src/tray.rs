@@ -718,13 +718,10 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             });
         }
         "upgrade" => {
+            // THADM: open buy page instead of account page
             let app = app_handle.clone();
             let _ = app_handle.run_on_main_thread(move || {
-                let _ = ShowRewindWindow::Home {
-                    page: Some("account".to_string()),
-                }
-                .show(&app);
-                let _ = app.emit("tray-upgrade", ());
+                let _ = app.opener().open_url("https://kalam-plus.com/#thadm", None::<&str>);
             });
         }
         "releases" => {

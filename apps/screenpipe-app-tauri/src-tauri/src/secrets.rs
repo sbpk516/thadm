@@ -15,7 +15,7 @@ use base64::{engine::general_purpose::STANDARD as B64, Engine};
 use std::sync::OnceLock;
 use tracing::{debug, info, warn};
 
-const SERVICE: &str = "com.screenpipe.app";
+const SERVICE: &str = "com.thadm.app";
 const KEY_NAME: &str = "store-encryption-key";
 
 /// Result of a keychain key lookup.
