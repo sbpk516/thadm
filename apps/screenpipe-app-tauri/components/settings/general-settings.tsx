@@ -216,55 +216,7 @@ export default function GeneralSettings() {
           </CardContent>
         </Card>
 
-        {!isEnterprise && (
-          <Card className="border-border bg-card">
-            <CardContent className="px-3 py-2.5">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center space-x-2.5">
-                  <Undo2 className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <div>
-                    <h3 className="text-sm font-medium text-foreground">
-                      Version{currentVersion ? ` ${currentVersion}` : ""}
-                    </h3>
-                    <p className="text-xs text-muted-foreground">
-                      install a previous version (at your own risk)
-                    </p>
-                  </div>
-                </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={fetchVersions}
-                  disabled={isRollingBack}
-                  className="ml-4 h-7 text-xs"
-                >
-                  {isRollingBack ? "installing..." : showVersions ? "hide" : "show versions"}
-                </Button>
-              </div>
-              {showVersions && availableVersions.length > 0 && (
-                <div className="mt-3 space-y-1 border-t pt-2">
-                  <p className="text-[10px] text-muted-foreground mb-2">
-                    ⚠️ database migrations are not reversed. use at your own risk.
-                  </p>
-                  {availableVersions.map((v) => (
-                    <div key={v} className="flex items-center justify-between py-0.5">
-                      <span className="text-xs text-muted-foreground">v{v}</span>
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={() => handleRollback(v)}
-                        disabled={isRollingBack}
-                        className="h-6 text-[11px] px-2"
-                      >
-                        install
-                      </Button>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        )}
+        {/* THADM: disabled — version rollback fetches from screenpi.pe cloud */}
 
       </div>
 
