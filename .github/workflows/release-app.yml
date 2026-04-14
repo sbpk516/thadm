@@ -138,6 +138,8 @@ jobs:
     needs: [check_commit]
     if: github.event_name == 'workflow_dispatch' || needs.check_commit.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
