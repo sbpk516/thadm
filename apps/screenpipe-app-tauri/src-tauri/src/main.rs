@@ -40,6 +40,7 @@ mod analytics;
 mod icons;
 use crate::analytics::start_analytics;
 mod calendar;
+mod capture_session;
 mod chatgpt_oauth;
 #[allow(deprecated)]
 mod commands;
@@ -52,17 +53,20 @@ mod livetext;
 #[cfg(target_os = "macos")]
 mod livetext_ffi;
 mod oauth;
+mod owned_browser;
+mod permission_events;
 mod permissions;
 mod pi;
 mod pi_command_queue;
 mod pipe_suggestions_scheduler;
 mod recording;
 mod remote_sync_commands;
+mod secrets;
 mod server;
+mod server_core;
 #[cfg(target_os = "macos")]
 #[allow(deprecated)]
 mod space_monitor;
-mod secrets;
 mod store;
 mod suggestions;
 mod sync;
@@ -70,6 +74,7 @@ mod tray;
 mod updates;
 mod voice_training;
 mod window;
+mod windows_ca_bundle;
 #[cfg(target_os = "windows")]
 mod windows_overlay;
 
@@ -107,6 +112,7 @@ mod notifications;
 mod safe_icon;
 mod shortcuts;
 mod vault;
+mod viewer;
 use base64::Engine;
 use health::start_health_check;
 use log_files::{get_log_files, get_screenpipe_data_dir};
@@ -303,19 +309,62 @@ async fn upload_file_to_s3(file_path: &str, signed_url: &str) -> Result<bool, St
 #[specta::specta]
 #[allow(dead_code)]
 async fn is_server_running(app: AppHandle) -> Result<bool, String> {
-    let store = app.state::<store::SettingsStore>();
-    let port = store.recording.port;
+    let api = crate::recording::local_api_context_from_app(&app);
     let client = reqwest::Client::new();
-    let response = client
-        .get(format!("http://localhost:{}", port))
-        .send()
-        .await;
+    let response = api.apply_auth(client.get(api.url("/health"))).send().await;
     Ok(response.is_ok())
 }
 
 #[tokio::main]
 async fn main() {
     let _ = fix_path_env::fix();
+
+    // Refuse to launch while a `screenpipe db recover|cleanup` operation is in
+    // progress. The CLI writes ~/.screenpipe/.db_recovery.lock before doing
+    // anything destructive; if the user double-clicks the app icon mid-recovery,
+    // we'd otherwise race the swap and corrupt the DB again. The CLI heartbeats
+    // the lock every 30 s, so a fresh mtime means the op is genuinely live.
+    //
+    // Escape hatches (in order of preference):
+    //   1. `screenpipe db unlock` — friendly path
+    //   2. SCREENPIPE_IGNORE_DB_LOCK=1 env var — bypass on this launch only
+    //   3. `rm ~/.screenpipe/.db_recovery.lock` — manual
+    //
+    // See `crates/screenpipe-engine/src/cli/db.rs`.
+    if std::env::var("SCREENPIPE_IGNORE_DB_LOCK").ok().as_deref() != Some("1") {
+        let lock_path =
+            screenpipe_core::paths::default_screenpipe_data_dir().join(".db_recovery.lock");
+        if let Ok(metadata) = std::fs::metadata(&lock_path) {
+            let stale = metadata
+                .modified()
+                .ok()
+                .and_then(|m| m.elapsed().ok())
+                .map(|d| d.as_secs() > 3600)
+                .unwrap_or(false);
+            if stale {
+                let _ = std::fs::remove_file(&lock_path);
+            } else {
+                let body = std::fs::read_to_string(&lock_path).unwrap_or_default();
+                eprintln!(
+                    "screenpipe: a `screenpipe db ...` operation is in progress.\n\
+                     lock: {}\n\
+                     content: {}\n\
+                     options:\n  • wait for the op to finish, then re-open the app\n  • run `screenpipe db unlock` if you're sure it's stuck\n  • set SCREENPIPE_IGNORE_DB_LOCK=1 and retry to bypass this check",
+                    lock_path.display(),
+                    body.trim(),
+                );
+                std::process::exit(2);
+            }
+        }
+    }
+
+    // Export the Windows root/CA cert stores to a PEM file and set
+    // NODE_EXTRA_CA_CERTS before any bun/node subprocess can spawn. Fixes
+    // "unable to verify the first certificate" on corporate networks where
+    // antivirus (ESET, Zscaler, etc.) injects a private root CA. No-op on
+    // macOS/Linux. Must run before Pi, PortableGit download, and pipe
+    // subprocesses are touched.
+    windows_ca_bundle::install();
 
     // Handle --check-arc-automation / --trigger-arc-automation flags early,
     // before any Tauri initialization. Used by the permission system to run
@@ -370,21 +419,20 @@ async fn main() {
 
     // Check if telemetry is disabled via store setting (analyticsEnabled) or offline mode
     let store_path = screenpipe_core::paths::default_screenpipe_data_dir().join("store.bin");
-    let store_json = std::fs::read(&store_path)
-        .ok()
-        .and_then(|data| {
-            if data.len() >= 8 && &data[..8] == b"SPSTORE1" {
-                // Encrypted store — try to decrypt with keychain key
-                let key = match secrets::get_key() {
-                    secrets::KeyResult::Found(k) => k,
-                    _ => return None,
-                };
-                let plain = screenpipe_vault::crypto::decrypt_small(&data[8..], &key).ok()?;
-                serde_json::from_slice::<serde_json::Value>(&plain).ok()
-            } else {
-                serde_json::from_slice::<serde_json::Value>(&data).ok()
-            }
-        });
+    let store_json = std::fs::read(&store_path).ok().and_then(|data| {
+        if data.len() >= 8 && &data[..8] == b"SPSTORE1" {
+            // Encrypted store — try to decrypt with keychain key
+            // Only attempt if encryption is enabled (file being encrypted is the signal)
+            let key = match secrets::get_key_if_encryption_enabled() {
+                secrets::KeyResult::Found(k) => k,
+                _ => return None,
+            };
+            let plain = screenpipe_vault::crypto::decrypt_small(&data[8..], &key).ok()?;
+            serde_json::from_slice::<serde_json::Value>(&plain).ok()
+        } else {
+            serde_json::from_slice::<serde_json::Value>(&data).ok()
+        }
+    });
     // Helper: look up a bool key in the store JSON (check both top-level and nested "settings")
     let store_bool = |key: &str| -> Option<bool> {
         store_json.as_ref().and_then(|data| {
@@ -404,7 +452,7 @@ async fn main() {
     let _posthog_disabled = telemetry_disabled || offline_mode;
 
     let app_version = env!("CARGO_PKG_VERSION");
-    // THADM: disabled sentry
+    // THADM: disabled sentry — privacy invariant, no crash data leaves the machine
     let sentry_guard: Option<sentry::ClientInitGuard> = None;
 
     // Install a panic hook that logs to stderr + Sentry BEFORE the default hook runs.
@@ -530,6 +578,7 @@ async fn main() {
                 permissions::check_screen_recording_permission,
                 permissions::check_accessibility_permission_cmd,
                 permissions::check_arc_installed,
+                permissions::check_coreaudio_process_tap_available,
                 permissions::check_arc_automation_permission,
                 permissions::request_arc_automation_permission,
                 permissions::get_installed_browsers,
@@ -548,8 +597,11 @@ async fn main() {
                 update_global_shortcuts,
                 spawn_screenpipe,
                 stop_screenpipe,
+                recording::start_capture,
+                recording::stop_capture,
                 recording::get_monitors,
                 recording::get_audio_devices,
+                recording::get_boot_phase,
                 // Commands from commands.rs
                 commands::is_enterprise_build_cmd,
                 commands::get_enterprise_license_key,
@@ -561,6 +613,7 @@ async fn main() {
                 commands::open_pipe_window,
                 commands::update_show_screenpipe_shortcut,
                 commands::show_window,
+                commands::show_window_activated,
                 commands::open_login_window,
                 commands::open_google_calendar_auth_window,
                 commands::ensure_webview_focus,
@@ -575,6 +628,9 @@ async fn main() {
                 commands::reset_onboarding,
                 commands::set_onboarding_step,
                 commands::show_onboarding_window,
+                commands::get_keychain_status,
+                commands::enable_keychain_encryption,
+                commands::disable_keychain_encryption,
                 commands::open_search_window,
                 // Shortcut reminder commands
                 commands::show_shortcut_reminder,
@@ -582,6 +638,10 @@ async fn main() {
                 // Notification panel commands
                 commands::show_notification_panel,
                 commands::hide_notification_panel,
+                // In-app file viewer
+                viewer::open_viewer_window,
+                viewer::read_viewer_file,
+                viewer::reveal_in_default_browser,
                 // Window-specific shortcut commands (dynamic registration)
                 commands::register_window_shortcuts,
                 commands::unregister_window_shortcuts,
@@ -616,9 +676,13 @@ async fn main() {
                 pi::pi_check,
                 pi::pi_install,
                 pi::pi_prompt,
+                pi::pi_pending,
+                pi::pi_cancel_queued,
                 pi::pi_abort,
                 pi::pi_new_session,
+                pi::pi_set_model,
                 pi::pi_update_config,
+                pi::bun_check,
                 // ChatGPT OAuth commands
                 chatgpt_oauth::chatgpt_oauth_login,
                 chatgpt_oauth::chatgpt_oauth_status,
@@ -627,6 +691,7 @@ async fn main() {
                 chatgpt_oauth::chatgpt_oauth_models,
                 // Generic OAuth commands (works for any OAuth integration)
                 oauth::oauth_connect,
+                oauth::oauth_cancel,
                 oauth::oauth_status,
                 oauth::oauth_disconnect,
                 oauth::oauth_list_instances,
@@ -636,6 +701,7 @@ async fn main() {
                 // Calendar commands
                 calendar::calendar_status,
                 calendar::calendar_authorize,
+                calendar::calendar_reset_permission,
                 calendar::calendar_get_events,
                 calendar::calendar_get_current_meeting,
                 // ICS Calendar commands
@@ -697,7 +763,8 @@ async fn main() {
     }
 
     let recording_state = RecordingState {
-        handle: Arc::new(tokio::sync::Mutex::new(None)),
+        server: Arc::new(tokio::sync::Mutex::new(None)),
+        capture: Arc::new(tokio::sync::Mutex::new(None)),
         is_starting: Arc::new(AtomicBool::new(false)),
         last_spawn_epoch: Arc::new(AtomicU64::new(0)),
     };
@@ -797,22 +864,31 @@ async fn main() {
         .manage(sync_scheduler)
         .invoke_handler(tauri::generate_handler![
             commands::is_enterprise_build_cmd,
+            commands::get_local_api_config,
+            commands::regenerate_api_auth_key,
             commands::get_enterprise_license_key,
             enterprise_policy::set_enterprise_policy,
             commands::save_enterprise_license_key,
             spawn_screenpipe,
             stop_screenpipe,
+            recording::start_capture,
+            recording::stop_capture,
             recording::get_monitors,
             recording::get_audio_devices,
+            recording::get_boot_phase,
             permissions::open_permission_settings,
             permissions::request_permission,
             permissions::do_permissions_check,
             permissions::check_microphone_permission,
             permissions::check_screen_recording_permission,
             permissions::check_accessibility_permission_cmd,
+            owned_browser::owned_browser_set_bounds,
+            owned_browser::owned_browser_navigate,
+            owned_browser::owned_browser_hide,
             permissions::reset_and_request_permission,
             permissions::get_missing_permissions,
             permissions::check_arc_installed,
+            permissions::check_coreaudio_process_tap_available,
             permissions::check_arc_automation_permission,
             permissions::request_arc_automation_permission,
             set_tray_unhealth_icon,
@@ -825,6 +901,7 @@ async fn main() {
             commands::delete_cache_files,
             commands::open_pipe_window,
             commands::show_window,
+            commands::show_window_activated,
             commands::open_login_window,
             commands::ensure_webview_focus,
             commands::close_window,
@@ -840,6 +917,9 @@ async fn main() {
             commands::reset_onboarding,
             commands::set_onboarding_step,
             commands::show_onboarding_window,
+            commands::get_keychain_status,
+            commands::enable_keychain_encryption,
+            commands::disable_keychain_encryption,
             commands::open_search_window,
             // Shortcut reminder commands
             commands::show_shortcut_reminder,
@@ -855,6 +935,10 @@ async fn main() {
             commands::copy_deeplink_to_clipboard,
             commands::copy_text_to_clipboard,
             commands::open_note_path,
+            // In-app file viewer
+            viewer::open_viewer_window,
+            viewer::read_viewer_file,
+            viewer::reveal_in_default_browser,
             // Overlay commands (Windows)
             commands::enable_overlay_click_through,
             commands::disable_overlay_click_through,
@@ -888,9 +972,13 @@ async fn main() {
             pi::pi_check,
             pi::pi_install,
             pi::pi_prompt,
+            pi::pi_pending,
+            pi::pi_cancel_queued,
             pi::pi_abort,
             pi::pi_new_session,
+            pi::pi_set_model,
             pi::pi_update_config,
+            pi::bun_check,
             // ChatGPT OAuth commands
             chatgpt_oauth::chatgpt_oauth_login,
             chatgpt_oauth::chatgpt_oauth_status,
@@ -899,6 +987,7 @@ async fn main() {
             chatgpt_oauth::chatgpt_oauth_models,
             // Generic OAuth commands (works for any OAuth integration)
             oauth::oauth_connect,
+            oauth::oauth_cancel,
             oauth::oauth_status,
             oauth::oauth_disconnect,
             oauth::oauth_list_instances,
@@ -908,6 +997,7 @@ async fn main() {
             // Calendar commands
             calendar::calendar_status,
             calendar::calendar_authorize,
+            calendar::calendar_reset_permission,
             calendar::calendar_get_events,
             calendar::calendar_get_current_meeting,
             // ICS Calendar commands
@@ -1053,12 +1143,12 @@ async fn main() {
             let file_layer = tracing_subscriber::fmt::layer()
                 .with_writer(file_appender)
                 .with_ansi(false)
-                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn,audiopipe=warn"));
+                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn,audiopipe=warn,ort=warn"));
 
             // Create a custom layer for console logging
             let console_layer = tracing_subscriber::fmt::layer()
                 .with_writer(std::io::stdout)
-                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn,audiopipe=warn"));
+                .with_filter(EnvFilter::new("info,hyper=error,tower_http=error,whisper_rs=warn,audiopipe=warn,ort=warn"));
 
             // Initialize the tracing subscriber with both layers + optional Sentry layer
             // The Sentry layer captures error!() and warn!() events (not just panics)
@@ -1387,47 +1477,46 @@ async fn main() {
             //     let _ = app_handle.emit("vault-locked-on-startup", ());
             // }
 
-            // Start embedded server on a dedicated thread with its own tokio runtime
-            // to avoid competing with Tauri's UI runtime
+            // Start server core + capture on a dedicated thread with its own tokio runtime
+            // to avoid competing with Tauri's UI runtime.
+            // Two-phase startup: ServerCore (DB + HTTP + pipes) then CaptureSession (vision + audio).
             {
                 let store_clone = store.clone();
                 let data_dir_clone = data_dir.clone();
                 let recording_state = app_handle.state::<RecordingState>();
-                // Mark as starting BEFORE spawning thread — prevents race with frontend spawn_screenpipe
                 recording_state.is_starting.store(true, std::sync::atomic::Ordering::SeqCst);
-                let recording_state_inner = recording_state.handle.clone();
+                let server_arc = recording_state.server.clone();
+                let capture_arc = recording_state.capture.clone();
                 let is_starting_clone = recording_state.is_starting.clone();
 
-                // Create pipe output callback that emits Tauri events to the frontend
+                // Pipe output callback. Stage 5: legacy `pipe_event`
+                // topic dropped — every pipe stdout line goes out on
+                // `agent_event` with sessionId `pipe:<name>:<execId>`.
                 let app_for_pipe = app_handle.clone();
+                // Separate clone for the owned-browser install path — the
+                // on_pipe_output closure below captures app_for_pipe by
+                // move, so we need a distinct handle that survives into
+                // the server thread.
+                let app_for_owned = app_handle.clone();
                 let on_pipe_output: Option<screenpipe_core::pipes::OnPipeOutputLine> = Some(
                     std::sync::Arc::new(move |pipe_name: &str, exec_id: i64, line: &str| {
-                        let payload = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
-                            serde_json::json!({
-                                "pipeName": pipe_name,
-                                "executionId": exec_id,
-                                "event": parsed,
-                            })
+                        let inner = if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(line) {
+                            parsed
                         } else {
-                            serde_json::json!({
-                                "pipeName": pipe_name,
-                                "executionId": exec_id,
-                                "event": { "type": "raw_line", "text": line },
-                            })
+                            serde_json::json!({ "type": "raw_line", "text": line })
                         };
-                        let _ = app_for_pipe.emit("pipe_event", &payload);
+                        let unified = serde_json::json!({
+                            "source": "pipe",
+                            "sessionId": format!("pipe:{}:{}", pipe_name, exec_id),
+                            "event": inner,
+                        });
+                        let _ = app_for_pipe.emit("agent_event", &unified);
                     }),
                 );
 
-                // Spawn a dedicated thread for the server with its own runtime
-                // This prevents CPU contention between UI and recording workloads
                 std::thread::Builder::new()
                     .name("screenpipe-server".to_string())
                     .spawn(move || {
-                        // Create a dedicated multi-threaded runtime for the server
-                        // Use 16 worker threads: several are permanently consumed by
-                        // blocking crossbeam channel calls (audio handlers, meeting watcher),
-                        // so we need enough headroom for async I/O and HTTP handling.
                         let server_runtime = tokio::runtime::Builder::new_multi_thread()
                             .worker_threads(16)
                             .thread_name("screenpipe-worker")
@@ -1436,26 +1525,54 @@ async fn main() {
                             .expect("Failed to create server runtime");
 
                         server_runtime.block_on(async move {
-                            // Check if server already running (with timeout)
+                            // Resolve + seed the shared api_auth_key cache before building
+                            // the config. `to_recording_config` is sync and reads the
+                            // cache; without this step the server would start with
+                            // `api_auth_key = None` on the app-auto-start path and every
+                            // request would 403. Mirrors the path in `spawn_screenpipe`.
+                            if store_clone.recording.api_auth {
+                                let settings_key_opt = if store_clone.recording.api_key.is_empty() {
+                                    None
+                                } else {
+                                    Some(store_clone.recording.api_key.clone())
+                                };
+                                match screenpipe_engine::auth_key::resolve_api_auth_key(
+                                    &data_dir_clone,
+                                    settings_key_opt.as_deref(),
+                                )
+                                .await
+                                {
+                                    Ok(key) => crate::store::seed_api_auth_key(key),
+                                    Err(e) => tracing::error!("failed to resolve api auth key: {}", e),
+                                }
+                            }
+                            let config = store_clone.to_recording_config(data_dir_clone.clone());
+
+                            // Check if server already running
                             let server_running = tokio::time::timeout(
                                 std::time::Duration::from_secs(2),
                                 async {
-                                    reqwest::Client::new()
-                                        .get("http://localhost:3030/health")
-                                        .timeout(std::time::Duration::from_secs(1))
-                                        .send()
-                                        .await
-                                        .is_ok()
+                                    let client = reqwest::Client::new();
+                                    let mut request = client
+                                        .get(format!("http://localhost:{}/health", config.port))
+                                        .timeout(std::time::Duration::from_secs(1));
+                                    if let Some(ref key) = config.api_auth_key {
+                                        request = request.header(
+                                            "Authorization",
+                                            format!("Bearer {}", key),
+                                        );
+                                    }
+                                    request.send().await.is_ok()
                                 }
                             ).await.unwrap_or(false);
 
                             if server_running {
-                                info!("Server already running, skipping embedded server start");
+                                info!("Server already running, skipping startup");
                                 is_starting_clone.store(false, std::sync::atomic::Ordering::SeqCst);
                                 return;
                             }
 
-                            // Check permissions before starting
+                            // Permissions check
                             let permissions_check = permissions::do_permissions_check(false);
                             let disable_audio = store_clone.recording.disable_audio;
 
@@ -1469,34 +1586,72 @@ async fn main() {
                                 warn!("Microphone permission not granted: {:?}. Audio recording will not work.", permissions_check.microphone);
                             }
 
-                            info!("Starting embedded screenpipe server on dedicated runtime...");
-                            let config = store_clone.to_recording_config(data_dir_clone);
+                            info!("Starting server core + capture on dedicated runtime...");
 
-                            match embedded_server::start_embedded_server(config, on_pipe_output).await {
-                                Ok(handle) => {
-                                    info!("Embedded screenpipe server started successfully on dedicated runtime");
-                                    // Store handle in state so it can be stopped/restarted later
-                                    {
-                                        let mut guard = recording_state_inner.lock().await;
-                                        *guard = Some(handle);
-                                    }
+                            // Owned-browser: create the connect-side instance now so the
+                            // engine can register it in the BrowserRegistry on startup.
+                            // Webview build is async — kick it off in the background and
+                            // attach the handle once the WebviewWindow is ready. Until
+                            // then, /connections/browsers/owned-default/eval returns 503.
+                            //
+                            // `spawn_install_when_ready` survives tray-only mode by
+                            // listening for `window-focused` events instead of giving
+                            // up after a fixed budget.
+                            let owned_browser =
+                                screenpipe_connect::connections::browser::OwnedBrowser::default_instance();
+                            crate::owned_browser::spawn_install_when_ready(
+                                app_for_owned.clone(),
+                                config.data_dir.clone(),
+                                owned_browser.clone(),
+                            );
 
-                                    // Keep the runtime alive, but check periodically if we should shut down
-                                    // When stop_screenpipe is called, the handle is taken from the state
-                                    loop {
-                                        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
-
-                                        // Check if handle was taken (indicating shutdown requested)
-                                        let guard = recording_state_inner.lock().await;
-                                        if guard.is_none() {
-                                            info!("Server handle removed from state, shutting down server thread");
-                                            break;
-                                        }
-                                    }
-                                }
+                            // Phase 1: Start server core
+                            let server = match server_core::ServerCore::start(
+                                &config,
+                                on_pipe_output,
+                                Some(owned_browser),
+                            )
+                            .await
+                            {
+                                Ok(s) => s,
                                 Err(e) => {
-                                    error!("Failed to start embedded server: {}", e);
+                                    error!("Failed to start server core: {}", e);
                                     is_starting_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+                                    return;
+                                }
+                            };
+
+                            // Phase 2: Start capture session
+                            let capture = match capture_session::CaptureSession::start(&server, &config).await {
+                                Ok(c) => c,
+                                Err(e) => {
+                                    error!("Failed to start capture: {}", e);
+                                    // Store server anyway so pipes/search work
+                                    let mut guard = server_arc.lock().await;
+                                    *guard = Some(server);
+                                    drop(guard);
+                                    is_starting_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+                                    return;
+                                }
+                            };
+
+                            info!("Server + capture started successfully on dedicated runtime");
+                            {
+                                let mut guard = server_arc.lock().await;
+                                *guard = Some(server);
+                            }
+                            {
+                                let mut guard = capture_arc.lock().await;
+                                *guard = Some(capture);
+                            }
+
+                            // Keep runtime alive as long as server exists
+                            loop {
+                                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+                                let guard = server_arc.lock().await;
+                                if guard.is_none() {
+                                    info!("Server removed from state, shutting down server thread");
+                                    break;
                                 }
                             }
                         });
@@ -1548,6 +1703,7 @@ async fn main() {
             // Use persistent analytics_id for PostHog (consistent across frontend and backend)
             let unique_id = store.recording.analytics_id.clone();
             let email = store.user.email.unwrap_or_default();
+            let local_api = crate::recording::local_api_context_from_app(&app_handle);
 
             if is_analytics_enabled {
                 match start_analytics(
@@ -1555,7 +1711,8 @@ async fn main() {
                     email,
                     posthog_api_key,
                     interval_hours,
-                    "http://localhost:3030".to_string(),
+                    local_api.url(""),
+                    local_api.api_key.clone(),
                     data_dir.clone(),
                     is_analytics_enabled,
                 ) {
@@ -1576,10 +1733,28 @@ async fn main() {
                 }
             });
 
-            // Start permission monitor (polls permissions and emits events when lost)
+            // Subscribe to permission events emitted by the engine over /ws/events.
+            // Replaces the old TCC-preflight polling loop and the health-based
+            // degraded heuristic — detection now happens in `screenpipe-engine`
+            // (the actual capture module), not by polling from the app.
             let app_handle_clone = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                permissions::start_permission_monitor(app_handle_clone).await;
+                // Wait for the server core to be ready so we have port + API key.
+                use crate::recording::RecordingState;
+                use tokio::time::{sleep, Duration};
+                loop {
+                    if let Some(state) = app_handle_clone.try_state::<RecordingState>() {
+                        let guard = state.server.lock().await;
+                        if let Some(ref core) = *guard {
+                            let port = core.port;
+                            let key = core.local_api_key.clone();
+                            drop(guard);
+                            crate::permission_events::start(app_handle_clone.clone(), port, key);
+                            return;
+                        }
+                    }
+                    sleep(Duration::from_millis(500)).await;
+                }
             });
 
             #[cfg(target_os = "macos")]
@@ -1624,8 +1799,13 @@ async fn main() {
                 scheduler_handle: suggestions_state.scheduler_handle.clone(),
                 enhanced_ai: suggestions_state.enhanced_ai.clone(),
             };
+            let app_handle_for_suggestions = app_handle.clone();
             tauri::async_runtime::spawn(async move {
-                suggestions::auto_start_scheduler(&suggestions_state_clone).await;
+                suggestions::auto_start_scheduler(
+                    app_handle_for_suggestions,
+                    &suggestions_state_clone,
+                )
+                .await;
             });
 
             // Auto-start pipe suggestions scheduler if enabled
@@ -1763,8 +1943,12 @@ async fn main() {
                             if let Some(recording_state) =
                                 app_handle_shutdown.try_state::<recording::RecordingState>()
                             {
-                                if let Some(handle) = recording_state.handle.lock().await.take() {
-                                    handle.shutdown_and_wait().await;
+                                // Stop capture first (self-contained), then server
+                                if let Some(session) = recording_state.capture.lock().await.take() {
+                                    session.stop().await;
+                                }
+                                if let Some(server) = recording_state.server.lock().await.take() {
+                                    server.shutdown().await;
                                 }
                             }
                         })

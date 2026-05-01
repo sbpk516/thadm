@@ -23,6 +23,7 @@
 //! and non-meeting contexts (Slack chat, etc.). A mute button counts only when
 //! accompanied by a leave/hangup signal (see `min_signals_required`).
 
+use crate::routes::meetings::{emit_meeting_status_changed, resolve_meeting_status_from};
 use chrono::{DateTime, Utc};
 use futures::{FutureExt, StreamExt};
 use screenpipe_db::DatabaseManager;
@@ -148,9 +149,11 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
         // Meeting controls are available as AXMenuBarItem ("Meeting" menu)
         // and AXMenuItem items with identifiers like "onMuteAudio:".
         //
-        // NOTE: min_signals_required=2 because individual signals can appear
-        // when Zoom is open but idle (e.g. "Meeting" menu bar item may exist
-        // without an active call). Requiring 2 signals reduces false positives.
+        // NOTE: "Meeting" menu bar item alone removed as a signal because it
+        // exists even when Zoom is idle (not in an active call). False positive:
+        // https://github.com/screenpipe/screenpipe/issues/2561
+        // Now only real call control signals (leave, end meeting, Zoom Meeting
+        // window title, etc.) trigger detection.
         // NOTE: "end" alone removed as signal — too broad, matches "Send",
         // "Append", "Calendar End", etc. Use "end meeting" instead.
         // NOTE: onMuteAudio:/onMuteVideo: removed — mute controls can appear
@@ -169,10 +172,6 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 browser_title_patterns: &[],
             },
             call_signals: vec![
-                // macOS menu bar signals (Zoom only exposes AXMenuBar, no AXWindow)
-                CallSignal::MenuBarItem {
-                    title_contains: "Meeting",
-                },
                 // Windows: Zoom meeting window has title "Zoom Meeting" but
                 // exposes NO named buttons — all toolbar controls are unnamed.
                 // The window title is the definitive signal.
@@ -185,9 +184,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 CallSignal::NameContains("In a Zoom Meeting"),
                 // Windows: "Zoom Video Container" pane exists only inside meeting window.
                 CallSignal::NameContains("Zoom Video Container"),
-                // Generic fallbacks for other Windows Zoom versions
-                CallSignal::AutomationIdContains("leave"),
-                CallSignal::KeyboardShortcut("Alt+Q"),
+                // macOS: actual call control buttons (not the idle "Meeting" menu)
                 CallSignal::RoleWithName {
                     role: "AXButton",
                     name_contains: "leave",
@@ -196,8 +193,11 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                     role: "AXButton",
                     name_contains: "end meeting",
                 },
+                // Generic fallbacks for other Windows Zoom versions
+                CallSignal::AutomationIdContains("leave"),
+                CallSignal::KeyboardShortcut("Alt+Q"),
             ],
-            min_signals_required: 2,
+            min_signals_required: 1,
         },
         // Google Meet (browser)
         // NOTE: "google meet" removed from url_patterns — it's too broad and matches
@@ -292,8 +292,9 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
         // Native macOS: Electron exposes 0 windows but menu bar has "Mute"/"Deafen"
         // items ONLY when in a voice channel — these are reliable call signals.
         // Windows: full Electron AX tree works via UIA.
-        // NOTE: Mute/Deafen are NOT used for browser detection because Discord's
-        // web UI shows them permanently in the user panel, even outside voice channels.
+        // NOTE: Mute/Deafen menu items exist even when NOT in a voice channel,
+        // so we require "Disconnect" (only present when connected to voice) as
+        // the primary signal. Mute is kept as a secondary confirmation signal.
         MeetingDetectionProfile {
             app_identifiers: AppIdentifiers {
                 macos_app_names: &["discord"],
@@ -302,25 +303,25 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                 browser_title_patterns: &[],
             },
             call_signals: vec![
-                // macOS native: menu items only present during voice channel
+                // "Disconnect" only appears when actually connected to a voice channel
                 CallSignal::MenuBarItem {
-                    title_contains: "Deafen",
+                    title_contains: "Disconnect",
                 },
-                CallSignal::MenuBarItem {
-                    title_contains: "Mute",
-                },
-                // Windows native: buttons in Electron AX tree
                 CallSignal::RoleWithName {
                     role: "AXButton",
                     name_contains: "Disconnect",
                 },
                 CallSignal::NameContains("Disconnect"),
+                // Mute as secondary confirmation (always present, so not sufficient alone)
+                CallSignal::MenuBarItem {
+                    title_contains: "Mute",
+                },
             ],
-            min_signals_required: 1,
+            min_signals_required: 2,
         },
-        // Discord in browser — only match signals specific to active voice channels.
-        // The "Voice Connected" bar and "Disconnect" button only appear when in a call.
-        // Do NOT use Mute/Deafen here — they're always visible in the user panel.
+        // Discord in browser — require BOTH "Voice Connected" bar AND "Disconnect"
+        // button. Either alone can appear without being in a call (e.g. seeing other
+        // users' voice status in channel list). Both together = you are connected.
         MeetingDetectionProfile {
             app_identifiers: AppIdentifiers {
                 macos_app_names: &[],
@@ -335,7 +336,7 @@ pub fn load_detection_profiles() -> Vec<MeetingDetectionProfile> {
                     name_contains: "disconnect",
                 },
             ],
-            min_signals_required: 1,
+            min_signals_required: 2,
         },
         // Signal — voice/video calls
         // macOS: "Signal" app with "End Call" / "Hang Up" button during active calls.
@@ -1657,9 +1658,15 @@ pub fn advance_state(
                     },
                     None,
                 )
-            } else if is_browser && has_output_audio {
+            } else if has_output_audio {
                 // Audio output is still active — the user likely just switched
-                // tabs/apps while the meeting continues. Keep alive.
+                // tabs/apps, minimized the window, or switched to another meeting app.
+                // Keep the meeting alive regardless of whether UI controls are visible.
+                // This prevents false positives when:
+                // - Browser tab is switched (controls not in focused window)
+                // - App is minimized (AX tree not exposed)
+                // - Sharing screen in Zoom (controls move to floating toolbar)
+                // - Multiple desktops/Spaces (AX scanner can't reach inactive space)
                 info!(
                     "meeting v2: Ending -> Active (output audio still active, app={}, id={})",
                     app, meeting_id
@@ -2184,6 +2191,9 @@ pub async fn run_meeting_detection_loop(
     let mut cal_sub = subscribe_to_event::<Vec<CalendarEventSignal>>("calendar_events");
     let mut calendar_events: Vec<CalendarEventSignal> = Vec::new();
 
+    // Subscribe to explicit stop signals from the API layer
+    let mut stop_sub = subscribe_to_event::<DetectorStopSignal>("detector_stop_tracking");
+
     info!(
         "meeting v2: detection loop started (base_interval={:?}, profiles={})",
         base_interval,
@@ -2217,6 +2227,28 @@ pub async fn run_meeting_detection_loop(
         // Each publish replaces the full list, so we keep only the latest.
         while let Some(event) = cal_sub.next().now_or_never().flatten() {
             calendar_events = event.data.into_iter().filter(|e| !e.is_all_day).collect();
+        }
+
+        // Handle explicit stop signals from the API layer
+        if let Some(event) = stop_sub.next().now_or_never().flatten() {
+            let stop_signal = event.data;
+            if let MeetingState::Active {
+                meeting_id, app, ..
+            }
+            | MeetingState::Ending {
+                meeting_id, app, ..
+            } = &state
+            {
+                if *meeting_id == stop_signal.meeting_id && app == &stop_signal.app {
+                    info!(
+                        "meeting v2: forced to Idle by explicit stop (meeting_id={}, app={})",
+                        meeting_id, app
+                    );
+                    state = MeetingState::Idle;
+                    current_interval = IDLE_APPS_SCAN_INTERVAL;
+                    sync_meeting_flag(false, &in_meeting_flag, &detector);
+                }
+            }
         }
 
         // Skip if manual meeting is active
@@ -2293,6 +2325,11 @@ pub async fn run_meeting_detection_loop(
                         ) {
                             warn!("meeting v2: failed to emit meeting_ended event: {}", e);
                         }
+                        if let Ok(status) =
+                            resolve_meeting_status_from(db.as_ref(), manual_meeting.as_ref()).await
+                        {
+                            emit_meeting_status_changed(&status);
+                        }
                     }
                     Err(e) => {
                         error!("meeting v2: failed to end meeting {}: {}", meeting_id, e);
@@ -2352,14 +2389,11 @@ pub async fn run_meeting_detection_loop(
 
         // 2b. Check output audio when in Ending state for browser meetings.
         // If the audio output device still has data, the meeting is likely
-        // still going — the user just switched tabs/apps.
-        let has_output_audio = if matches!(
-            state,
-            MeetingState::Ending {
-                is_browser: true,
-                ..
-            }
-        ) {
+        // still going — the user just switched tabs/apps or minimized the window.
+        // This applies to both browser meetings (e.g., Google Meet via Arc) and
+        // native meeting apps (e.g., Zoom). Audio activity is a strong signal
+        // that the user is still in the meeting even if UI controls are hidden.
+        let has_output_audio = if matches!(state, MeetingState::Ending { .. }) {
             db.has_recent_output_audio(30).await.unwrap_or(false)
         } else {
             false
@@ -2466,6 +2500,11 @@ pub async fn run_meeting_detection_loop(
                             is_browser,
                         };
                     }
+                    if let Ok(status) =
+                        resolve_meeting_status_from(db.as_ref(), manual_meeting.as_ref()).await
+                    {
+                        emit_meeting_status_changed(&status);
+                    }
                 }
                 StateAction::EndMeeting { meeting_id } => {
                     if meeting_id >= 0 {
@@ -2479,6 +2518,14 @@ pub async fn run_meeting_detection_loop(
                                     serde_json::json!({ "meeting_id": meeting_id }),
                                 ) {
                                     warn!("meeting v2: failed to emit meeting_ended event: {}", e);
+                                }
+                                if let Ok(status) = resolve_meeting_status_from(
+                                    db.as_ref(),
+                                    manual_meeting.as_ref(),
+                                )
+                                .await
+                                {
+                                    emit_meeting_status_changed(&status);
                                 }
                             }
                             Err(e) => {
@@ -2615,6 +2662,12 @@ struct CalendarEventSignal {
     pub attendees: Vec<String>,
     #[serde(default)]
     pub is_all_day: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct DetectorStopSignal {
+    pub meeting_id: i64,
+    pub app: String,
 }
 
 /// Check if any non-all-day calendar event overlaps with the current time.
@@ -3128,8 +3181,30 @@ mod tests {
     }
 
     #[test]
-    fn test_native_ending_ignores_output_audio() {
-        // Native app: output audio should NOT prevent ending (controls are reliable)
+    fn test_native_ending_respects_output_audio() {
+        // Native app (e.g., Zoom): output audio SHOULD keep meeting alive
+        // This handles cases where:
+        // - User minimizes Zoom but is still in the meeting
+        // - Zoom controls move to floating toolbar (not detected by scanner)
+        // - User is sharing screen (controls move to secondary toolbar)
+        let state = MeetingState::Ending {
+            meeting_id: 42,
+            app: "Zoom".to_string(),
+            started_at: Utc::now(),
+            since: Instant::now().checked_sub(Duration::from_secs(5)).unwrap(),
+            is_browser: false,
+        };
+        let results: Vec<ScanResult> = vec![];
+        let (new_state, action) = advance_state(state, &results, true);
+
+        // Even though timeout hasn't elapsed, audio presence keeps it Active
+        assert!(matches!(new_state, MeetingState::Active { .. }));
+        assert!(action.is_none());
+    }
+
+    #[test]
+    fn test_native_ending_no_audio_times_out() {
+        // Native app with no audio output: should still end after timeout
         let state = MeetingState::Ending {
             meeting_id: 42,
             app: "Zoom".to_string(),
@@ -3140,8 +3215,9 @@ mod tests {
             is_browser: false,
         };
         let results: Vec<ScanResult> = vec![];
-        let (new_state, action) = advance_state(state, &results, true);
+        let (new_state, action) = advance_state(state, &results, false);
 
+        // No audio + timeout elapsed → should end
         assert!(matches!(new_state, MeetingState::Idle));
         assert!(matches!(
             action,
@@ -3347,36 +3423,9 @@ mod tests {
 
     // ── Zoom menu bar signal tests ────────────────────────────────────
 
-    #[test]
-    fn test_zoom_menu_bar_item_meeting() {
-        // Zoom on macOS exposes "Meeting" as an AXMenuBarItem during active calls
-        let signal = CallSignal::MenuBarItem {
-            title_contains: "Meeting",
-        };
-        assert!(check_signal_match(
-            &signal,
-            "AXMenuBarItem",
-            Some("Meeting"),
-            None,
-            None
-        ));
-        // Should not match other menu bar items
-        assert!(!check_signal_match(
-            &signal,
-            "AXMenuBarItem",
-            Some("View"),
-            None,
-            None
-        ));
-        // Should not match non-menu-bar roles
-        assert!(!check_signal_match(
-            &signal,
-            "AXButton",
-            Some("Meeting"),
-            None,
-            None
-        ));
-    }
+    // NOTE: test_zoom_menu_bar_item_meeting removed because "Meeting" menu bar
+    // item exists even when Zoom is idle, causing false positives (#2561).
+    // Now we only use real call control signals.
 
     #[test]
     fn test_zoom_menu_item_id_mute_audio() {
@@ -3427,22 +3476,28 @@ mod tests {
     }
 
     #[test]
-    fn test_zoom_profile_has_menu_bar_signals() {
+    fn test_zoom_profile_has_leave_signals() {
+        // After #2561 fix, Zoom profile uses real call control signals
+        // (leave button, end meeting button) instead of idle "Meeting" menu bar item.
         let profiles = load_detection_profiles();
         let zoom = profiles
             .iter()
             .find(|p| p.app_identifiers.macos_app_names.contains(&"zoom.us"))
             .expect("Zoom profile not found");
 
-        let has_menu_bar = zoom.call_signals.iter().any(|s| {
+        let has_leave_signals = zoom.call_signals.iter().any(|s| {
             matches!(
                 s,
-                CallSignal::MenuBarItem { .. } | CallSignal::MenuItemId(_)
+                CallSignal::RoleWithName { name_contains, .. }
+                    if name_contains.contains("leave") || name_contains.contains("end meeting")
+            ) || matches!(
+                s,
+                CallSignal::AutomationIdContains(id) if id.contains("leave")
             )
         });
         assert!(
-            has_menu_bar,
-            "Zoom profile must have menu bar signals for macOS detection"
+            has_leave_signals,
+            "Zoom profile must have 'leave' or 'end meeting' signals for call detection"
         );
     }
 
@@ -3601,21 +3656,27 @@ mod tests {
     // ── Zoom false positive prevention tests ────────────────────────
 
     #[test]
-    fn test_zoom_requires_two_signals() {
-        // Zoom must require at least 2 signals to avoid false positives
-        // when Zoom is open but idle (e.g. "Meeting" menu bar item exists
-        // without an active call).
+    fn test_zoom_no_idle_menu_bar_item() {
+        // After fix for #2561, Zoom profile should NOT use the idle
+        // "Meeting" menu bar item as a signal. Only real call control signals
+        // (leave, end meeting, window title) should trigger detection.
         let profiles = load_detection_profiles();
         let zoom = profiles
             .iter()
             .find(|p| p.app_identifiers.macos_app_names.contains(&"zoom.us"))
             .expect("Zoom profile not found");
 
+        let has_menu_bar_meeting = zoom.call_signals.iter().any(|s| {
+            matches!(
+                s,
+                CallSignal::MenuBarItem { title_contains } if title_contains.contains("Meeting")
+            )
+        });
+
         assert!(
-            zoom.min_signals_required >= 2,
-            "Zoom must require >= 2 signals (got {}). A single signal like \
-             'Meeting' menu bar item can appear when Zoom is idle.",
-            zoom.min_signals_required
+            !has_menu_bar_meeting,
+            "Zoom profile must NOT use 'Meeting' menu bar item signal (#2561). \
+             It exists even when Zoom is idle."
         );
     }
 

@@ -8,10 +8,10 @@ use std::{
     collections::HashSet,
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc,
     },
-    time::Duration,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{
     sync::{Mutex, RwLock},
@@ -49,6 +49,34 @@ use crate::{
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+
+/// Rate-limiter for the "Error processing audio" log.
+///
+/// Why: when the ONNX segmentation/embedding model file is missing or
+/// corrupt, every audio chunk fails with the same error — one user hit
+/// 583 events from the model-missing error alone (Sentry SCREENPIPE-CLI).
+/// Firing to Sentry on every chunk is noise; once every 5 minutes is
+/// enough to see the problem. Below-threshold hits still go to debug!().
+///
+/// A single shared timestamp is intentional: the error class doesn't
+/// matter for rate-limiting purposes — we just want to stop flooding
+/// Sentry during a sustained failure.
+static LAST_AUDIO_PROCESS_ERROR_EPOCH_SECS: AtomicU64 = AtomicU64::new(0);
+const AUDIO_PROCESS_ERROR_SENTRY_INTERVAL_SECS: u64 = 300;
+
+fn log_audio_process_error(e: &anyhow::Error) {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let last = LAST_AUDIO_PROCESS_ERROR_EPOCH_SECS.load(Ordering::Relaxed);
+    if now.saturating_sub(last) >= AUDIO_PROCESS_ERROR_SENTRY_INTERVAL_SECS {
+        LAST_AUDIO_PROCESS_ERROR_EPOCH_SECS.store(now, Ordering::Relaxed);
+        error!("Error processing audio: {:?}", e);
+    } else {
+        debug!("Error processing audio (rate-limited): {:?}", e);
+    }
+}
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum AudioManagerStatus {
@@ -117,7 +145,8 @@ pub struct CentralHandlerRestartResult {
 
 impl AudioManager {
     pub async fn new(options: AudioManagerOptions, db: Arc<DatabaseManager>) -> Result<Self> {
-        let device_manager = DeviceManager::new().await?;
+        let device_manager =
+            DeviceManager::new(options.experimental_coreaudio_system_audio).await?;
         let segmentation_manager = Arc::new(SegmentationManager::new(options.is_disabled).await?);
         let status = RwLock::new(AudioManagerStatus::Stopped);
         let vad_engine: Arc<Mutex<Box<dyn VadEngine + Send>>> = if options.is_disabled {
@@ -204,6 +233,7 @@ impl AudioManager {
             let options_ref = self.options.clone();
             let seg_mgr = self.segmentation_manager.clone();
             let output_path_bg = self.options.read().await.output_path.clone();
+            let metrics_bg = self.metrics.clone();
             let handle = tokio::spawn(async move {
                 // Wait for model to load + initial recordings
                 tokio::time::sleep(Duration::from_secs(120)).await;
@@ -224,6 +254,7 @@ impl AudioManager {
                             Some(seg_mgr.clone()),
                             data_dir,
                             batch_max_dur,
+                            Some(metrics_bg.clone()),
                         )
                         .await;
                         if count > 0 {
@@ -339,7 +370,8 @@ impl AudioManager {
 
     /// Stop a device's recording without removing it from enabled_devices.
     /// Idempotent — safe to call on already-stopped devices.
-    async fn stop_device_recording(&self, device: &AudioDevice) -> Result<()> {
+    /// Used by device monitor for force-cycling devices after sleep/wake.
+    pub async fn stop_device_recording(&self, device: &AudioDevice) -> Result<()> {
         // Signal the recording loop to stop BEFORE aborting the handle,
         // so it exits cleanly without triggering "stream dead" warnings.
         if let Some(is_running) = self.device_manager.is_running_mut(device) {
@@ -680,7 +712,13 @@ impl AudioManager {
                             }
                         }
                         if !inserted {
-                            error!("audio chunk DB insert failed after 3 retries, data may be missing from timeline: {}", path);
+                            // path is a structured field so Sentry dedups the
+                            // issue across different devices; otherwise every
+                            // device name creates a new Sentry issue.
+                            error!(
+                                audio_chunk_path = %path,
+                                "audio chunk DB insert failed after 3 retries, data may be missing from timeline"
+                            );
                         }
                         Some(path)
                     }
@@ -732,6 +770,7 @@ impl AudioManager {
                                 Some(segmentation_manager.clone()),
                                 data_dir,
                                 batch_max_duration_secs,
+                                Some(metrics.clone()),
                             )
                             .await;
                             for _ in 0..count {
@@ -763,7 +802,7 @@ impl AudioManager {
                             .await
                             {
                                 metrics.record_process_error();
-                                error!("Error processing audio: {:?}", e);
+                                log_audio_process_error(&e);
                             }
                         }
                     } else {
@@ -784,7 +823,7 @@ impl AudioManager {
                         .await
                         {
                             metrics.record_process_error();
-                            error!("Error processing audio: {:?}", e);
+                            log_audio_process_error(&e);
                         }
                     }
                 } else {
@@ -805,7 +844,7 @@ impl AudioManager {
                     .await
                     {
                         metrics.record_process_error();
-                        error!("Error processing audio: {:?}", e);
+                        log_audio_process_error(&e);
                     }
                 }
             }
@@ -1256,23 +1295,30 @@ impl AudioManager {
 /// This allows returning voices to be recognized immediately instead of
 /// starting anonymous for the first 30+ seconds.
 async fn seed_speakers_from_db(db: &Arc<DatabaseManager>, seg_mgr: &Arc<SegmentationManager>) {
-    match db.get_named_speakers_with_centroids().await {
+    // Seed all speakers (named and unnamed) to prevent re-creation of existing voices.
+    // Limit to 500 most recent speakers to avoid memory bloat on long-running systems.
+    const MAX_SPEAKERS_TO_SEED: usize = 500;
+
+    match db
+        .get_all_speakers_with_centroids(MAX_SPEAKERS_TO_SEED)
+        .await
+    {
         Ok(speakers) if !speakers.is_empty() => {
             for (_db_id, name, centroid) in &speakers {
                 let emb = ndarray::Array1::from_vec(centroid.clone());
                 seg_mgr.seed_speaker(emb);
-                debug!("seeded known speaker '{}' into embedding manager", name);
+                debug!("seeded speaker '{}' into embedding manager", name);
             }
             info!(
-                "seeded {} known speakers from DB into embedding manager",
+                "seeded {} speakers (named + unnamed) from DB into embedding manager",
                 speakers.len()
             );
         }
         Ok(_) => {
-            debug!("no named speakers with centroids found in DB to seed");
+            debug!("no speakers with centroids found in DB to seed");
         }
         Err(e) => {
-            warn!("failed to query named speakers for seeding: {}", e);
+            warn!("failed to query speakers for seeding: {}", e);
         }
     }
 }

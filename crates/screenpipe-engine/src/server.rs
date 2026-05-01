@@ -10,7 +10,7 @@ use screenpipe_db::DatabaseManager;
 
 use screenpipe_audio::audio_manager::AudioManager;
 use screenpipe_core::sync::SyncServiceHandle;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::{
     analytics,
@@ -25,7 +25,11 @@ use crate::{
             add_tags, add_to_database, execute_raw_sql, get_tags_batch, merge_frames_handler,
             remove_tags, validate_media_handler,
         },
-        data::{delete_device_data_handler, delete_time_range_handler, device_storage_handler},
+        data::{
+            backup_handler, checkpoint_handler, delete_device_data_handler,
+            delete_time_range_handler, device_storage_handler, evict_media_handler,
+            storage_preview_handler,
+        },
         elements::{get_frame_elements, search_elements},
         frames::{
             get_frame_context, get_frame_data, get_frame_metadata, get_frame_text_data,
@@ -51,7 +55,9 @@ use crate::{
             search_speakers_handler, undo_speaker_reassign_handler, update_speaker_handler,
         },
         streaming::{handle_video_export_post, handle_video_export_ws, stream_frames_handler},
-        websocket::{ws_events_handler, ws_health_handler, ws_metrics_handler},
+        websocket::{
+            ws_events_handler, ws_health_handler, ws_meeting_status_handler, ws_metrics_handler,
+        },
     },
     sync_api::{self, SyncState},
     video_cache::FrameCache,
@@ -72,7 +78,10 @@ use std::{
 };
 use tokio::{net::TcpListener, sync::Mutex};
 use tower_http::{cors::Any, trace::TraceLayer};
-use tower_http::{cors::CorsLayer, trace::DefaultMakeSpan};
+use tower_http::{
+    cors::{AllowOrigin, CorsLayer},
+    trace::DefaultMakeSpan,
+};
 
 /// Bind a TcpListener with SO_REUSEADDR on Windows to avoid TIME_WAIT port conflicts.
 /// On non-Windows platforms, falls back to the standard tokio bind.
@@ -166,6 +175,14 @@ pub struct AppState {
     pub manual_meeting: Arc<tokio::sync::RwLock<Option<i64>>>,
     /// Browser extension bridge — relays JS eval requests to the connected extension
     pub browser_bridge: Arc<crate::routes::browser::BrowserBridge>,
+    /// Registry of every browser the agent can drive — user's real browser via
+    /// the extension, the app-managed owned webview, future remote-CDP backends.
+    /// `GET /connections/browsers` lists what's here.
+    pub browser_registry: Arc<screenpipe_connect::connections::browser::BrowserRegistry>,
+    /// The owned-browser instance (Tauri-managed webview) registered into
+    /// `browser_registry`. Held separately so the desktop shell can attach a
+    /// transport handle after the engine has started.
+    pub owned_browser: Arc<screenpipe_connect::connections::browser::OwnedBrowser>,
     /// When true, non-localhost requests require Authorization: Bearer <api_key>
     pub api_auth: bool,
     /// The API key to validate against (from SCREENPIPE_API_KEY or auth.json)
@@ -196,6 +213,11 @@ pub struct SCServer {
         Arc<DashMap<String, Arc<screenpipe_core::pipes::permissions::PipePermissions>>>,
     /// Shared manual meeting lock — pass in from binary so persister and server share the same state.
     pub manual_meeting: Option<Arc<tokio::sync::RwLock<Option<i64>>>>,
+    /// Owned browser instance — set by the desktop shell so it can attach an
+    /// OwnedWebviewHandle once the Tauri WebviewWindow is created. If unset,
+    /// the engine creates a default unattached instance and owned-browser
+    /// requests return 503 until a handle is wired up.
+    pub owned_browser: Option<Arc<screenpipe_connect::connections::browser::OwnedBrowser>>,
     /// Require auth for remote API access
     pub api_auth: bool,
     /// API key for remote auth validation
@@ -234,6 +256,7 @@ impl SCServer {
             power_manager: None,
             pipe_permissions: Arc::new(DashMap::new()),
             manual_meeting: None,
+            owned_browser: None,
             api_auth: false,
             api_auth_key: None,
             secret_store: None,
@@ -478,13 +501,45 @@ impl SCServer {
                 .clone()
                 .unwrap_or_else(|| Arc::new(tokio::sync::RwLock::new(None))),
             browser_bridge: crate::routes::browser::BrowserBridge::new(),
+            browser_registry: screenpipe_connect::connections::browser::BrowserRegistry::new(),
+            // Reuse the desktop-shell-supplied owned browser if present so its
+            // already-attached OwnedWebviewHandle survives. Otherwise fall back
+            // to a default unattached instance — useful for CLI / tests /
+            // headless deployments.
+            owned_browser: self.owned_browser.clone().unwrap_or_else(
+                screenpipe_connect::connections::browser::OwnedBrowser::default_instance,
+            ),
             api_auth: self.api_auth,
             api_auth_key: self.api_auth_key.clone(),
             secret_store: self.secret_store.clone(),
         });
 
+        // Populate the registry so /connections/browsers shows both kinds
+        // immediately. The user-browser is wired to the existing bridge;
+        // the owned-browser is a stub until the desktop shell attaches its
+        // OwnedWebviewHandle.
+        {
+            use screenpipe_connect::connections::browser::UserBrowser;
+            let user = UserBrowser::default_instance(app_state.browser_bridge.clone());
+            app_state.browser_registry.register(user).await;
+            app_state
+                .browser_registry
+                .register(app_state.owned_browser.clone())
+                .await;
+        }
+
+        // Restrict CORS to localhost origins (Tauri webview + local development).
+        // Remote origins are blocked to prevent malicious websites from making
+        // cross-origin requests to the local API.
         let cors = CorsLayer::new()
-            .allow_origin(Any)
+            .allow_origin(AllowOrigin::predicate(|origin, _| {
+                origin.as_bytes().starts_with(b"http://localhost")
+                    || origin.as_bytes().starts_with(b"https://localhost")
+                    || origin.as_bytes().starts_with(b"tauri://localhost")
+                    || origin.as_bytes().starts_with(b"http://tauri.localhost") // Windows Tauri origin
+                    || origin.as_bytes().starts_with(b"http://127.0.0.1")
+                    || origin.as_bytes().starts_with(b"https://127.0.0.1")
+            }))
             .allow_methods(Any)
             .allow_headers(Any)
             .expose_headers([
@@ -571,8 +626,13 @@ impl SCServer {
             .post("/retention/run", crate::retention::retention_run)
             // Data management
             .post("/data/delete-range", delete_time_range_handler)
+            .post("/data/evict-media", evict_media_handler)
+            .get("/data/storage-preview", storage_preview_handler)
             .post("/data/delete-device", delete_device_data_handler)
             .get("/data/device-storage", device_storage_handler)
+            // Database backup & checkpoint
+            .post("/data/checkpoint", checkpoint_handler)
+            .get("/data/backup", backup_handler)
             .route_yaml_spec("/openapi.yaml")
             .route_json_spec("/openapi.json")
             .freeze();
@@ -613,11 +673,21 @@ impl SCServer {
                     "/install",
                     axum::routing::post(crate::pipes_api::install_pipe),
                 )
+                // Favorites — register before `/:id` so axum doesn't match
+                // "favorites" as a pipe id.
+                .route(
+                    "/favorites",
+                    axum::routing::get(crate::pipes_api::list_favorites),
+                )
                 .route("/:id", axum::routing::get(crate::pipes_api::get_pipe))
                 .route("/:id", axum::routing::delete(crate::pipes_api::delete_pipe))
                 .route(
                     "/:id/enable",
                     axum::routing::post(crate::pipes_api::enable_pipe),
+                )
+                .route(
+                    "/:id/favorite",
+                    axum::routing::post(crate::pipes_api::set_pipe_favorite),
                 )
                 .route(
                     "/:id/run",
@@ -682,6 +752,12 @@ impl SCServer {
                     axum::routing::post(crate::routes::pipe_store::pipe_store_review),
                 )
                 .with_state(pm.clone());
+            // Inject SecretStore as an Extension so pipe handlers can access it
+            let pipe_routes = if let Some(ref ss) = self.secret_store {
+                pipe_routes.layer(axum::Extension(ss.clone()))
+            } else {
+                pipe_routes
+            };
             router.nest("/pipes", pipe_routes)
         } else {
             router
@@ -689,20 +765,23 @@ impl SCServer {
 
         // Connections routes (pipe-facing integrations: Telegram, Slack, etc.)
         let cm: crate::connections_api::SharedConnectionManager = Arc::new(Mutex::new(
-            screenpipe_connect::connections::ConnectionManager::new(self.screenpipe_dir.clone()),
+            screenpipe_connect::connections::ConnectionManager::new(
+                self.screenpipe_dir.clone(),
+                self.secret_store.clone(),
+            ),
         ));
         let wa: crate::connections_api::SharedWhatsAppGateway = Arc::new(Mutex::new(
             screenpipe_connect::whatsapp::WhatsAppGateway::new(self.screenpipe_dir.clone()),
         ));
 
-        // Auto-reconnect WhatsApp if a previous session exists on disk
+        // Auto-reconnect WhatsApp if a previous session exists on disk.
+        // We pass an empty hint so `start_pairing` runs its full resolver
+        // (bundled sidecar → install dirs → PATH).
         {
             let wa_lock = wa.lock().await;
             if wa_lock.has_session() {
                 tracing::info!("whatsapp: found existing session, auto-reconnecting...");
-                let bun_path =
-                    screenpipe_connect::whatsapp::which_bun().unwrap_or_else(|| "bun".to_string());
-                if let Err(e) = wa_lock.start_pairing(&bun_path).await {
+                if let Err(e) = wa_lock.start_pairing("").await {
                     tracing::warn!("whatsapp: auto-reconnect failed: {:?}", e);
                 }
             }
@@ -710,7 +789,13 @@ impl SCServer {
 
         let router = router.nest(
             "/connections",
-            crate::connections_api::router(cm, wa, self.secret_store.clone()),
+            crate::connections_api::router(
+                cm,
+                wa,
+                self.secret_store.clone(),
+                app_state.browser_bridge.clone(),
+                app_state.browser_registry.clone(),
+            ),
         );
 
         // Power management routes (if power manager is available)
@@ -732,8 +817,13 @@ impl SCServer {
             .route("/stream/frames", get(stream_frames_handler))
             .route("/ws/events", get(ws_events_handler))
             .route("/ws/health", get(ws_health_handler))
+            .route("/ws/meeting-status", get(ws_meeting_status_handler))
             .route("/ws/metrics", get(ws_metrics_handler))
-            // Browser extension bridge
+            // Browser extension bridge — DEPRECATED top-level paths.
+            // Canonical paths now live under /connections/browser/* (see connections_api.rs).
+            // These aliases stay in place because deployed Chrome extensions hardcode
+            // /browser/ws (packages/browser-extension/src/config.ts). Remove only after
+            // a coordinated extension update has shipped to all users.
             .route(
                 "/browser/ws",
                 get({
@@ -794,8 +884,11 @@ impl SCServer {
                 crate::routes::timezone::timestamp_middleware,
             ))
             .layer({
-                // Remote API auth middleware — when api_auth is enabled,
-                // non-localhost requests must include a valid bearer token.
+                // API auth middleware — when api_auth is enabled, ALL requests
+                // (including localhost) must include a valid bearer token.
+                // The Tauri frontend injects it via localFetch (key loaded once
+                // via get_local_api_config IPC). /health and a few other paths
+                // are exempt so polling works before the frontend has the key.
                 let auth_enabled = self.api_auth;
                 let auth_key = self.api_auth_key.clone();
                 axum::middleware::from_fn(
@@ -807,36 +900,89 @@ impl SCServer {
                                 return next.run(req).await;
                             }
 
-                            // Always allow localhost
-                            let is_localhost = req
-                                .extensions()
-                                .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
-                                .map(|ci| ci.0.ip().is_loopback())
-                                .unwrap_or(true); // default to allow if no connect info
-
-                            if is_localhost {
+                            // Allow specific endpoints without auth:
+                            // - /health: device monitor, tray status, startup polling
+                            //   (called before frontend loads API key via IPC)
+                            // - /connections/oauth/callback: browser redirect from
+                            //   OAuth providers (no bearer token in redirect)
+                            // - /pipes/store/*: onboarding can fire pipe install before
+                            //   the frontend's IPC key-fetch completes on cold start /
+                            //   reinstall. Install/list/detail/update proxy the public
+                            //   registry; publish/unpublish/review enforce their own
+                            //   Bearer check inside the handler (see pipe_store.rs).
+                            let path = req.uri().path();
+                            if path == "/health"
+                                || path == "/ws/health"
+                                || path == "/audio/device/status"
+                                || path == "/connections/oauth/callback"
+                                || path.starts_with("/frames/")
+                                || path == "/notify"
+                                || path.starts_with("/pipes/store")
+                            {
                                 return next.run(req).await;
                             }
 
-                            // Check bearer token
-                            let authorized = req
+                            // Check auth via (in priority order):
+                            // 1. Authorization: Bearer <token> header (localFetch)
+                            // 2. screenpipe_auth=<token> cookie (img src, WebSocket)
+                            // 3. ?token=<token> query param (fallback)
+                            let header_token = req
                                 .headers()
                                 .get(axum::http::header::AUTHORIZATION)
                                 .and_then(|v| v.to_str().ok())
                                 .and_then(|v| v.strip_prefix("Bearer "))
-                                .map(|token| {
-                                    auth_key.as_deref() == Some(token)
-                                })
+                                .map(|s| s.to_string());
+
+                            let cookie_token = req
+                                .headers()
+                                .get(axum::http::header::COOKIE)
+                                .and_then(|v| v.to_str().ok())
+                                .and_then(|cookies| {
+                                    cookies.split(';')
+                                        .map(|c| c.trim())
+                                        .find_map(|c| c.strip_prefix("screenpipe_auth="))
+                                        .map(|s| s.to_string())
+                                });
+
+                            let query_token = req
+                                .uri()
+                                .query()
+                                .and_then(|q| {
+                                    q.split('&')
+                                        .find_map(|pair| pair.strip_prefix("token="))
+                                        .map(|s| s.to_string())
+                                });
+
+                            let token = header_token.or(cookie_token).or(query_token);
+                            let authorized = token
+                                .map(|t| auth_key.as_deref() == Some(t.as_str()))
                                 .unwrap_or(false);
 
                             if authorized {
                                 next.run(req).await
                             } else {
+                                let upgrade = req
+                                    .headers()
+                                    .get(axum::http::header::UPGRADE)
+                                    .and_then(|v| v.to_str().ok())
+                                    .map(|s| s.eq_ignore_ascii_case("websocket"))
+                                    .unwrap_or(false);
+                                if upgrade {
+                                    // Browser extensions / MCP clients reconnect on a fixed
+                                    // interval without holding the auth token, so this fires
+                                    // ~2 880×/day in steady state. The 403 response already
+                                    // tells the caller what's wrong — keep the log line
+                                    // available for debugging but not at WARN.
+                                    debug!(
+                                        path = %path,
+                                        "api auth: rejected WebSocket upgrade (missing/invalid token; use Cookie screenpipe_auth, Authorization Bearer, or ?token=)"
+                                    );
+                                }
                                 axum::response::Response::builder()
                                     .status(403)
                                     .header("Content-Type", "application/json")
                                     .body(axum::body::Body::from(
-                                        r#"{"error":"unauthorized: remote API access requires authentication. Pass Authorization: Bearer <SCREENPIPE_API_KEY>"}"#,
+                                        r#"{"error":"unauthorized: API access requires authentication. Pass Authorization: Bearer <your-api-key> (find your key in Settings > Privacy)"}"#,
                                     ))
                                     .unwrap()
                             }

@@ -11,6 +11,7 @@ import posthog from "posthog-js";
 import ReactMarkdown from "react-markdown";
 import { showChatWithPrefill } from "@/lib/chat-utils";
 import localforage from "localforage";
+import { localFetch } from "@/lib/api";
 
 interface NotificationAction {
   label: string;
@@ -38,9 +39,27 @@ interface NotificationPayload {
   pipe_name?: string;
 }
 
+/** Extract `path` from a `screenpipe://view?path=…` deeplink, or null. */
+function viewerPathFromHref(href: string): string | null {
+  if (!href.startsWith("screenpipe://view")) return null;
+  try {
+    const u = new URL(href);
+    return u.searchParams.get("path");
+  } catch {
+    return null;
+  }
+}
+
 async function openNotificationLink(href: string) {
   const raw = href.trim();
   if (!raw) return;
+
+  // Viewer deeplink — opens the file in the in-app viewer window.
+  const viewerPath = viewerPathFromHref(raw);
+  if (viewerPath) {
+    await invoke("open_viewer_window", { path: viewerPath });
+    return;
+  }
 
   let localPath: string | null = null;
   if (raw.startsWith("~/")) {
@@ -53,14 +72,6 @@ async function openNotificationLink(href: string) {
   }
 
   const { open } = await import("@tauri-apps/plugin-shell");
-  if (localPath && localPath.toLowerCase().endsWith(".md")) {
-    try {
-      await invoke("open_note_path", { path: localPath });
-      return;
-    } catch {
-      // Fallback to default file opener.
-    }
-  }
   if (localPath) {
     await invoke("open_note_path", { path: localPath });
     return;
@@ -138,7 +149,7 @@ export default function NotificationPanelPage() {
                   });
                 } else {
                   // Run in background
-                  await fetch(`http://localhost:3030/pipes/${pipeName}/run`, {
+                  await localFetch(`/pipes/${pipeName}/run`, {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
                     body: JSON.stringify({ notification_context: actionObj.context }),
@@ -149,7 +160,7 @@ export default function NotificationPanelPage() {
             }
             case "api": {
               if (actionObj.url) {
-                await fetch(`http://localhost:3030${actionObj.url}`, {
+                await localFetch(actionObj.url, {
                   method: actionObj.method || "POST",
                   headers: { "Content-Type": "application/json" },
                   body: actionObj.body ? JSON.stringify(actionObj.body) : undefined,
@@ -160,16 +171,27 @@ export default function NotificationPanelPage() {
             case "deeplink": {
               if (actionObj.url) {
                 if (actionObj.url.startsWith("thadm://")) {
-                  // Emit to main window's DeeplinkHandler which knows how to
-                  // route thadm:// URLs (timeline, frame, settings, etc.)
+                  // Show the Main window FIRST — its DeeplinkHandler only
+                  // routes events once mounted, and on macOS the window
+                  // won't actually come to the foreground unless we activate
+                  // the app (see show_window_activated for the rationale).
+                  // Then give React ~150ms to mount the listener before
+                  // emitting. Without this ordering, the emit fires into a
+                  // handler that hasn't subscribed yet and the click silently
+                  // does nothing.
+                  await invoke("show_window_activated", { window: "Main" });
+                  await new Promise((r) => setTimeout(r, 150));
                   await emit("deep-link-received", actionObj.url);
                 } else {
                   // External URL — open in system browser
                   try {
                     const { open } = await import("@tauri-apps/plugin-shell");
                     await open(actionObj.url);
-                  } catch {
-                    // shell plugin not available in this window
+                  } catch (e) {
+                    console.error(
+                      "notification open: shell plugin unavailable",
+                      e
+                    );
                   }
                 }
               }
@@ -182,11 +204,16 @@ export default function NotificationPanelPage() {
           return;
         }
 
-        // Legacy string-based action handlers
+        // Legacy string-based action handlers. The notification panel is a
+        // NonActivating NSPanel on macOS, so regular `show_window` completes
+        // successfully without actually bringing the target window to the
+        // foreground — use `show_window_activated` so explicit user clicks
+        // from the notification panel always surface the window above other
+        // apps, regardless of overlay_mode.
         if (actionStr === "open_timeline") {
-          await invoke("show_window", { window: "Main" });
+          await invoke("show_window_activated", { window: "Main" });
         } else if (actionStr === "open_chat") {
-          await invoke("show_window", { window: "Chat" });
+          await invoke("show_window_activated", { window: "Chat" });
         } else if (actionStr === "open_pipe_suggestions") {
           await showChatWithPrefill({
             context: PIPE_SUGGESTION_PROMPT,
@@ -215,7 +242,7 @@ export default function NotificationPanelPage() {
             for (let i = 0; i < 15; i++) {
               await new Promise((r) => setTimeout(r, 1000));
               try {
-                const res = await fetch("http://localhost:3030/health");
+                const res = await localFetch("/health");
                 if (res.ok) {
                   healthy = true;
                   break;
@@ -243,8 +270,24 @@ export default function NotificationPanelPage() {
           }
           return; // don't auto-hide on error so user sees the message
         }
-      } catch {
-        // ignore
+      } catch (e) {
+        // Log loudly instead of swallowing silently — this is the place a
+        // bug like "click Open does nothing" used to vanish. We still hide
+        // the panel so the user isn't left with a stuck UI, but the failure
+        // now shows up in DevTools + ~/.screenpipe/logs (via tracing from
+        // any Tauri command that errored) + PostHog as a distinct event.
+        console.error(
+          "notification action failed",
+          { action: actionStr, type: actionObj?.type },
+          e
+        );
+        posthog.capture("notification_action_error", {
+          type: payload?.type,
+          id: payload?.id,
+          action: actionStr,
+          actionType: actionObj?.type,
+          error: String(e),
+        });
       }
 
       await hide(false);
@@ -494,22 +537,65 @@ export default function NotificationPanelPage() {
           >
             <ReactMarkdown
               components={{
-                a: ({ href, children }) => (
-                  <a
-                    onClick={async (e) => {
-                      e.preventDefault();
-                      if (!href) return;
-                      try {
-                        await openNotificationLink(href);
-                      } catch {
-                        console.error("failed to open url externally:", href);
-                      }
-                    }}
-                    style={{ color: "rgba(0, 0, 0, 0.7)", textDecoration: "underline", cursor: "pointer" }}
-                  >
-                    {children}
-                  </a>
-                ),
+                a: ({ href, children }) => {
+                  // Viewer deeplinks get a sibling ↗ button so the user can
+                  // override and open in the OS default app (e.g. Obsidian
+                  // for .md, Preview for .json).
+                  const viewerPath = href ? viewerPathFromHref(href) : null;
+                  return (
+                    <>
+                      <a
+                        onClick={async (e) => {
+                          e.preventDefault();
+                          if (!href) return;
+                          try {
+                            await openNotificationLink(href);
+                          } catch {
+                            console.error("failed to open url externally:", href);
+                          }
+                        }}
+                        style={{ color: "rgba(0, 0, 0, 0.7)", textDecoration: "underline", cursor: "pointer" }}
+                      >
+                        {children}
+                      </a>
+                      {viewerPath && (
+                        <button
+                          onClick={async (e) => {
+                            e.preventDefault();
+                            e.stopPropagation();
+                            try {
+                              await invoke("open_note_path", { path: viewerPath });
+                            } catch (err) {
+                              console.error("failed to open in default app:", err);
+                            }
+                          }}
+                          onMouseEnter={(e) => {
+                            e.currentTarget.style.color = "rgba(0, 0, 0, 0.85)";
+                          }}
+                          onMouseLeave={(e) => {
+                            e.currentTarget.style.color = "rgba(0, 0, 0, 0.35)";
+                          }}
+                          title="open in default app"
+                          aria-label="open in default app"
+                          style={{
+                            marginLeft: "3px",
+                            padding: "0 3px",
+                            background: "transparent",
+                            border: "none",
+                            color: "rgba(0, 0, 0, 0.35)",
+                            fontSize: "10px",
+                            lineHeight: "1",
+                            cursor: "pointer",
+                            verticalAlign: "baseline",
+                            transition: "color 150ms",
+                          }}
+                        >
+                          ↗
+                        </button>
+                      )}
+                    </>
+                  );
+                },
               }}
             >{payload.body}</ReactMarkdown>
           </div>

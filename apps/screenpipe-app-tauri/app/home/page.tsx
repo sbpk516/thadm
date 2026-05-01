@@ -7,7 +7,7 @@ import React, { useEffect, useState, useRef, Suspense, useCallback } from "react
 import {
   Settings as SettingsIcon,
   Workflow,
-  Home,
+  Plus,
   Clock,
   Gift,
   HelpCircle,
@@ -17,28 +17,43 @@ import {
   Volume2,
   PanelLeftClose,
   PanelLeftOpen,
+  Search,
   Sparkles,
   Phone,
+  Plug,
+  NotebookPen,
   X,
 } from "lucide-react";
+import { emit } from "@tauri-apps/api/event";
+import { useChatStore } from "@/lib/stores/chat-store";
 import { useOverlayData } from "@/app/shortcut-reminder/use-overlay-data";
 import { cn } from "@/lib/utils";
 import { AppSidebar, SidebarProvider, useSidebarContext } from "@/components/app-sidebar";
+import { usePlatform } from "@/lib/hooks/use-platform";
 import { FeedbackSection } from "@/components/settings/feedback-section";
 import { PipeStoreView } from "@/components/pipe-store";
 import { MemoriesSection } from "@/components/settings/memories-section";
+import { ConnectionsSection } from "@/components/settings/connections-section";
+import { MeetingNotesSection } from "@/components/meeting-notes";
 import { StandaloneChat } from "@/components/standalone-chat";
+import { ChatSidebar } from "@/components/chat-sidebar";
+import { mountPiEventRouter } from "@/lib/stores/pi-event-router";
+import { mountPipeRunRecorder } from "@/lib/events/pipe-run-recorder";
+import { mountPipeWatchWriter } from "@/lib/events/pipe-watch-writer";
 import { NotificationBell } from "@/components/notification-bell";
 import Timeline from "@/components/rewind/timeline";
 import { useQueryState } from "nuqs";
 import { listen } from "@tauri-apps/api/event";
 import { useSettings } from "@/lib/hooks/use-settings";
+import { commands } from "@/lib/utils/tauri";
+import { formatShortcutDisplay } from "@/lib/chat-utils";
 import { useTeam } from "@/lib/hooks/use-team";
 import { useEnterprisePolicy } from "@/lib/hooks/use-enterprise-policy";
 import { EnterpriseLicensePrompt } from "@/components/enterprise-license-prompt";
 import { TrialBanner } from "@/components/trial-banner";
-import { computeMeetingActive, type MeetingRow } from "@/lib/utils/meeting-state";
+import { computeMeetingActive, type MeetingStatusResponse } from "@/lib/utils/meeting-state";
 import { useRouter } from "next/navigation";
+import { appendAuthToken, ensureApiReady, getApiBaseUrl, localFetch } from "@/lib/api";
 import {
   Tooltip,
   TooltipContent,
@@ -46,23 +61,24 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 
-type MainSection = "home" | "timeline" | "memories" | "pipes" | "help";
+type MainSection = "home" | "timeline" | "memories" | "pipes" | "connections" | "meetings" | "help";
 
 // All valid URL sections for the home page
 const ALL_SECTIONS = [
-  "home", "timeline", "pipes", "help", "memories",
+  "home", "timeline", "pipes", "help", "memories", "connections", "meetings",
   "feedback", // backwards compat → maps to "help"
 ];
 
 // Settings sections that should redirect to /settings
 const SETTINGS_SECTIONS = new Set<string>([
   "account", "recording", "ai", "general", "display", "shortcuts", "notifications",
-  "connections", "privacy", "storage", "meetings", "team", "referral", "usage", "speakers",
+  "privacy", "storage", "team", "referral", "usage", "speakers",
   "disk-usage", "cloud-archive", "cloud-sync", // backwards compat → maps to "storage"
 ]);
 
 function HomeContent() {
   const router = useRouter();
+  const { isMac } = usePlatform();
   const [activeSection, setActiveSection] = useQueryState("section", {
     defaultValue: "home",
     parse: (value) => {
@@ -96,6 +112,69 @@ function HomeContent() {
     setActiveSection(fallback ?? "home");
   }, [activeSection, isSectionHidden, setActiveSection]);
 
+  // Mount the Pi event router once, app-wide. Listens for `pi_event` /
+  // `pi_session_evicted` outside any chat-component lifecycle and mirrors
+  // per-session liveness into the chat store. This is what lets the chat
+  // sidebar show a live ● dot for sessions running in the background while
+  // the user is on Timeline / Pipes / Settings — without it, status would
+  // freeze the moment the chat unmounts. Idempotent.
+  useEffect(() => {
+    void mountPiEventRouter();
+    // Pipe-run recorder — buffers pipe-source events on the agent-event
+    // bus and saves each completed run as a `kind: "pipe-run"` chat
+    // file. Pairs with the chat router; both run for the lifetime of
+    // the app process. Idempotent.
+    void mountPipeRunRecorder();
+    // Pipe-watch writer — sole authority on chat-store messages for
+    // sessions with kind="pipe-watch". The chat panel mirrors the
+    // store; this writer is what makes "switch away and back" preserve
+    // the full live transcript. Idempotent.
+    void mountPipeWatchWriter();
+  }, []);
+
+  // Selecting a chat from the sidebar (or any other source that emits
+  // chat-load-conversation) should also FLIP the active view to the chat
+  // panel. Without this, clicking a chat from the Pipes / Timeline /
+  // Memories views appears to "do nothing" — the standalone chat
+  // component receives the event and switches conversation just fine,
+  // but the user is still looking at a different view. They'd have to
+  // also click "New chat" or similar to see the result. Hooking the
+  // listener at the page level fixes the cross-view UX.
+  useEffect(() => {
+    let unlistenFn: (() => void) | undefined;
+    let cancelled = false;
+    (async () => {
+      const { listen } = await import("@tauri-apps/api/event");
+      const u = await listen("chat-load-conversation", () => {
+        if (cancelled) return;
+        setActiveSection("home");
+      });
+      unlistenFn = u;
+    })();
+    return () => {
+      cancelled = true;
+      unlistenFn?.();
+    };
+  }, [setActiveSection]);
+
+  // Clear the sidebar's "current" highlight when leaving the chat
+  // view. The chat panel stays mounted (display:none) and keeps streaming.
+  //
+  // Do NOT setCurrent(panelSessionId) when entering home — that ran
+  // after the same click as "New chat" / chat-load-conversation and
+  // overwrote the freshly chosen id with the stale foreground id,
+  // so the sidebar jumped to an old row (felt like cycling recents)
+  // instead of the blank session the user just asked for. Highlight
+  // sync on home is handled by: row clicks + emit, chat-current-session
+  // from StandaloneChat when conversationId updates, and the New chat
+  // handler below (setCurrent before emit).
+  useEffect(() => {
+    const { actions } = useChatStore.getState();
+    if (activeSection !== "home") {
+      actions.setCurrent(null);
+    }
+  }, [activeSection]);
+
   // Sidebar collapse state (persisted in localStorage)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [teamPromoDismissed, setTeamPromoDismissed] = useState(false);
@@ -113,6 +192,26 @@ function HomeContent() {
       return next;
     });
   }, []);
+
+  // Ephemeral collapse for focused workflows (e.g. taking notes during
+  // a meeting). Captures the user's prior sidebar state on enter and
+  // restores it on exit — never persisted to localStorage.
+  const sidebarPrevCollapsedRef = useRef<boolean | null>(null);
+  const handleMeetingFocusModeChange = useCallback(
+    (focused: boolean) => {
+      if (focused) {
+        if (sidebarPrevCollapsedRef.current === null) {
+          sidebarPrevCollapsedRef.current = sidebarCollapsed;
+        }
+        setSidebarCollapsed(true);
+      } else if (sidebarPrevCollapsedRef.current !== null) {
+        const prev = sidebarPrevCollapsedRef.current;
+        sidebarPrevCollapsedRef.current = null;
+        setSidebarCollapsed(prev);
+      }
+    },
+    [sidebarCollapsed],
+  );
 
   // Cmd+B / Ctrl+B to toggle sidebar
   useEffect(() => {
@@ -134,7 +233,7 @@ function HomeContent() {
   useEffect(() => {
     let cancelled = false;
     const fetchDevices = () => {
-      fetch("http://localhost:3030/health")
+      localFetch("/health")
         .then((r) => r.ok ? r.json() : null)
         .then((health: { monitors?: string[]; device_status_details?: string } | null) => {
           if (cancelled || !health) return;
@@ -183,11 +282,17 @@ function HomeContent() {
   }, [settings.monitorIds, settings.useAllMonitors]);
 
   // Active meeting state — lights up the phone icon for ANY active meeting
-  // (manual OR auto-detected: Teams, Zoom, etc.). manualActive is true only
-  // when the user can stop it via the icon click.
-  const [meetingState, setMeetingState] = useState<{ active: boolean; manualActive: boolean }>(
-    { active: false, manualActive: false },
-  );
+  // (manual OR auto-detected: Teams, Zoom, etc.).
+  const [meetingState, setMeetingState] = useState<MeetingStatusResponse & {
+    manualActive: boolean;
+  }>({
+    active: false,
+    manualActive: false,
+    activeMeetingId: null,
+    stoppableMeetingId: null,
+    meetingApp: null,
+    detectionSource: null,
+  });
   const [meetingLoading, setMeetingLoading] = useState(false);
 
   // Timestamp when user clicked start, used for a 10s grace period so a
@@ -195,44 +300,100 @@ function HomeContent() {
   const manualMeetingStartedAt = useRef<number>(0);
   useEffect(() => {
     let cancelled = false;
-    const check = () => {
-      fetch("http://localhost:3030/meetings?limit=5")
-        .then((r) => r.ok ? r.json() : [])
-        .then((meetings: MeetingRow[]) => {
+    let ws: WebSocket | null = null;
+    let retry: ReturnType<typeof setTimeout> | null = null;
+    let backoffMs = 1000;
+
+    const connect = () => {
+      void (async () => {
+        try {
+          await ensureApiReady();
           if (cancelled) return;
-          setMeetingState(
-            computeMeetingActive(meetings, manualMeetingStartedAt.current),
-          );
-        })
-        .catch(() => {});
+          const wsBase = getApiBaseUrl().replace("http://", "ws://");
+          ws = new WebSocket(appendAuthToken(`${wsBase}/ws/meeting-status`));
+          ws.onopen = () => {
+            backoffMs = 1000;
+          };
+          ws.onmessage = (event) => {
+            try {
+              const parsed = JSON.parse(event.data) as MeetingStatusResponse;
+              if (cancelled) return;
+              setMeetingState(
+                computeMeetingActive(parsed, manualMeetingStartedAt.current),
+              );
+            } catch {
+              // ignore malformed event payloads
+            }
+          };
+          ws.onclose = (event) => {
+            if (cancelled || event.code === 1000) return;
+            retry = setTimeout(connect, backoffMs);
+            backoffMs = Math.min(backoffMs * 2, 10000);
+          };
+          ws.onerror = () => {
+            ws?.close();
+          };
+        } catch {
+          if (cancelled) return;
+          retry = setTimeout(connect, backoffMs);
+          backoffMs = Math.min(backoffMs * 2, 10000);
+        }
+      })();
     };
-    check();
-    const interval = setInterval(check, 5000);
-    return () => { cancelled = true; clearInterval(interval); };
+
+    connect();
+    return () => {
+      cancelled = true;
+      if (retry) clearTimeout(retry);
+      if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) {
+        ws.close(1000, "unmount");
+      }
+    };
   }, []);
 
-  const toggleMeeting = useCallback(async () => {
+  const toggleMeeting = useCallback(async (seed?: { title?: string; attendees?: string }) => {
     setMeetingLoading(true);
     try {
-      if (meetingState.manualActive) {
-        // Stop the manual meeting we previously started
-        await fetch("http://localhost:3030/meetings/stop", { method: "POST" });
-        manualMeetingStartedAt.current = 0;
-        setMeetingState({ active: false, manualActive: false });
-      } else if (meetingState.active) {
-        // Auto-detected meeting in progress — icon is a passive indicator,
-        // user can't stop someone else's Teams/Zoom call from here
-        return;
-      } else {
-        // No meeting active — start a manual one
-        const res = await fetch("http://localhost:3030/meetings/start", {
+      if (meetingState.active) {
+        // Stop the currently active meeting, whether manual or auto-detected.
+        const targetId = meetingState.stoppableMeetingId;
+        const res = await localFetch("/meetings/stop", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ app: "manual" }),
+          body: JSON.stringify({ id: targetId }),
+        });
+        if (res.ok) {
+          manualMeetingStartedAt.current = 0;
+          setMeetingState({
+            active: false,
+            manualActive: false,
+            activeMeetingId: null,
+            stoppableMeetingId: null,
+            meetingApp: null,
+            detectionSource: null,
+          });
+        }
+      } else {
+        // No meeting active — start a manual one (optionally seeded from a
+        // calendar event when the caller has it).
+        const body: Record<string, string> = { app: "manual" };
+        if (seed?.title) body.title = seed.title;
+        if (seed?.attendees) body.attendees = seed.attendees;
+        const res = await localFetch("/meetings/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(body),
         });
         if (res.ok) {
           manualMeetingStartedAt.current = Date.now();
-          setMeetingState({ active: true, manualActive: true });
+          setMeetingState({
+            active: true,
+            manualActive: true,
+            activeMeetingId: null,
+            stoppableMeetingId: null,
+            meetingApp: "manual",
+            detectionSource: "manual",
+          });
         }
       }
     } catch (e) {
@@ -242,14 +403,41 @@ function HomeContent() {
     }
   }, [meetingState]);
 
-  // Native overlay: toggle meeting when user clicks phone icon in Swift overlay
+  // Native overlay already toggles the meeting in Rust. Refresh local state
+  // here instead of toggling again, otherwise one click can create or stop
+  // two meetings depending on which UI surfaces are mounted.
   useEffect(() => {
     let unlisten: (() => void) | null = null;
-    listen("native-shortcut-toggle-meeting", () => {
-      toggleMeeting();
+    listen<MeetingStatusResponse>("native-shortcut-toggle-meeting", (event) => {
+      const payload = event.payload;
+      if (typeof payload?.active === "boolean") {
+        if (payload.active) {
+          manualMeetingStartedAt.current = Date.now();
+        } else {
+          manualMeetingStartedAt.current = 0;
+        }
+        setMeetingState({
+          active: payload.active,
+          manualActive: payload.manualActive ?? false,
+          activeMeetingId: payload.activeMeetingId ?? null,
+          stoppableMeetingId: payload.stoppableMeetingId ?? payload.activeMeetingId ?? null,
+          meetingApp: payload.meetingApp ?? null,
+          detectionSource: payload.detectionSource ?? null,
+        });
+        return;
+      }
+      void (async () => {
+        try {
+          const res = await localFetch("/meetings/status");
+          const status = res.ok ? await res.json() as MeetingStatusResponse : null;
+          setMeetingState(computeMeetingActive(status, manualMeetingStartedAt.current));
+        } catch {
+          // ignore sync failures; websocket remains source of truth
+        }
+      })();
     }).then((fn) => { unlisten = fn; });
     return () => { unlisten?.(); };
-  }, [toggleMeeting]);
+  }, []);
 
   // Watch pipe: navigate to chat when user clicks "watch" on a running pipe
   useEffect(() => {
@@ -268,11 +456,17 @@ function HomeContent() {
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail;
-      openSettings(detail?.section ?? "general");
+      const section = detail?.section ?? "general";
+      // connections is a top-level main-sidebar section now, not in settings
+      if (section === "connections") {
+        setActiveSection("connections");
+        return;
+      }
+      openSettings(section);
     };
     window.addEventListener("open-settings", handler);
     return () => window.removeEventListener("open-settings", handler);
-  }, [openSettings]);
+  }, [openSettings, setActiveSection]);
 
   const renderMainSection = () => {
     if (isSectionHidden(activeSection) && activeSection !== "help") {
@@ -285,13 +479,27 @@ function HomeContent() {
     }
     switch (activeSection) {
       case "home":
-        return <StandaloneChat className="h-full" />;
+        // Chat is rendered separately below — always-mounted so streaming
+        // and Pi event listeners survive navigation. Returning null here
+        // means the case branch falls through to the always-mounted chat.
+        return null;
       case "timeline":
         return <Timeline embedded />;
       case "memories":
         return <MemoriesSection />;
       case "pipes":
         return <PipeStoreView />;
+      case "connections":
+        return <ConnectionsSection />;
+      case "meetings":
+        return (
+          <MeetingNotesSection
+            meetingState={meetingState}
+            meetingLoading={meetingLoading}
+            onToggleMeeting={toggleMeeting}
+            onFocusModeChange={handleMeetingFocusModeChange}
+          />
+        );
       case "help":
         return <FeedbackSection />;
       default:
@@ -306,10 +514,15 @@ function HomeContent() {
 
   // Top-level nav items (filtered by enterprise policy)
   const mainSections = [
-    { id: "home", label: "Home", icon: <Home className="h-4 w-4" /> },
-    { id: "pipes", label: "Tasks", icon: <Workflow className="h-4 w-4" /> },
-    { id: "timeline", label: "Timeline", icon: <Clock className="h-4 w-4" /> },
-    { id: "memories", label: "Memories", icon: <Sparkles className="h-4 w-4" /> },
+    // The first nav item doubles as "go to chat view + start a fresh
+    // conversation". Each click allocates a new session id (empty
+    // rows are not reused — that felt like opening an old recent).
+    { id: "home", label: "New chat", icon: <Plus className="h-3.5 w-3.5" /> },
+    { id: "pipes", label: "Tasks", icon: <Workflow className="h-3.5 w-3.5" /> },
+    { id: "timeline", label: "Timeline", icon: <Clock className="h-3.5 w-3.5" /> },
+    { id: "meetings", label: "Meeting notes", icon: <NotebookPen className="h-3.5 w-3.5" /> },
+    { id: "memories", label: "Memories", icon: <Sparkles className="h-3.5 w-3.5" /> },
+    { id: "connections", label: "Connections", icon: <Plug className="h-3.5 w-3.5" /> },
   ].filter((s) => !isSectionHidden(s.id));
 
   // Listen for navigation events from other windows (e.g. tray, Rust-side links)
@@ -330,7 +543,10 @@ function HomeContent() {
     return () => { unlisten.then((fn) => fn()); };
   }, [setActiveSection, router]);
 
-  const isFullHeight = activeSection === "home" || activeSection === "timeline";
+  const isFullHeight =
+    activeSection === "home" ||
+    activeSection === "timeline" ||
+    activeSection === "meetings";
 
   return (
     <div className={cn("bg-transparent", isFullHeight ? "h-screen overflow-hidden" : "min-h-screen")} data-testid="home-page">
@@ -342,28 +558,72 @@ function HomeContent() {
       <div className="h-screen flex min-h-0">
           {/* Sidebar */}
           <TooltipProvider delayDuration={0}>
+          {/* Top-left action buttons — pinned next to the macOS traffic
+              lights when the sidebar is EXPANDED. When collapsed these
+              live as the first two rows of the icon column instead (see
+              below), so the title bar stays clean and the column has a
+              single icon per line. Fixed positioning anchors them to the
+              viewport so they aren't clipped by AppSidebar's overflow. */}
+          {!sidebarCollapsed && (
+            <>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={toggleSidebar}
+                    aria-label="collapse sidebar"
+                    className={cn(
+                      // top-1 + p-1 puts the 14px icon's center at y≈15px, matching the
+                      // vertical center of the macOS traffic lights (which sit at y≈14).
+                      "fixed top-1 z-20 p-1 rounded-md transition-colors",
+                      isMac ? "left-[78px]" : "left-2",
+                      isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    )}
+                  >
+                    <PanelLeftClose className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  collapse sidebar <kbd className="ml-1 px-1 py-0.5 bg-muted rounded text-[10px]">⌘B</kbd>
+                </TooltipContent>
+              </Tooltip>
+
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    onClick={() => {
+                      void commands.showWindow({ Search: { query: null } });
+                    }}
+                    aria-label="search"
+                    className={cn(
+                      "fixed top-1 z-20 p-1 rounded-md transition-colors",
+                      // 28px right of the collapse icon (icon 16 + gap 8 + small breathing).
+                      isMac ? "left-[110px]" : "left-9",
+                      isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    )}
+                  >
+                    <Search className="h-3.5 w-3.5" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  search
+                  <kbd className="ml-1 px-1 py-0.5 bg-muted rounded text-[10px]">
+                    {formatShortcutDisplay(
+                      settings.searchShortcut || (isMac ? "Control+Super+K" : "Alt+K"),
+                      isMac,
+                    )}
+                  </kbd>
+                </TooltipContent>
+              </Tooltip>
+            </>
+          )}
+
           <AppSidebar collapsed={sidebarCollapsed} className="pl-4">
+            {!sidebarCollapsed && (
             <div className={cn(isTranslucent ? "vibrant-sidebar-border" : "", "border-b", sidebarCollapsed ? "px-2 py-3" : "px-4 py-3")}>
-              {/* Row 1: name + phone + collapse */}
+              {/* Row 1: name (collapse moved out — pinned top-left next
+                  to the traffic lights, see above). */}
               <div className={cn("flex items-center", sidebarCollapsed ? "justify-center" : "justify-between")}>
                 {!sidebarCollapsed && <h1 className={cn("text-lg font-bold", isTranslucent ? "vibrant-heading" : "text-foreground")}>thadm</h1>}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={toggleSidebar}
-                      className={cn("transition-colors", isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground")}
-                    >
-                      {sidebarCollapsed ? (
-                        <PanelLeftOpen className="h-4 w-4" />
-                      ) : (
-                        <PanelLeftClose className="h-4 w-4" />
-                      )}
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom" className="text-xs">
-                    {sidebarCollapsed ? "expand sidebar" : "collapse sidebar"} <kbd className="ml-1 px-1 py-0.5 bg-muted rounded text-[10px]">⌘B</kbd>
-                  </TooltipContent>
-                </Tooltip>
               </div>
               {/* Row 2: device status + action buttons */}
               {!sidebarCollapsed && (() => {
@@ -396,12 +656,12 @@ function HomeContent() {
                             onClick={key === "monitor" ? undefined : async () => {
                               const allActive = groupDevices.every((d: RecordingDevice) => d.active);
                               const endpoint = allActive
-                                ? "http://localhost:3030/audio/device/stop"
-                                : "http://localhost:3030/audio/device/start";
+                                ? "/audio/device/stop"
+                                : "/audio/device/start";
                               for (const d of groupDevices) {
                                 if (allActive || !d.active) {
                                   const suffix = d.kind === "input" ? "input" : "output";
-                                  await fetch(endpoint, {
+                                  await localFetch(endpoint, {
                                     method: "POST",
                                     headers: { "Content-Type": "application/json" },
                                     body: JSON.stringify({ device_name: `${d.name} (${suffix})` }),
@@ -429,8 +689,8 @@ function HomeContent() {
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <button
-                          onClick={toggleMeeting}
-                          disabled={meetingLoading || (meetingState.active && !meetingState.manualActive)}
+                          onClick={() => toggleMeeting()}
+                          disabled={meetingLoading}
                           className={cn(
                             "relative flex items-center justify-center h-5 w-5 rounded transition-colors",
                             isTranslucent ? "vibrant-nav-item hover:bg-white/10" : "text-muted-foreground hover:text-foreground hover:bg-muted"
@@ -439,22 +699,88 @@ function HomeContent() {
                           {meetingState.active && (
                             <span className="absolute -top-0.5 -right-0.5 h-1.5 w-1.5 rounded-full bg-foreground animate-pulse" />
                           )}
-                          <Phone className="h-3 w-3" />
+                          <Phone className={cn("h-3 w-3", isTranslucent ? "vibrant-sidebar-fg" : "text-muted-foreground")} />
                         </button>
                       </TooltipTrigger>
-                      <TooltipContent side="bottom" className="text-xs">
-                        {meetingState.manualActive ? "stop meeting" : meetingState.active ? "meeting detected" : "start meeting"}
+                      <TooltipContent side="top" className="text-xs">
+                        {meetingState.active ? "stop meeting" : "start meeting"}
                       </TooltipContent>
                     </Tooltip>
                   </div>
                 );
               })()}
             </div>
+            )}
 
-            {/* Navigation */}
-            <div className="p-2 flex-1 overflow-y-auto flex flex-col">
-              {/* Main sections */}
-              <div className="space-y-0.5">
+            {/* Navigation.
+                Outer flex column has no overflow — the chat-list section
+                inside owns its own scroll, otherwise the team promo +
+                bottom items would be pushed below the fold by long
+                conversation lists. */}
+            <div className="p-2 flex-1 flex flex-col min-h-0">
+              {/* Main sections — when collapsed, the column is prefixed
+                  with the collapse + search icons (one-per-line, with a
+                  divider) so they sit just below the traffic lights. */}
+              <div className="space-y-0.5 shrink-0">
+                {sidebarCollapsed && (
+                  <>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={toggleSidebar}
+                          aria-label="expand sidebar"
+                          className={cn(
+                            "w-full flex items-center justify-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
+                            isTranslucent
+                              ? "vibrant-nav-item vibrant-nav-hover"
+                              : "hover:bg-card/50 text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <PanelLeftOpen className={cn(
+                            "h-3.5 w-3.5 transition-colors flex-shrink-0",
+                            isTranslucent ? "vibrant-sidebar-fg-muted" : "text-muted-foreground group-hover:text-foreground"
+                          )} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="text-xs">
+                        expand sidebar <kbd className="ml-1 px-1 py-0.5 bg-muted rounded text-[10px]">⌘B</kbd>
+                      </TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <button
+                          onClick={() => {
+                            void commands.showWindow({ Search: { query: null } });
+                          }}
+                          aria-label="search"
+                          className={cn(
+                            "w-full flex items-center justify-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
+                            isTranslucent
+                              ? "vibrant-nav-item vibrant-nav-hover"
+                              : "hover:bg-card/50 text-muted-foreground hover:text-foreground",
+                          )}
+                        >
+                          <Search className={cn(
+                            "h-3.5 w-3.5 transition-colors flex-shrink-0",
+                            isTranslucent ? "vibrant-sidebar-fg-muted" : "text-muted-foreground group-hover:text-foreground"
+                          )} />
+                        </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="right" className="text-xs">
+                        search
+                        <kbd className="ml-1 px-1 py-0.5 bg-muted rounded text-[10px]">
+                          {formatShortcutDisplay(
+                            settings.searchShortcut || (isMac ? "Control+Super+K" : "Alt+K"),
+                            isMac,
+                          )}
+                        </kbd>
+                      </TooltipContent>
+                    </Tooltip>
+                    {/* Divider between the search affordance and the
+                        primary nav (+ pipes / timeline / memories). */}
+                    <div className={cn("my-1 border-t", isTranslucent ? "vibrant-sidebar-border" : "border-border/50")} />
+                  </>
+                )}
                 {mainSections.map((section) => {
                   const isActive = activeSection === section.id;
                   const btn = (
@@ -463,9 +789,41 @@ function HomeContent() {
                       data-testid={`nav-${section.id}`}
                       onClick={() => {
                         setActiveSection(section.id);
+                        // The "home" slot is the New Chat affordance —
+                        // clicking it (from any view) always spawns a
+                        // new chat session and switches to it.
+                        if (section.id === "home") {
+                          // Always start a brand-new session. Reusing an
+                          // empty row (getOrCreateEmptyChatId) felt like
+                          // "nothing happened" / jumping to an old blank
+                          // row in recents instead of a fresh compose view.
+                          const id = crypto.randomUUID();
+                          const store = useChatStore.getState();
+                          // Drop stale drafts before creating a new one so
+                          // repeated "New chat" clicks don't accumulate empty rows.
+                          Object.values(store.sessions).forEach((s) => {
+                            if (s.draft) store.actions.drop(s.id);
+                          });
+                          store.actions.upsert({
+                            id,
+                            title: "new chat",
+                            preview: "",
+                            status: "idle",
+                            messageCount: 0,
+                            createdAt: Date.now(),
+                            updatedAt: Date.now(),
+                            pinned: false,
+                            unread: false,
+                            draft: true,
+                          });
+                          store.actions.setCurrent(id);
+                          void emit("chat-load-conversation", {
+                            conversationId: id,
+                          });
+                        }
                       }}
                       className={cn(
-                        "w-full flex items-center px-3 py-2 rounded-lg transition-all duration-150 text-left group",
+                        "w-full flex items-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
                         sidebarCollapsed ? "justify-center" : "space-x-2.5",
                         isActive
                           ? isTranslucent
@@ -484,7 +842,7 @@ function HomeContent() {
                       )}>
                         {section.icon}
                       </div>
-                      {!sidebarCollapsed && <span className={cn("text-sm truncate", isActive && isTranslucent ? "font-semibold vibrant-sidebar-fg" : "font-medium")}>{section.label}</span>}
+                      {!sidebarCollapsed && <span className={cn("text-xs truncate", isActive && isTranslucent ? "font-semibold vibrant-sidebar-fg" : "font-medium")}>{section.label}</span>}
                     </button>
                   );
                   if (sidebarCollapsed) {
@@ -500,35 +858,22 @@ function HomeContent() {
               </div>
 
 
-              {/* Spacer */}
-              <div className="flex-1" />
-
-              {/* THADM: disabled — team promo card */}
-              {/* {!teamState.team && !sidebarCollapsed && !isSectionHidden("team") && !teamPromoDismissed && (
-                <div className={cn("mx-1 mb-3 p-3 border relative group", isTranslucent ? "vibrant-card-border" : "border-border bg-card")}>
-                  <button
-                    onClick={() => {
-                      setTeamPromoDismissed(true);
-                      localStorage.setItem("team-promo-dismissed", "true");
-                    }}
-                    className={cn("absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity", isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground")}
-                  >
-                    <X className="h-3.5 w-3.5" />
-                  </button>
-                  <h3 className={cn("text-sm font-medium", isTranslucent ? "vibrant-heading" : "text-foreground")}>
-                    Add your team to thadm
-                  </h3>
-                  <p className={cn("text-xs mt-1", isTranslucent ? "vibrant-sidebar-fg-muted" : "text-muted-foreground")}>
-                    Push pipe configs and content filters to all members.
-                  </p>
-                  <button
-                    onClick={() => openSettings("team")}
-                    className={cn("mt-2.5 px-3 py-1.5 text-xs font-medium border transition-colors duration-150", isTranslucent ? "vibrant-btn-border" : "border-border bg-background hover:bg-foreground hover:text-background")}
-                  >
-                    ADD YOUR TEAM
-                  </button>
+              {/* Embedded chat list — sits below the nav, scrolls within
+                  its own viewport so the bottom nav items stay pinned.
+                  Hidden when the sidebar is collapsed (no room for the
+                  conversation titles). */}
+              {!sidebarCollapsed ? (
+                <div
+                  className={cn(
+                    "flex-1 min-h-0 flex flex-col mt-2 -mx-2 border-t pt-2 pb-6",
+                    isTranslucent ? "vibrant-sidebar-border" : "border-border/50"
+                  )}
+                >
+                  <ChatSidebar />
                 </div>
-              )} */}
+              ) : (
+                <div className="flex-1" />
+              )}
 
               {/* Bottom items */}
               <div className={cn("space-y-0.5 border-t pt-2", isTranslucent ? "vibrant-sidebar-border" : "border-border")}>
@@ -541,13 +886,13 @@ function HomeContent() {
                     <button
                       onClick={() => openSettings("team")}
                       className={cn(
-                        "w-full flex items-center px-3 py-2 rounded-lg transition-all duration-150 text-left group",
+                        "w-full flex items-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
                         sidebarCollapsed ? "justify-center" : "space-x-2.5",
                         isTranslucent ? "vibrant-nav-item vibrant-nav-hover" : "hover:bg-card/50 text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      <UserPlus className={cn("h-4 w-4 transition-colors flex-shrink-0", isTranslucent ? "" : "text-muted-foreground group-hover:text-foreground")} />
-                      {!sidebarCollapsed && <span className="font-medium text-sm truncate">{teamLabel}</span>}
+                      <UserPlus className={cn("h-3.5 w-3.5 transition-colors flex-shrink-0", isTranslucent ? "" : "text-muted-foreground group-hover:text-foreground")} />
+                      {!sidebarCollapsed && <span className="font-medium text-xs truncate">{teamLabel}</span>}
                     </button>
                   );
                   if (sidebarCollapsed) {
@@ -567,13 +912,13 @@ function HomeContent() {
                     <button
                       onClick={() => openSettings("referral")}
                       className={cn(
-                        "w-full flex items-center px-3 py-2 rounded-lg transition-all duration-150 text-left group",
+                        "w-full flex items-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
                         sidebarCollapsed ? "justify-center" : "space-x-2.5",
                         isTranslucent ? "vibrant-nav-item vibrant-nav-hover" : "hover:bg-card/50 text-muted-foreground hover:text-foreground",
                       )}
                     >
-                      <Gift className={cn("h-4 w-4 transition-colors flex-shrink-0", isTranslucent ? "" : "text-muted-foreground group-hover:text-foreground")} />
-                      {!sidebarCollapsed && <span className="font-medium text-sm truncate">Get free month</span>}
+                      <Gift className={cn("h-3.5 w-3.5 transition-colors flex-shrink-0", isTranslucent ? "" : "text-muted-foreground group-hover:text-foreground")} />
+                      {!sidebarCollapsed && <span className="font-medium text-xs truncate">Get free month</span>}
                     </button>
                   );
                   if (sidebarCollapsed) {
@@ -594,7 +939,7 @@ function HomeContent() {
                       data-testid="nav-settings"
                       onClick={() => openSettings("general")}
                       className={cn(
-                        "w-full flex items-center px-3 py-2 rounded-lg transition-all duration-150 text-left group",
+                        "w-full flex items-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
                         sidebarCollapsed ? "justify-center" : "space-x-2.5",
                         isTranslucent
                           ? "vibrant-nav-item vibrant-nav-hover"
@@ -605,9 +950,9 @@ function HomeContent() {
                         "transition-colors flex-shrink-0",
                         isTranslucent ? "" : "text-muted-foreground group-hover:text-foreground"
                       )}>
-                        <SettingsIcon className="h-4 w-4" />
+                        <SettingsIcon className="h-3.5 w-3.5" />
                       </div>
-                      {!sidebarCollapsed && <span className="font-medium text-sm truncate">Settings</span>}
+                      {!sidebarCollapsed && <span className="font-medium text-xs truncate">Settings</span>}
                     </button>
                   );
                   if (sidebarCollapsed) {
@@ -631,7 +976,7 @@ function HomeContent() {
                         setActiveSection("help");
                       }}
                       className={cn(
-                        "w-full flex items-center px-3 py-2 rounded-lg transition-all duration-150 text-left group",
+                        "w-full flex items-center px-2.5 py-1.5 rounded-lg transition-all duration-150 text-left group",
                         sidebarCollapsed ? "justify-center" : "space-x-2.5",
                         isActive
                           ? isTranslucent
@@ -648,9 +993,9 @@ function HomeContent() {
                           ? isTranslucent ? "" : "text-primary"
                           : isTranslucent ? "" : "text-muted-foreground group-hover:text-foreground"
                       )}>
-                        <HelpCircle className="h-4 w-4" />
+                        <HelpCircle className="h-3.5 w-3.5" />
                       </div>
-                      {!sidebarCollapsed && <span className="font-medium text-sm truncate">Help</span>}
+                      {!sidebarCollapsed && <span className="font-medium text-xs truncate">Help</span>}
                     </button>
                   );
                   if (sidebarCollapsed) {
@@ -671,16 +1016,36 @@ function HomeContent() {
           {/* Content */}
           <div className={cn("flex-1 flex flex-col h-full bg-background min-h-0 relative", isTranslucent ? "rounded-none" : "rounded-tr-lg")}>
             <TrialBanner />
-            {isFullHeight ? (
-              <div className="flex-1 min-h-0 overflow-hidden">
-                {renderMainSection()}
-              </div>
-            ) : (
-              <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
-                <div className="p-6 pb-12 max-w-4xl mx-auto">
+            {/* ALWAYS-MOUNTED chat layer.
+                Hidden via CSS (display:none) when the user is on a non-chat
+                section, so the StandaloneChat component never unmounts. This
+                is what gives us "background streaming" — the chat's own
+                pi_event listener stays subscribed and its in-memory message
+                state survives navigation to Timeline / Pipes / Settings.
+                Without this trick, switching tabs killed any in-flight
+                Pi response and lost the partial token stream. */}
+            <div
+              className={cn(
+                "flex-1 min-h-0 overflow-hidden",
+                activeSection !== "home" && "hidden"
+              )}
+            >
+              <StandaloneChat className="h-full" hideInlineHistory />
+            </div>
+
+            {/* Non-chat sections render on top when active. */}
+            {activeSection !== "home" && (
+              isFullHeight ? (
+                <div className="flex-1 min-h-0 overflow-hidden">
                   {renderMainSection()}
                 </div>
-              </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto overflow-x-hidden min-h-0">
+                  <div className="p-6 pb-12 max-w-4xl mx-auto">
+                    {renderMainSection()}
+                  </div>
+                </div>
+              )
             )}
           </div>
       </div>

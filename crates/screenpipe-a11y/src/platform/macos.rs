@@ -358,6 +358,7 @@ fn run_event_tap(
                     std::thread::sleep(std::time::Duration::from_millis(req.delay_ms));
                 }
                 let content = if req.capture_content {
+                    let _pool = cidre::objc::AutoreleasePoolPage::push();
                     get_clipboard().map(|s| {
                         let truncated = truncate(&s, 1000);
                         if req.apply_pii {
@@ -437,8 +438,10 @@ fn run_event_tap(
                 } else {
                     s
                 };
-                let event =
+                let mut event =
                     UiEvent::text(Utc::now(), state.start.elapsed().as_millis() as u64, text);
+                event.app_name = (**state.current_app.load()).clone();
+                event.window_title = (**state.current_window.load()).clone();
                 let _ = state.tx.try_send(event);
             }
         }
@@ -452,7 +455,9 @@ fn run_event_tap(
         } else {
             s
         };
-        let event = UiEvent::text(Utc::now(), state.start.elapsed().as_millis() as u64, text);
+        let mut event = UiEvent::text(Utc::now(), state.start.elapsed().as_millis() as u64, text);
+        event.app_name = (**state.current_app.load()).clone();
+        event.window_title = (**state.current_window.load()).clone();
         let _ = state.tx.try_send(event);
     }
 
@@ -1142,14 +1147,33 @@ fn get_focused_element_context(config: &UiCaptureConfig) -> Option<ElementContex
     })
 }
 
+// Dedicated serial queue for all NSPasteboard access. NSPasteboard / NSPasteboardItem
+// are not thread-safe — calling `[NSPasteboard stringForType:]` from a worker thread
+// races AppKit's internal type-cache invalidation when another app mutates the
+// pasteboard mid-read, segfaulting in `_updateTypeCacheIfNeeded` (seen on macOS 26.x,
+// crash report 57E6EDAB-D2D1-44D3-9BD0-82DCA482DBFF). The queue serializes every
+// pasteboard read through one thread; the `_with_ar_pool` variant wraps each block
+// in an autorelease pool so AppKit's per-call temp objects drain immediately.
+//
+// We use a private serial queue rather than the main queue so heavy main-thread
+// activity (UI hitches, modal dialogs) can't stall clipboard capture.
+static CLIPBOARD_QUEUE: std::sync::OnceLock<cidre::arc::R<cidre::dispatch::Queue>> =
+    std::sync::OnceLock::new();
+
+fn clipboard_queue() -> &'static cidre::dispatch::Queue {
+    CLIPBOARD_QUEUE.get_or_init(cidre::dispatch::Queue::serial_with_ar_pool)
+}
+
 fn get_clipboard() -> Option<String> {
-    let mut clipboard = arboard::Clipboard::new().ok()?;
-    let text = clipboard.get_text().ok()?;
-    if text.is_empty() {
-        None
-    } else {
-        Some(text)
-    }
+    clipboard_queue().sync_once(|| {
+        let mut clipboard = arboard::Clipboard::new().ok()?;
+        let text = clipboard.get_text().ok()?;
+        if text.is_empty() {
+            None
+        } else {
+            Some(text)
+        }
+    })
 }
 
 fn truncate(s: &str, max: usize) -> String {

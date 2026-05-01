@@ -9,7 +9,12 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Loader, Brain, Clock, Users } from "lucide-react";
 import { useOnboarding } from "@/lib/hooks/use-onboarding";
 import { scheduleFirstRunNotification } from "@/lib/notifications";
+import { commands } from "@/lib/utils/tauri";
 import posthog from "posthog-js";
+import { localFetch } from "@/lib/api";
+
+// Gmail badge shown on paths that benefit from email context
+const GMAIL_BOOSTED_PATHS = new Set(["memory", "people"]);
 
 const PATHS = [
   {
@@ -50,44 +55,86 @@ const PATHS = [
 type PathId = (typeof PATHS)[number]["id"];
 type Phase = "choose" | "enabling" | "done";
 
-async function waitForServer(maxWaitMs = 10000): Promise<void> {
+async function waitForServer(maxWaitMs = 30000): Promise<void> {
   const start = Date.now();
   while (Date.now() - start < maxWaitMs) {
     try {
-      const res = await fetch("http://localhost:3030/health");
+      const res = await localFetch("/health");
       if (res.ok) return;
     } catch {}
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 1000));
   }
   throw new Error("server not ready");
 }
 
-async function installAndEnable(slug: string): Promise<void> {
-  // Wait for server to be ready before attempting install
+// Best-effort immediate run after install/enable so `pipe_scheduled_run`
+// fires within seconds of the user picking a path, instead of waiting for
+// the next cron tick (hours/days). Closes the 41% pick→run gap measured
+// in PostHog (last 14d: 218 picked pipe-step → 128 had pipe actually run).
+// Silent on failure — never blocks onboarding completion.
+async function triggerImmediateRun(slug: string): Promise<void> {
+  try {
+    await localFetch(`/pipes/${slug}/run`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+  } catch {}
+}
+
+async function installAndEnable(slug: string, retries = 3): Promise<void> {
   await waitForServer();
 
-  const enableRes = await fetch(
-    `http://localhost:3030/pipes/${slug}/enable`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: true }),
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    try {
+      // Try enabling first (pipe might already be installed).
+      // NOTE: enable_pipe returns HTTP 200 even on error (Axum Json handler),
+      // so we must check the body for { "error": ... } not just res.ok.
+      const enableRes = await localFetch(`/pipes/${slug}/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      });
+      if (enableRes.ok) {
+        const enableBody = await enableRes.json().catch(() => ({}));
+        if (!enableBody.error) {
+          await triggerImmediateRun(slug);
+          return; // pipe was already installed and is now enabled
+        }
+      }
+
+      // Not installed — install from store
+      // pipe_store_install also returns HTTP 200 on error, so check body too
+      const installRes = await localFetch("/pipes/store/install", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug }),
+      });
+      const installBody = await installRes.json().catch(() => ({}));
+      if (!installRes.ok || installBody.error) {
+        throw new Error(`install ${slug}: ${installBody.error || installRes.status}`);
+      }
+
+      // Enable after install
+      const enable2 = await localFetch(`/pipes/${slug}/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: true }),
+      });
+      if (enable2.ok) {
+        const enable2Body = await enable2.json().catch(() => ({}));
+        if (!enable2Body.error) {
+          await triggerImmediateRun(slug);
+          return;
+        }
+        throw new Error(`enable ${slug} after install: ${enable2Body.error}`);
+      }
+      throw new Error(`enable ${slug} after install: ${enable2.status}`);
+    } catch (err) {
+      if (attempt === retries) throw err;
+      console.warn(`pipe ${slug} attempt ${attempt}/${retries} failed, retrying...`, err);
+      await new Promise((r) => setTimeout(r, 2000 * attempt));
     }
-  );
-
-  if (!enableRes.ok) {
-    const installRes = await fetch("http://localhost:3030/pipes/store/install", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ slug }),
-    });
-    if (!installRes.ok) throw new Error(`failed to install ${slug}`);
-
-    await fetch(`http://localhost:3030/pipes/${slug}/enable`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ enabled: true }),
-    });
   }
 }
 
@@ -97,6 +144,7 @@ export default function PickPipe() {
   const [seconds, setSeconds] = useState(0);
   const [showSkip, setShowSkip] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [gmailConnected, setGmailConnected] = useState(false);
   const { completeOnboarding } = useOnboarding();
   const isCompletingRef = useRef(false);
   const mountTimeRef = useRef(Date.now());
@@ -109,6 +157,17 @@ export default function PickPipe() {
   useEffect(() => {
     const timer = setTimeout(() => setShowSkip(true), 5000);
     return () => clearTimeout(timer);
+  }, []);
+
+  // Check if Gmail was connected in the previous connect-apps step
+  useEffect(() => {
+    commands.oauthStatus("gmail", null)
+      .then((res) => {
+        if (res.status === "ok" && res.data.connected) {
+          setGmailConnected(true);
+        }
+      })
+      .catch(() => {});
   }, []);
 
   const handleSelect = useCallback(
@@ -136,7 +195,7 @@ export default function PickPipe() {
         } catch {}
 
         try {
-          await fetch("http://localhost:3030/notify", {
+          await localFetch("/notify", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(path.notification),
@@ -228,6 +287,7 @@ export default function PickPipe() {
         <div className="flex flex-col gap-3 w-full">
           {PATHS.map((path, i) => {
             const Icon = path.icon;
+            const showGmailBadge = gmailConnected && GMAIL_BOOSTED_PATHS.has(path.id);
             return (
               <motion.button
                 key={path.id}
@@ -242,9 +302,16 @@ export default function PickPipe() {
                     <Icon className="w-4 h-4 text-foreground/60 group-hover:text-foreground transition-colors" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <p className="font-mono text-sm font-semibold">
-                      {path.title}
-                    </p>
+                    <div className="flex items-center gap-2">
+                      <p className="font-mono text-sm font-semibold">
+                        {path.title}
+                      </p>
+                      {showGmailBadge && (
+                        <span className="font-mono text-[8px] px-1 py-0.5 border border-foreground/20 text-muted-foreground/60 leading-none shrink-0">
+                          + gmail
+                        </span>
+                      )}
+                    </div>
                     <p className="font-mono text-[11px] text-muted-foreground mt-0.5">
                       {path.subtitle}
                     </p>

@@ -7,6 +7,16 @@ description: Query the user's screen recordings, audio, UI elements, and usage a
 
 Local REST API at `http://localhost:3030`. Full reference (60+ endpoints): https://docs.screenpi.pe/llms-full.txt
 
+## Authentication
+
+**ALL requests require authentication.** Add the auth header to every curl call:
+
+```bash
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/..."
+```
+
+The `$SCREENPIPE_LOCAL_API_KEY` env var is already set in your environment. Without it you get 403. The only exception is `/health` (no auth needed).
+
 ## Context Window Protection
 
 API responses can be large. Always write curl output to a file first (`curl ... -o /tmp/sp_result.json`), check size (`wc -c /tmp/sp_result.json`), and if over 5KB read only the first 50-100 lines. Extract what you need with `jq`. NEVER dump full large responses into context.
@@ -16,7 +26,7 @@ API responses can be large. Always write curl output to a file first (`curl ... 
 ## 1. Search — `GET /search`
 
 ```bash
-curl "http://localhost:3030/search?q=QUERY&content_type=all&limit=10&start_time=1h%20ago"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/search?q=QUERY&content_type=all&limit=10&start_time=1h%20ago"
 ```
 
 ### Parameters
@@ -84,7 +94,7 @@ Decision tree:
 ## 2. Activity Summary — `GET /activity-summary`
 
 ```bash
-curl "http://localhost:3030/activity-summary?start_time=1h%20ago&end_time=now"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/activity-summary?start_time=1h%20ago&end_time=now"
 ```
 
 Returns a rich overview with:
@@ -102,7 +112,7 @@ This is usually enough to answer "what was I doing?" without further searches. O
 Lightweight FTS search across UI elements (~100-500 bytes each vs 5-20KB from `/search`).
 
 ```bash
-curl "http://localhost:3030/elements?q=Submit&start_time=1h%20ago&limit=10"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/elements?q=Submit&start_time=1h%20ago&limit=10"
 ```
 
 Parameters: `q`, `frame_id`, `source` (`accessibility`|`ocr`), `role`, `start_time`, `end_time`, `app_name`, `limit`, `offset`.
@@ -112,7 +122,7 @@ Parameters: `q`, `frame_id`, `source` (`accessibility`|`ocr`), `role`, `start_ti
 Returns accessibility text, parsed nodes, and extracted URLs for a frame.
 
 ```bash
-curl "http://localhost:3030/frames/6789/context"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/frames/6789/context"
 ```
 
 ### Common Roles (platform-specific)
@@ -269,13 +279,45 @@ Returns credentials to use with service APIs directly:
 
 If not connected, tell user to set up in Settings > Connections.
 
+Each entry's `description` field is self-describing — for capabilities that
+need a control surface (browsers, gateways, etc.), the description includes
+the exact endpoint and body shape. Read it before guessing.
+
+### Browser Control — `owned-default`
+
+You have an embedded browser you can drive directly. Don't curl `/connections`
+to discover it — just hit these endpoints:
+
+```bash
+# Navigate (slides the browser sidebar in for the user)
+curl -X POST -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com"}' \
+  http://localhost:3030/connections/browsers/owned-default/eval
+
+# Run JS on the current page and read the result
+curl -X POST -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"code": "document.title"}' \
+  http://localhost:3030/connections/browsers/owned-default/eval
+
+# Navigate AND run JS in one call
+curl -X POST -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://news.ycombinator.com", "code": "[...document.querySelectorAll(\".titleline > a\")].slice(0,5).map(a => a.innerText)"}' \
+  http://localhost:3030/connections/browsers/owned-default/eval
+```
+
+Response: `{"ok": true, "result": <whatever your code returned>}` or
+`{"ok": false, "error": "..."}`. Cookies persist across calls (own profile).
+
 ---
 
 ## 9. Meetings — `GET /meetings`
 
 ```bash
-curl "http://localhost:3030/meetings?start_time=1d%20ago&end_time=now&limit=10&offset=0"
-curl "http://localhost:3030/meetings/42"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/meetings?start_time=1d%20ago&end_time=now&limit=10&offset=0"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/meetings/42"
 ```
 
 Returns detected meetings (from calendar, app detection, window titles, UI elements, multi-speaker audio).
@@ -298,13 +340,13 @@ Also available via raw SQL: `SELECT * FROM meetings WHERE meeting_start > dateti
 
 ```bash
 # Search speakers by name
-curl "http://localhost:3030/speakers/search?name=John"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/speakers/search?name=John"
 
 # Get unnamed speakers (for labeling)
-curl "http://localhost:3030/speakers/unnamed?limit=20&offset=0"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/speakers/unnamed?limit=20&offset=0"
 
 # Get speakers similar to a given speaker (by voice embedding)
-curl "http://localhost:3030/speakers/similar?speaker_id=29&limit=5"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/speakers/similar?speaker_id=29&limit=5"
 
 # Update speaker name/metadata
 curl -X POST http://localhost:3030/speakers/update \
@@ -366,13 +408,13 @@ When the user says "that was actually Jordan, not Karishma":
 
 ```bash
 # Search memories (FTS) — do this often!
-curl "http://localhost:3030/memories?q=preference&limit=20"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/memories?q=preference&limit=20"
 
 # List recent memories (high importance first)
-curl "http://localhost:3030/memories?min_importance=0.5&limit=20"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/memories?min_importance=0.5&limit=20"
 
 # Filter by source or tags
-curl "http://localhost:3030/memories?source=user&tags=project&limit=20"
+curl -H "Authorization: Bearer $SCREENPIPE_LOCAL_API_KEY" "http://localhost:3030/memories?source=user&tags=project&limit=20"
 
 # Create a memory
 curl -X POST http://localhost:3030/memories \
@@ -421,9 +463,16 @@ curl -X POST http://localhost:11435/notify \
   -d '{"title": "Export complete", "body": "saved to [report.csv](~/Downloads/report.csv)"}'
 
 # With action buttons
+# Use `type: "link"` for external URLs and `type: "deeplink"` for
+# screenpipe:// in-app routes. `type: "dismiss"` closes the notification.
 curl -X POST http://localhost:11435/notify \
   -H "Content-Type: application/json" \
   -d '{"title": "Meeting summary", "body": "**Q3 Planning**\n- Budget approved", "actions": [{"id": "view", "label": "view", "type": "deeplink", "url": "thadm://timeline"}, {"id": "skip", "label": "skip", "type": "dismiss"}]}'
+
+# External URL action (opens in browser)
+curl -X POST http://localhost:11435/notify \
+  -H "Content-Type: application/json" \
+  -d '{"title": "PR ready for review", "body": "nice work", "actions": [{"id": "open", "label": "open pr", "type": "link", "url": "https://github.com/screenpipe/screenpipe/pull/1234"}]}'
 
 # Custom auto-dismiss (5 seconds)
 curl -X POST http://localhost:11435/notify \

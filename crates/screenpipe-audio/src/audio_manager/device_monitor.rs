@@ -200,6 +200,27 @@ pub async fn start_device_monitor(
 
         loop {
             if audio_manager.status().await == AudioManagerStatus::Running {
+                // Check if sleep/wake or display reconfiguration requested
+                // audio stream invalidation. Force-cycle all running devices
+                // to recover from silent CoreAudio stream failures.
+                if crate::stream_invalidation::take() {
+                    info!("[DEVICE_RECOVERY] audio stream invalidation requested (wake/display change), restarting all devices");
+                    let enabled = audio_manager.enabled_devices().await;
+                    for device_name in &enabled {
+                        if let Ok(device) = parse_audio_device(device_name) {
+                            // Gracefully stop the recording: signals is_running=false,
+                            // tears down the cpal stream, then aborts the task handle.
+                            // Does NOT remove from enabled_devices so restart picks it up.
+                            let _ = audio_manager.stop_device_recording(&device).await;
+                        }
+                        disconnected_devices.insert(device_name.clone());
+                    }
+                    // Let CoreAudio settle after wake before the reconnect
+                    // logic kicks in on the next loop iteration
+                    sleep(Duration::from_secs(2)).await;
+                    continue;
+                }
+
                 let currently_available_devices = device_manager.devices().await;
                 if currently_available_devices.is_empty() {
                     warn!("[DEVICE_RECOVERY] device list returned empty (transient SCK failure?), skipping availability checks this cycle");
@@ -930,6 +951,13 @@ pub async fn start_device_monitor(
                                 let e_str = e.to_string();
                                 if e_str.contains("already running") || e_str.contains("not found")
                                 {
+                                    continue;
+                                }
+                                // SCK transiently fails during device switches ("callback never
+                                // fired") — downgrade to warn so it doesn't reach Sentry; the
+                                // monitor will retry on the next 2-second tick.
+                                if e_str.contains("callback never fired") {
+                                    warn!("device check transient error (will retry): {e}");
                                     continue;
                                 }
                                 error!("device check error: {e}");

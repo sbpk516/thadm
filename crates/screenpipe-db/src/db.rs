@@ -43,6 +43,7 @@ const DEDUP_TIME_WINDOW_SECS: i64 = 45;
 /// Similarity threshold for cross-device deduplication (0.0 to 1.0).
 /// Higher = stricter matching, lower = more aggressive deduplication.
 const DEDUP_SIMILARITY_THRESHOLD: f64 = 0.85;
+const FRAMES_FTS_EXTERNAL_CONTENT_MIGRATION_VERSION: i64 = 20260415000000;
 
 pub struct DeleteTimeRangeResult {
     pub frames_deleted: u64,
@@ -55,6 +56,17 @@ pub struct DeleteTimeRangeResult {
     pub video_files: Vec<String>,
     pub audio_files: Vec<String>,
     /// Snapshot JPEG files that were uploaded to cloud and can be deleted.
+    pub snapshot_files: Vec<String>,
+}
+
+/// Outcome of `evict_media_in_range`. DB rows stay alive (search/timeline
+/// keep working); only mp4/wav/jpeg files are reclaimed.
+pub struct EvictMediaResult {
+    pub video_chunks_evicted: u64,
+    pub audio_chunks_evicted: u64,
+    pub snapshots_evicted: u64,
+    pub video_files: Vec<String>,
+    pub audio_files: Vec<String>,
     pub snapshot_files: Vec<String>,
 }
 
@@ -117,6 +129,7 @@ impl Drop for ImmediateTx {
                 // If ROLLBACK fails, we detach as a last resort (better to leak one
                 // slot than poison the pool with a stuck transaction).
                 warn!("ImmediateTx dropped without commit — rolling back");
+                let permit = self._write_permit.take(); // Hold permit until rollback completes
                 tokio::spawn(async move {
                     match sqlx::query("ROLLBACK").execute(&mut *conn).await {
                         Ok(_) => {
@@ -131,8 +144,8 @@ impl Drop for ImmediateTx {
                             let _raw = conn.detach();
                         }
                     }
+                    drop(permit); // Release the write permit so other writers can proceed
                 });
-                // Release the write permit so other writers can proceed
             }
         }
     }
@@ -161,6 +174,55 @@ pub struct DatabaseManager {
     /// Write coalescing queue. Hot-path writes are submitted here and
     /// batched into single transactions every 100ms.
     write_queue: crate::write_queue::WriteQueue,
+}
+
+/// One level-0 OCR element row, buffered for bulk insertion.
+struct Level0Row<'a> {
+    text: &'a str,
+    left: Option<f64>,
+    top: Option<f64>,
+    width: Option<f64>,
+    height: Option<f64>,
+    confidence: Option<f64>,
+    sort_order: i32,
+}
+
+/// Bulk-insert a batch of level-0 OCR elements (no hierarchy, parent_id = NULL).
+/// One INSERT statement with `chunk.len()` VALUES rows replaces N round-trips
+/// through `RETURNING id`. Used by the level-0 fast path in
+/// `DatabaseManager::insert_ocr_elements`.
+async fn flush_level0_bulk(
+    tx: &mut sqlx::pool::PoolConnection<Sqlite>,
+    frame_id: i64,
+    chunk: &[Level0Row<'_>],
+) -> Result<(), sqlx::Error> {
+    if chunk.is_empty() {
+        return Ok(());
+    }
+    let mut sql = String::with_capacity(200 + chunk.len() * 40);
+    sql.push_str(
+        "INSERT INTO elements (frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order) VALUES ",
+    );
+    for i in 0..chunk.len() {
+        if i > 0 {
+            sql.push(',');
+        }
+        sql.push_str("(?,'ocr','block',?,NULL,0,?,?,?,?,?,?)");
+    }
+    let mut q = sqlx::query(&sql);
+    for row in chunk {
+        q = q
+            .bind(frame_id)
+            .bind(row.text)
+            .bind(row.left)
+            .bind(row.top)
+            .bind(row.width)
+            .bind(row.height)
+            .bind(row.confidence)
+            .bind(row.sort_order);
+    }
+    q.execute(&mut **tx).await?;
+    Ok(())
 }
 
 impl DatabaseManager {
@@ -268,6 +330,7 @@ impl DatabaseManager {
     async fn run_migrations(pool: &SqlitePool) -> Result<(), sqlx::Error> {
         let mut migrator = sqlx::migrate!("./src/migrations");
         migrator.set_ignore_missing(true);
+        Self::log_pending_search_index_migration(pool, &migrator).await;
         match migrator.run(pool).await {
             Ok(_) => {}
             Err(e) => {
@@ -297,6 +360,63 @@ impl DatabaseManager {
         Self::ensure_event_driven_columns(pool).await?;
 
         Ok(())
+    }
+
+    async fn log_pending_search_index_migration(
+        pool: &SqlitePool,
+        migrator: &sqlx::migrate::Migrator,
+    ) {
+        if !migrator
+            .iter()
+            .any(|migration| migration.version == FRAMES_FTS_EXTERNAL_CONTENT_MIGRATION_VERSION)
+        {
+            return;
+        }
+
+        let migration_table_exists = match sqlx::query_scalar::<_, i64>(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+        )
+        .fetch_one(pool)
+        .await
+        {
+            Ok(count) => count > 0,
+            Err(e) => {
+                debug!("could not inspect _sqlx_migrations before migrate: {}", e);
+                return;
+            }
+        };
+
+        let migration_pending = if migration_table_exists {
+            match sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM _sqlx_migrations WHERE version = ?",
+            )
+            .bind(FRAMES_FTS_EXTERNAL_CONTENT_MIGRATION_VERSION)
+            .fetch_one(pool)
+            .await
+            {
+                Ok(count) => count == 0,
+                Err(e) => {
+                    debug!("could not inspect applied migrations before migrate: {}", e);
+                    return;
+                }
+            }
+        } else {
+            match sqlx::query_scalar::<_, i64>("SELECT 1 FROM frames LIMIT 1")
+                .fetch_optional(pool)
+                .await
+            {
+                Ok(Some(_)) => true,
+                Ok(None) => false,
+                Err(e) => {
+                    debug!("could not inspect existing frames before migrate: {}", e);
+                    return;
+                }
+            }
+        };
+
+        if migration_pending {
+            info!("migrating frames_fts search index, this may take a few minutes on large databases...");
+        }
     }
 
     /// Fix checksum mismatches by updating stored checksums to match current migration files.
@@ -855,7 +975,7 @@ impl DatabaseManager {
         let count = sqlx::query_scalar::<_, i64>(
             "SELECT COUNT(*) FROM audio_transcriptions
              WHERE is_input_device = 0
-               AND timestamp >= datetime('now', ?1)
+               AND timestamp >= strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now', ?1)
              LIMIT 1",
         )
         .bind(format!("-{} seconds", within_secs))
@@ -975,7 +1095,7 @@ impl DatabaseManager {
         {
             debug!(
                 "Skipping duplicate transcription (cross-device): {:?}",
-                &trimmed[..trimmed.len().min(50)]
+                trimmed.chars().take(50).collect::<String>()
             );
             return Ok(0);
         }
@@ -1034,7 +1154,7 @@ impl DatabaseManager {
         if is_duplicate {
             debug!(
                 "Skipping duplicate transcription (cross-device): {:?}",
-                &trimmed[..trimmed.len().min(50)]
+                trimmed.chars().take(50).collect::<String>()
             );
         }
 
@@ -1072,7 +1192,7 @@ impl DatabaseManager {
         // Fetch recent transcriptions from ALL devices
         let recent: Vec<(String,)> = sqlx::query_as(
             "SELECT transcription FROM audio_transcriptions
-             WHERE timestamp > datetime('now', ?1)
+             WHERE timestamp > strftime('%Y-%m-%dT%H:%M:%S+00:00', 'now', ?1)
              ORDER BY timestamp DESC
              LIMIT 50",
         )
@@ -1322,6 +1442,29 @@ impl DatabaseManager {
         .fetch_optional(&self.pool)
         .await?;
 
+        if speaker.is_none() {
+            // Log the closest distance for debugging speaker fragmentation issues
+            let closest: Option<(f32,)> = sqlx::query_as(
+                "SELECT vec_distance_cosine(centroid, vec_f32(?1))
+                 FROM speakers
+                 WHERE centroid IS NOT NULL
+                 ORDER BY vec_distance_cosine(centroid, vec_f32(?1))
+                 LIMIT 1",
+            )
+            .bind(bytes)
+            .fetch_optional(&self.pool)
+            .await
+            .ok()
+            .flatten();
+
+            if let Some((distance,)) = closest {
+                debug!(
+                    "speaker embedding match failed: threshold={}, closest_distance={}",
+                    speaker_threshold, distance
+                );
+            }
+        }
+
         Ok(speaker)
     }
 
@@ -1473,6 +1616,40 @@ impl DatabaseManager {
                         .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
                         .collect();
                     Some((id, name, floats))
+                } else {
+                    None
+                }
+            })
+            .collect())
+    }
+
+    /// Get ALL speakers with non-null centroids (including unnamed ones) for seeding.
+    /// Limit to the N most recent speakers to avoid memory bloat on long-running systems.
+    /// Returns (speaker_id, name, centroid as Vec<f32>).
+    pub async fn get_all_speakers_with_centroids(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<(i64, String, Vec<f32>)>, SqlxError> {
+        let rows: Vec<(i64, Option<String>, Vec<u8>)> = sqlx::query_as(
+            "SELECT id, name, centroid FROM speakers \
+             WHERE centroid IS NOT NULL \
+             AND (hallucination IS NULL OR hallucination = 0) \
+             ORDER BY id DESC LIMIT ?1",
+        )
+        .bind(limit as i64)
+        .fetch_all(&self.pool)
+        .await?;
+
+        Ok(rows
+            .into_iter()
+            .filter_map(|(id, name, blob)| {
+                if blob.len() == 512 * 4 {
+                    let floats: Vec<f32> = blob
+                        .chunks_exact(4)
+                        .map(|c| f32::from_le_bytes([c[0], c[1], c[2], c[3]]))
+                        .collect();
+                    let name_str = name.unwrap_or_else(|| format!("speaker_{}", id));
+                    Some((id, name_str, floats))
                 } else {
                     None
                 }
@@ -1706,6 +1883,11 @@ impl DatabaseManager {
     /// `elements` table. Builds a page→block→paragraph→line→word hierarchy using
     /// `RETURNING id` to chain parent IDs within the same transaction.
     ///
+    /// Level-0 blocks (Apple Native OCR — the default macOS path) have no hierarchy,
+    /// so they are accumulated and bulk-inserted in chunks via multi-row VALUES.
+    /// Hierarchical levels (Tesseract: 1-5) still go through per-row `RETURNING id`
+    /// because each row's id may become the parent of a later row.
+    ///
     /// Errors are logged and swallowed so that the primary OCR insert path is never
     /// blocked by a failure in the new elements table.
     pub(crate) async fn insert_ocr_elements(
@@ -1724,8 +1906,16 @@ impl DatabaseManager {
             return;
         }
 
+        // 12 params per row × 80 rows = 960 params, well below SQLite's
+        // default SQLITE_LIMIT_VARIABLE_NUMBER (999 on older builds, 32766 on
+        // newer). Larger flushes save round-trips on the hot path.
+        const BULK_CHUNK: usize = 80;
+
+        // Buffer of ready-to-insert level-0 rows. Flushed when full or when
+        // we encounter a hierarchical block that needs RETURNING.
+        let mut buf: Vec<Level0Row<'_>> = Vec::with_capacity(BULK_CHUNK);
+
         // Track hierarchy: (page, block, par, line) → element_id
-        // We use a BTreeMap so keys are ordered.
         let mut page_ids: BTreeMap<i64, i64> = BTreeMap::new();
         let mut block_ids: BTreeMap<(i64, i64), i64> = BTreeMap::new();
         let mut par_ids: BTreeMap<(i64, i64, i64), i64> = BTreeMap::new();
@@ -1745,16 +1935,49 @@ impl DatabaseManager {
             let height: Option<f64> = block.height.parse().ok();
             let conf: Option<f64> = block.conf.parse().ok();
 
-            let (role, text, parent_id, depth, confidence) = match level {
-                // Level 0: flat text blocks from Apple Native OCR (no hierarchy).
-                // Each block is a standalone text element (like a line/word).
-                0 => {
-                    let text_val = block.text.as_str();
-                    if text_val.trim().is_empty() {
-                        continue;
-                    }
-                    ("block", Some(text_val), None::<i64>, 0i32, conf)
+            // Fast path for level 0 (Apple Native, vast majority of Mac frames).
+            if level == 0 {
+                let text_val = block.text.as_str();
+                if text_val.trim().is_empty() {
+                    continue;
                 }
+                buf.push(Level0Row {
+                    text: text_val,
+                    left,
+                    top,
+                    width,
+                    height,
+                    confidence: conf,
+                    sort_order,
+                });
+                sort_order += 1;
+                if buf.len() >= BULK_CHUNK {
+                    if let Err(e) = flush_level0_bulk(tx, frame_id, &buf).await {
+                        debug!(
+                            "elements: OCR bulk insert failed for frame {}: {}",
+                            frame_id, e
+                        );
+                        return;
+                    }
+                    buf.clear();
+                }
+                continue;
+            }
+
+            // Hierarchical levels (Tesseract). Flush any pending level-0 rows
+            // first so sort_order interleaves correctly.
+            if !buf.is_empty() {
+                if let Err(e) = flush_level0_bulk(tx, frame_id, &buf).await {
+                    debug!(
+                        "elements: OCR bulk insert failed for frame {}: {}",
+                        frame_id, e
+                    );
+                    return;
+                }
+                buf.clear();
+            }
+
+            let (role, text, parent_id, depth, confidence) = match level {
                 1 => {
                     if page_ids.contains_key(&page_num) {
                         continue;
@@ -1835,6 +2058,16 @@ impl DatabaseManager {
                     debug!("elements: OCR insert failed for frame {}: {}", frame_id, e);
                     return;
                 }
+            }
+        }
+
+        // Flush any remaining buffered level-0 rows.
+        if !buf.is_empty() {
+            if let Err(e) = flush_level0_bulk(tx, frame_id, &buf).await {
+                debug!(
+                    "elements: OCR bulk insert failed for frame {}: {}",
+                    frame_id, e
+                );
             }
         }
     }
@@ -2788,7 +3021,7 @@ impl DatabaseManager {
         LIMIT ?10 OFFSET ?11
         "#,
             fts_join = if has_fts {
-                "JOIN frames_fts ON frames.id = frames_fts.id"
+                "JOIN frames_fts ON frames.id = frames_fts.rowid"
             } else {
                 ""
             },
@@ -3015,8 +3248,8 @@ impl DatabaseManager {
                 .await?;
 
         match snapshot {
-            Some((Some(path),)) => Ok(Some((path, 0, true))),
-            Some((None,)) => {
+            Some((Some(path),)) if !path.is_empty() => Ok(Some((path, 0, true))),
+            Some((Some(_),)) | Some((None,)) => {
                 // Legacy frame — get from video_chunks
                 let result = sqlx::query_as::<_, (String, i64)>(
                     r#"
@@ -3294,7 +3527,7 @@ impl DatabaseManager {
                        AND (?7 IS NULL OR frames.focused = ?7)
                        {a11y_filter}"#,
                 fts_join = if has_fts {
-                    "JOIN frames_fts ON frames.id = frames_fts.id"
+                    "JOIN frames_fts ON frames.id = frames_fts.rowid"
                 } else {
                     ""
                 },
@@ -3986,7 +4219,7 @@ impl DatabaseManager {
             LIMIT ?4 OFFSET ?5
             "#,
             fts_join = if has_fts {
-                "JOIN frames_fts ON f.id = frames_fts.id"
+                "JOIN frames_fts ON f.id = frames_fts.rowid"
             } else {
                 ""
             },
@@ -4761,6 +4994,189 @@ impl DatabaseManager {
         })
     }
 
+    /// Media-only eviction: keeps DB rows (frames, ocr_text, transcriptions,
+    /// ui_events) intact so search/timeline keep working, but reclaims the
+    /// heavy mp4/wav/jpeg files on disk. A chunk is only evicted if every
+    /// frame/transcription it owns falls inside [start, end] — straddling
+    /// chunks are left alone so unrelated playback isn't broken.
+    ///
+    /// Marks evicted chunks with `evicted_at = CURRENT_TIMESTAMP` and clears
+    /// `file_path` to '' so loaders can early-out without dereferencing a
+    /// stale path. Caller is responsible for unlinking the returned files.
+    pub async fn evict_media_in_range(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<EvictMediaResult, sqlx::Error> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+
+        let start_str = start.to_rfc3339();
+        let end_str = end.to_rfc3339();
+
+        // Collect video chunks fully covered by the range and not already
+        // evicted. We only consider chunks whose ALL frames fall inside the
+        // window — straddling chunks are skipped so old playback still works.
+        let video_files: Vec<String> = sqlx::query_scalar(
+            r#"SELECT file_path FROM video_chunks
+               WHERE evicted_at IS NULL
+               AND file_path != ''
+               AND file_path NOT LIKE 'cloud://%'
+               AND id IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp BETWEEN ?1 AND ?2)
+               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .fetch_all(&mut **tx.conn())
+        .await?;
+
+        let audio_files: Vec<String> = sqlx::query_scalar(
+            r#"SELECT file_path FROM audio_chunks
+               WHERE evicted_at IS NULL
+               AND file_path != ''
+               AND file_path NOT LIKE 'cloud://%'
+               AND id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp BETWEEN ?1 AND ?2)
+               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .fetch_all(&mut **tx.conn())
+        .await?;
+
+        // Snapshot JPEGs are per-frame, not chunked, so we can evict them
+        // unconditionally for any frame inside the range.
+        let snapshot_files: Vec<String> = sqlx::query_scalar(
+            r#"SELECT snapshot_path FROM frames
+               WHERE timestamp BETWEEN ?1 AND ?2
+               AND snapshot_path IS NOT NULL"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .fetch_all(&mut **tx.conn())
+        .await?;
+
+        // Mark video_chunks as evicted (file_path -> '', evicted_at -> now)
+        let video_evict = sqlx::query(
+            r#"UPDATE video_chunks
+               SET file_path = '', evicted_at = CURRENT_TIMESTAMP
+               WHERE evicted_at IS NULL
+               AND file_path != ''
+               AND file_path NOT LIKE 'cloud://%'
+               AND id IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp BETWEEN ?1 AND ?2)
+               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        let audio_evict = sqlx::query(
+            r#"UPDATE audio_chunks
+               SET file_path = '', evicted_at = CURRENT_TIMESTAMP
+               WHERE evicted_at IS NULL
+               AND file_path != ''
+               AND file_path NOT LIKE 'cloud://%'
+               AND id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp BETWEEN ?1 AND ?2)
+               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        let snapshot_evict = sqlx::query(
+            r#"UPDATE frames
+               SET snapshot_path = NULL
+               WHERE timestamp BETWEEN ?1 AND ?2
+               AND snapshot_path IS NOT NULL"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .execute(&mut **tx.conn())
+        .await?;
+
+        tx.commit().await.map_err(|e| {
+            error!("failed to commit evict_media_in_range transaction: {}", e);
+            e
+        })?;
+
+        debug!(
+            "evict_media_in_range committed: video_chunks={}, audio_chunks={}, snapshots={}",
+            video_evict.rows_affected(),
+            audio_evict.rows_affected(),
+            snapshot_evict.rows_affected(),
+        );
+
+        Ok(EvictMediaResult {
+            video_chunks_evicted: video_evict.rows_affected(),
+            audio_chunks_evicted: audio_evict.rows_affected(),
+            snapshots_evicted: snapshot_evict.rows_affected(),
+            video_files,
+            audio_files,
+            snapshot_files,
+        })
+    }
+
+    /// Estimate disk reclaimable by `evict_media_in_range` for [start, end].
+    /// Returns (file count, total bytes). Reads file sizes from disk via
+    /// `tokio::fs::metadata`, so cost is O(N) syscalls — keep ranges
+    /// reasonable (the UI calls this for retention preview, not per-second).
+    pub async fn estimate_evictable_bytes(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<(u64, u64), sqlx::Error> {
+        let start_str = start.to_rfc3339();
+        let end_str = end.to_rfc3339();
+
+        let mut paths: Vec<String> = sqlx::query_scalar(
+            r#"SELECT file_path FROM video_chunks
+               WHERE evicted_at IS NULL
+               AND file_path != ''
+               AND file_path NOT LIKE 'cloud://%'
+               AND id IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp BETWEEN ?1 AND ?2)
+               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .fetch_all(&self.pool)
+        .await?;
+
+        let audio: Vec<String> = sqlx::query_scalar(
+            r#"SELECT file_path FROM audio_chunks
+               WHERE evicted_at IS NULL
+               AND file_path != ''
+               AND file_path NOT LIKE 'cloud://%'
+               AND id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp BETWEEN ?1 AND ?2)
+               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .fetch_all(&self.pool)
+        .await?;
+        paths.extend(audio);
+
+        let snapshots: Vec<String> = sqlx::query_scalar(
+            r#"SELECT snapshot_path FROM frames
+               WHERE timestamp BETWEEN ?1 AND ?2
+               AND snapshot_path IS NOT NULL"#,
+        )
+        .bind(&start_str)
+        .bind(&end_str)
+        .fetch_all(&self.pool)
+        .await?;
+        paths.extend(snapshots);
+
+        let mut bytes: u64 = 0;
+        let mut count: u64 = 0;
+        for p in &paths {
+            if let Ok(meta) = tokio::fs::metadata(p).await {
+                bytes = bytes.saturating_add(meta.len());
+                count += 1;
+            }
+        }
+        Ok((count, bytes))
+    }
+
     /// Fast batch delete: only deletes time-range-bounded rows (ocr_text,
     /// elements, frames, audio_transcriptions, ui_events). Skips the expensive
     /// orphan cleanup (video_chunks, audio_chunks) which requires full-table
@@ -5495,7 +5911,7 @@ impl DatabaseManager {
                 crate::text_normalizer::sanitize_fts5_query(query)
             };
             conditions.push(
-                "f.id IN (SELECT id FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000)",
+                "f.id IN (SELECT rowid FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000)",
             );
             fts_match
         } else {
@@ -5847,7 +6263,7 @@ LIMIT ? OFFSET ?
                 crate::text_normalizer::sanitize_fts5_query(query)
             };
             conditions.push(
-                "f.id IN (SELECT id FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000)",
+                "f.id IN (SELECT rowid FROM frames_fts WHERE frames_fts MATCH ? ORDER BY rank LIMIT 5000)",
             );
             fts_match
         } else {
@@ -6602,6 +7018,25 @@ LIMIT ? OFFSET ?
         });
     }
 
+    /// Run `PRAGMA wal_checkpoint(TRUNCATE)` on demand, flushing WAL into the
+    /// main database file so it can be safely copied.
+    /// Returns (busy, log_pages, checkpointed_pages).
+    pub async fn wal_checkpoint(&self) -> Result<(i32, i32, i32), sqlx::Error> {
+        let row = sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)")
+            .fetch_one(&self.pool)
+            .await?;
+        Ok((row.get(0), row.get(1), row.get(2)))
+    }
+
+    /// Create an atomic backup of the database using `VACUUM INTO`.
+    /// The destination path must not already exist.
+    pub async fn backup_to(&self, dest: &str) -> Result<(), sqlx::Error> {
+        sqlx::query(&format!("VACUUM INTO '{}'", dest.replace('\'', "''")))
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     // ── Meeting persistence ──────────────────────────────────────────
 
     pub async fn insert_meeting(
@@ -6688,7 +7123,10 @@ LIMIT ? OFFSET ?
         }
 
         let display = if all_text.len() > 5000 {
-            format!("{}… (truncated)", &all_text[..5000])
+            format!(
+                "{}… (truncated)",
+                all_text.chars().take(5000).collect::<String>()
+            )
         } else {
             all_text
         };
@@ -6769,6 +7207,20 @@ LIMIT ? OFFSET ?
         Ok(row.0 > 0)
     }
 
+    pub async fn get_active_meeting_by_id(
+        &self,
+        id: i64,
+    ) -> Result<Option<MeetingRecord>, SqlxError> {
+        let meeting = sqlx::query_as::<_, MeetingRecord>(
+            "SELECT id, meeting_start, meeting_end, meeting_app, title, attendees, note, \
+             detection_source, created_at FROM meetings WHERE id = ?1 AND meeting_end IS NULL",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(meeting)
+    }
+
     pub async fn get_most_recent_active_meeting_id(&self) -> Result<Option<i64>, SqlxError> {
         let row: Option<(i64,)> = sqlx::query_as(
             "SELECT id FROM meetings WHERE meeting_end IS NULL ORDER BY id DESC LIMIT 1",
@@ -6776,6 +7228,17 @@ LIMIT ? OFFSET ?
         .fetch_optional(&self.pool)
         .await?;
         Ok(row.map(|r| r.0))
+    }
+
+    pub async fn get_most_recent_active_meeting(&self) -> Result<Option<MeetingRecord>, SqlxError> {
+        let meeting = sqlx::query_as::<_, MeetingRecord>(
+            "SELECT id, meeting_start, meeting_end, meeting_app, title, attendees, note, \
+             detection_source, created_at FROM meetings WHERE meeting_end IS NULL \
+             ORDER BY id DESC LIMIT 1",
+        )
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(meeting)
     }
 
     pub async fn list_meetings(
@@ -7252,27 +7715,81 @@ pub fn find_matching_positions(blocks: &[OcrTextBlock], query: &str) -> Vec<Text
         .filter_map(|block| {
             let text_lower = block.text.to_lowercase();
 
-            // Check for exact match or any word match
-            let matches = text_lower.contains(&query_lower)
-                || query_words.iter().any(|&word| text_lower.contains(word));
-
-            if matches {
-                // Stored coords are already screen space (top-left origin); use as-is.
-                Some(TextPosition {
-                    text: block.text.clone(),
-                    confidence: block.conf.parse::<f32>().unwrap_or(0.0),
-                    bounds: TextBounds {
-                        left: block.left.parse::<f32>().unwrap_or(0.0),
-                        top: block.top.parse::<f32>().unwrap_or(0.0),
-                        width: block.width.parse::<f32>().unwrap_or(0.0),
-                        height: block.height.parse::<f32>().unwrap_or(0.0),
-                    },
-                })
+            // Pick the needle that's actually in the text (full query or first matching word)
+            // so legacy paragraph-level OCR rows can be narrowed to where the term appears.
+            let needle = if text_lower.contains(&query_lower) {
+                Some(query_lower.as_str())
             } else {
-                None
-            }
+                query_words
+                    .iter()
+                    .copied()
+                    .find(|w| text_lower.contains(*w))
+            }?;
+
+            // Stored coords are already screen space (top-left origin); use as-is.
+            let left = block.left.parse::<f32>().unwrap_or(0.0);
+            let top = block.top.parse::<f32>().unwrap_or(0.0);
+            let width = block.width.parse::<f32>().unwrap_or(0.0);
+            let height = block.height.parse::<f32>().unwrap_or(0.0);
+
+            let (n_left, n_width) =
+                narrow_bbox_to_needle(&block.text, &text_lower, needle, left, width, height);
+
+            Some(TextPosition {
+                text: block.text.clone(),
+                confidence: block.conf.parse::<f32>().unwrap_or(0.0),
+                bounds: TextBounds {
+                    left: n_left,
+                    top,
+                    width: n_width,
+                    height,
+                },
+            })
         })
         .collect()
+}
+
+/// Narrow a single-line-ish bbox to the sub-rect where `needle` appears within `text`.
+/// Returns (new_left, new_width). Falls back to the original bbox when the element
+/// looks multi-line (text doesn't fit within a single line at the bbox's aspect ratio),
+/// because proportional narrowing only makes sense for single-line elements.
+fn narrow_bbox_to_needle(
+    text: &str,
+    text_lower: &str,
+    needle: &str,
+    left: f32,
+    width: f32,
+    height: f32,
+) -> (f32, f32) {
+    let text_len = text.chars().count();
+    if text_len == 0 || height <= 0.0 {
+        return (left, width);
+    }
+    // Estimate single-line capacity from aspect ratio: avg proportional-font char width
+    // is ~0.55 * line height. With 1.6x slack to tolerate variable fonts/spacing.
+    let aspect = width / height;
+    let chars_per_line_est = (aspect / 0.55) * 1.6;
+    if (text_len as f32) > chars_per_line_est {
+        // Likely multi-line — leave bbox alone, otherwise we'd draw a thin sliver
+        // across all lines which is more confusing than a full element rect.
+        return (left, width);
+    }
+
+    let Some(byte_offset) = text_lower.find(needle) else {
+        return (left, width);
+    };
+    let char_offset = text_lower[..byte_offset].chars().count();
+    let needle_chars = needle.chars().count();
+    if needle_chars == 0 {
+        return (left, width);
+    }
+    let frac_start = char_offset as f32 / text_len as f32;
+    let frac_width = needle_chars as f32 / text_len as f32;
+    let new_left = left + frac_start * width;
+    // Floor at half the line height so very short queries (single chars) still draw.
+    let min_w = (height * 0.5).min(width);
+    let new_width = (frac_width * width).max(min_w);
+    (new_left, new_width)
 }
 
 /// Search accessibility tree JSON nodes for a query and return matching positions.
@@ -7294,11 +7811,18 @@ pub fn find_matching_a11y_positions(tree_json: &str, query: &str) -> Vec<TextPos
                 return None;
             }
             let text_lower = text.to_lowercase();
-            let is_match = text_lower.contains(&query_lower)
-                || query_words.iter().any(|&word| text_lower.contains(word));
-            if !is_match {
-                return None;
-            }
+            // Find which needle (full query or first matching word) is present, so we can
+            // narrow the bbox to roughly where it appears in the element's text instead of
+            // highlighting the whole AX element rect.
+            let needle = if text_lower.contains(&query_lower) {
+                Some(query_lower.as_str())
+            } else {
+                query_words
+                    .iter()
+                    .copied()
+                    .find(|w| text_lower.contains(*w))
+            };
+            let needle = needle?;
             let b = n.get("bounds")?;
             let left = b.get("left")?.as_f64()? as f32;
             let top = b.get("top")?.as_f64()? as f32;
@@ -7308,13 +7832,17 @@ pub fn find_matching_a11y_positions(tree_json: &str, query: &str) -> Vec<TextPos
             if width <= 0.001 || height <= 0.001 {
                 return None;
             }
+
+            let (n_left, n_width) =
+                narrow_bbox_to_needle(text, &text_lower, needle, left, width, height);
+
             Some(TextPosition {
                 text: text.to_string(),
                 confidence: 1.0,
                 bounds: TextBounds {
-                    left,
+                    left: n_left,
                     top,
-                    width,
+                    width: n_width,
                     height,
                 },
             })
@@ -7558,6 +8086,99 @@ mod tests {
         assert_eq!(positions.len(), 2);
     }
 
+    #[test]
+    fn test_narrow_bbox_full_match_keeps_bbox() {
+        // text == query → narrowing produces the same bbox
+        let (l, w) = narrow_bbox_to_needle("rotor", "rotor", "rotor", 100.0, 80.0, 20.0);
+        assert!((l - 100.0).abs() < 0.01);
+        assert!((w - 80.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_narrow_bbox_single_line_query_at_start() {
+        // "rotor mech" 100..200 (w=100), query "rotor" at offset 0 of 10 chars → first half
+        let (l, w) = narrow_bbox_to_needle("rotor mech", "rotor mech", "rotor", 100.0, 100.0, 20.0);
+        assert!((l - 100.0).abs() < 0.01, "left should not shift: got {l}");
+        // 5/10 * 100 = 50, max(50, height*0.5=10) = 50
+        assert!((w - 50.0).abs() < 0.01, "width should be ~50: got {w}");
+    }
+
+    #[test]
+    fn test_narrow_bbox_single_line_query_in_middle() {
+        // "the rotor mech" 14 chars, query "rotor" starts at char 4
+        let (l, w) = narrow_bbox_to_needle(
+            "the rotor mech",
+            "the rotor mech",
+            "rotor",
+            100.0,
+            140.0,
+            20.0,
+        );
+        // expected left = 100 + (4/14)*140 = 100 + 40 = 140
+        assert!((l - 140.0).abs() < 0.5, "left ~140 expected: got {l}");
+        // expected width = (5/14)*140 = 50
+        assert!((w - 50.0).abs() < 0.5, "width ~50 expected: got {w}");
+    }
+
+    #[test]
+    fn test_narrow_bbox_multiline_paragraph_keeps_full() {
+        // text is much longer than aspect ratio capacity → multi-line, leave alone
+        let long = "Canonicalization. For each neutral-transformed sentence pair, compute a rotor R(n_i) that maps n_i to the reference direction e_1.";
+        let (l, w) =
+            narrow_bbox_to_needle(long, &long.to_lowercase(), "rotor", 50.0, 1400.0, 200.0);
+        assert!(
+            (l - 50.0).abs() < 0.01,
+            "multi-line should not narrow left: got {l}"
+        );
+        assert!(
+            (w - 1400.0).abs() < 0.01,
+            "multi-line should not narrow width: got {w}"
+        );
+    }
+
+    #[test]
+    fn test_narrow_bbox_zero_height_keeps_full() {
+        let (l, w) = narrow_bbox_to_needle("rotor", "rotor", "rotor", 100.0, 80.0, 0.0);
+        assert!((l - 100.0).abs() < 0.01);
+        assert!((w - 80.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_narrow_bbox_short_query_floors_width() {
+        // single-char query; min_w = height*0.5 = 10, so 1/10*100=10 also lands at floor
+        let (_, w) = narrow_bbox_to_needle("abcdefghij", "abcdefghij", "a", 0.0, 100.0, 20.0);
+        assert!(
+            w >= 10.0,
+            "narrow width must be at least height*0.5: got {w}"
+        );
+    }
+
+    #[test]
+    fn test_find_matching_positions_narrows_partial_match_bbox() {
+        let blocks = vec![create_test_block(
+            "the rotor mech",
+            "95.5",
+            "100",
+            "50",
+            "140",
+            "20",
+        )];
+        let positions = find_matching_positions(&blocks, "rotor");
+        assert_eq!(positions.len(), 1);
+        // bbox should have narrowed off the leading "the " (4 of 14 chars)
+        let pos = &positions[0];
+        assert!(
+            pos.bounds.left > 100.0 + 30.0,
+            "left should shift right: {}",
+            pos.bounds.left
+        );
+        assert!(
+            pos.bounds.width < 140.0,
+            "width should narrow: {}",
+            pos.bounds.width
+        );
+    }
+
     fn make_search_match(
         frame_id: i64,
         timestamp_secs: i64,
@@ -7666,5 +8287,17 @@ mod tests {
         assert_eq!(groups[0].representative.frame_id, 2); // highest confidence
         assert_eq!(groups[1].group_size, 2); // Gmail group
         assert_eq!(groups[2].group_size, 1); // Maps group 2 (separate visit)
+    }
+}
+
+#[cfg(test)]
+mod truncation_tests {
+    #[test]
+    fn test_multibyte_truncation_panic_fix() {
+        let trimmed = "восхитителен, то так бы прямо тебе и сказал. Но, по-моему, ты именно что великолепен. Ни больше, ни меньше.";
+        // Previous code: &trimmed[..trimmed.len().min(50)] would panic at byte 50
+        // New code works safely with char boundaries:
+        let safe = trimmed.chars().take(50).collect::<String>();
+        assert_eq!(safe.chars().count(), 50);
     }
 }

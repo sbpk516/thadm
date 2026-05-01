@@ -11,6 +11,16 @@ import {
   DEFAULT_PROMPT,
   useSettings,
 } from "@/lib/hooks/use-settings";
+import {
+  useUsageStatus,
+  messagesLeftForModel,
+  shouldWarnLowQuota,
+  formatResetTime,
+} from "@/lib/hooks/use-usage-status";
+import {
+  buildChatTestBody,
+  shouldRetryWithMaxCompletionTokens,
+} from "@/lib/utils/chat-test-body";
 import { Label } from "../ui/label";
 import { Input } from "../ui/input";
 import { ValidatedInput } from "../ui/validated-input";
@@ -173,6 +183,9 @@ export interface AIModel {
   cost_tier?: 'free' | 'low' | 'medium' | 'high' | 'very_high';
   recommended_for?: string[];
   warning?: string;
+  /** How many daily-quota units one message on this model consumes.
+   *  0 = free / doesn't count. Populated by the screenpipe worker. */
+  query_weight?: number;
 }
 
 export const AIProviderCard = ({
@@ -232,6 +245,9 @@ const AISection = ({
 }) => {
   const { settings, updateSettings } = useSettings();
   const isEnterprise = useIsEnterpriseBuild();
+  // Daily quota snapshot — drives the "N left today" chip on weighted
+  // models. Null on BYOK providers; we render nothing in that case.
+  const usage = useUsageStatus();
   const [settingsPreset, setSettingsPreset] = useState<
     Partial<AIPreset> | undefined
   >(preset);
@@ -712,11 +728,14 @@ const AISection = ({
       chatUrl = `${settingsPreset?.url}/chat/completions`;
     }
 
-    const chatBody = isChatGpt
+    // For OpenAI-compatible endpoints, start with `max_tokens` (broadest
+    // compatibility) but retry with `max_completion_tokens` if the endpoint
+    // rejects it (GPT-5, o-series, Azure Foundry, etc.).
+    const chatBody: any = isChatGpt
       ? { model: settingsPreset?.model || "", instructions: "reply briefly", input: [{ role: "user", content: "say hi" }], store: false, stream: true }
       : isAnthropic
       ? { model: settingsPreset?.model || "", messages: [{ role: "user", content: "say hi" }], max_tokens: 50 }
-      : { model: settingsPreset?.model || "", messages: [{ role: "user", content: "say hi" }], max_tokens: 50 };
+      : buildChatTestBody(settingsPreset?.model || "", "say hi", 50, "max_tokens");
 
     // For ChatGPT Codex endpoint, extract account ID from JWT and add required headers
     const chatHeaders: Record<string, string> = {
@@ -740,12 +759,33 @@ const AISection = ({
 
     const chatStart = performance.now();
     try {
-      const chatResponse = await fetchFn(chatUrl, {
+      let chatResponse = await fetchFn(chatUrl, {
         method: "POST",
         headers: chatHeaders,
         body: JSON.stringify(chatBody),
         signal: abort.signal,
       });
+
+      // Retry with max_completion_tokens for newer OpenAI-compatible endpoints
+      // (GPT-5, o-series, Azure Foundry) that reject max_tokens. Only for the
+      // generic OpenAI-compatible path — Anthropic/ChatGPT use different params.
+      if (!chatResponse.ok && !isChatGpt && !isAnthropic) {
+        const errText = await chatResponse.clone().text().catch(() => "");
+        if (shouldRetryWithMaxCompletionTokens(errText)) {
+          const retryBody = buildChatTestBody(
+            settingsPreset?.model || "",
+            "say hi",
+            50,
+            "max_completion_tokens",
+          );
+          chatResponse = await fetchFn(chatUrl, {
+            method: "POST",
+            headers: chatHeaders,
+            body: JSON.stringify(retryBody),
+            signal: abort.signal,
+          });
+        }
+      }
 
       const latencyMs = Math.round(performance.now() - chatStart);
 
@@ -965,6 +1005,7 @@ const AISection = ({
           if (!loaded) {
             // Codex models available via ChatGPT Plus/Pro subscription
             setModels([
+              "gpt-5.5", "gpt-5.5-codex",
               "gpt-5.4", "gpt-5.3-codex",
               "gpt-5.2-codex", "gpt-5.2", "gpt-5.1-codex-max",
               "gpt-5.1", "gpt-5.1-codex-mini",
@@ -1008,6 +1049,7 @@ const AISection = ({
             { id: "claude-sonnet-4-5", name: "Sonnet 4.5 (balanced)", provider: "screenpipe" },
             { id: "claude-opus-4-6", name: "Opus 4.6 (powerful, pro)", provider: "screenpipe" },
             { id: "gemini-3-flash", name: "Gemini 3 Flash (fast)", provider: "screenpipe" },
+            { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite (cheapest)", provider: "screenpipe" },
             { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro (balanced)", provider: "screenpipe" },
             { id: "qwen/qwen3.5-flash-02-23", name: "Qwen3.5 Flash (cheapest, 1M ctx)", provider: "screenpipe" },
             { id: "deepseek/deepseek-chat", name: "DeepSeek V3.2 (fast)", provider: "screenpipe" },
@@ -1391,6 +1433,18 @@ const AISection = ({
                                 <div className="flex items-center gap-1 ml-2">
                                   {costLabel && <Badge variant="outline" className="text-[10px]">{costLabel}</Badge>}
                                   {model.speed === "fast" && <Badge variant="outline" className="text-[10px]">fast</Badge>}
+                                  {/* Low-quota warning — only renders when the user is within
+                                      ~30% of exhausting their daily cap for this specific model.
+                                      Silent otherwise (normal state = no extra clutter). */}
+                                  {shouldWarnLowQuota(usage, model.query_weight) && (
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] bg-yellow-500/10 text-yellow-700 border-yellow-500/40 dark:text-yellow-400"
+                                      title={`approaching daily limit${usage?.resets_at ? ` — resets ${formatResetTime(usage.resets_at)}` : ""}`}
+                                    >
+                                      ≈ {messagesLeftForModel(usage, model.query_weight)} left
+                                    </Badge>
+                                  )}
                                 </div>
                               </div>
                               <span className="text-xs text-muted-foreground">

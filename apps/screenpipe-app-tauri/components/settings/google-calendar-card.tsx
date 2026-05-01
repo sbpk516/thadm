@@ -17,6 +17,7 @@ import {
 import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { commands } from "@/lib/utils/tauri";
 import posthog from "posthog-js";
+import { localFetch } from "@/lib/api";
 
 interface CalendarEventItem {
   id: string;
@@ -31,7 +32,7 @@ interface CalendarEventItem {
   isAllDay: boolean;
 }
 
-export function GoogleCalendarCard() {
+export function GoogleCalendarCard({ onConnected, onDisconnected }: { onConnected?: () => void; onDisconnected?: () => void } = {}) {
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -86,8 +87,8 @@ export function GoogleCalendarCard() {
   const fetchEvents = useCallback(async () => {
     setIsLoadingEvents(true);
     try {
-      const res = await tauriFetch(
-        `http://localhost:3030/connections/google-calendar/events?hours_back=0&hours_ahead=8`,
+      const res = await localFetch(
+        `/connections/google-calendar/events?hours_back=0&hours_ahead=8`,
         { method: "GET" }
       );
       if (res.ok) {
@@ -138,6 +139,7 @@ export function GoogleCalendarCard() {
         try {
           localStorage?.setItem("google-calendar-enabled", "true");
         } catch {}
+        onConnected?.();
       }
     } catch (e) {
       console.error("google calendar oauth failed:", e);
@@ -154,6 +156,7 @@ export function GoogleCalendarCard() {
       setEmail(null);
       setUpcomingEvents([]);
       posthog.capture("google_calendar_disconnected");
+      onDisconnected?.();
     } catch (e) {
       console.error("failed to disconnect google calendar:", e);
     }

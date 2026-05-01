@@ -10,6 +10,7 @@ import { handleFileTranscription, handleABTestAdmin } from './handlers/transcrip
 import { handleVoiceTranscription, handleVoiceQuery, handleTextToSpeech, handleVoiceChat } from './handlers/voice';
 import { handleVertexProxy, handleVertexModels } from './handlers/vertex-proxy';
 import { handleWebSearch } from './handlers/web-search';
+import { handleTinfoilAttestation, handleTinfoilProxy } from './handlers/tinfoil-proxy';
 import { logCost, getModelCost, inferProvider, getSpendSummary, getDailyUserCost, getMaxDailyCostPerUser, getTierDailyCostCap, isZeroCostModel } from './services/cost-tracker';
 import { trackResponseUsage } from './utils/stream-usage-tracker';
 import { getModelWeight } from './services/usage-tracker';
@@ -48,7 +49,8 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 		// Usage status endpoint - returns current usage without incrementing
 		if (path === '/v1/usage' && request.method === 'GET') {
 			const status = await getUsageStatus(env, authResult.deviceId, authResult.tier, authResult.userId);
-			// Enrich with cost-based limit info
+			// Enrich with cost-based limit flag (NOT the raw $ numbers — those
+			// are our internal margin and shouldn't leak to any client/user).
 			const dailyCost = await getDailyUserCost(env, authResult.deviceId);
 			const maxCost = getTierDailyCostCap(authResult.tier, env);
 			const enriched = {
@@ -104,10 +106,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 				const dailyCost = await getDailyUserCost(env, authResult.deviceId);
 				const maxCost = getTierDailyCostCap(authResult.tier, env);
 				if (dailyCost >= maxCost) {
+					const resetsAt = new Date();
+					resetsAt.setUTCHours(24, 0, 0, 0);
 					return addCorsHeaders(createErrorResponse(429, JSON.stringify({
 						error: 'daily_cost_limit_exceeded',
-						message: `You've reached your daily AI usage limit. Try a free model or wait until tomorrow.`,
-						free_models: ['gemini-3-flash'],
+						message: `You've hit today's AI usage limit. This is an account-wide budget that background pipes also consume. Switch to a free model (gemini-3-flash, qwen3.5-flash, claude-haiku-4-5) or review Settings → Pipes for chatty schedules.`,
+						resets_at: resetsAt.toISOString(),
+						tier: authResult.tier,
+						free_models: ['gemini-3-flash', 'qwen3.5-flash', 'claude-haiku-4-5'],
 					})));
 				}
 			}
@@ -278,6 +284,23 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 			return await handleModelListing(env, authResult.tier);
 		}
 
+		// ─── Tinfoil E2EE proxy ────────────────────────────────────────
+		// Distinct from the server-side `gemma4-31b` integration in
+		// providers/tinfoil.ts — these routes preserve end-to-end body
+		// encryption (HPKE/EHBP). The gateway never sees plaintext.
+		// Spec: https://docs.tinfoil.sh/guides/proxy-server
+		if (path === '/v1/tinfoil/attestation' && request.method === 'GET') {
+			// Public-ish (still tier-gated above so we know who's calling) —
+			// just forwards the attestation bundle which is itself public.
+			return await handleTinfoilAttestation(env);
+		}
+		if (path === '/v1/tinfoil/chat/completions' && request.method === 'POST') {
+			return await handleTinfoilProxy(request, env, authResult, '/v1/chat/completions');
+		}
+		if (path === '/v1/tinfoil/responses' && request.method === 'POST') {
+			return await handleTinfoilProxy(request, env, authResult, '/v1/responses');
+		}
+
 		if (path === '/v1/voice/transcribe' && request.method === 'POST') {
 			return await handleVoiceTranscription(request, env);
 		}
@@ -339,10 +362,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 				const dailyCost = await getDailyUserCost(env, authResult.deviceId);
 				const maxCost = getTierDailyCostCap(authResult.tier, env);
 				if (dailyCost >= maxCost) {
+					const resetsAt = new Date();
+					resetsAt.setUTCHours(24, 0, 0, 0);
 					return addCorsHeaders(createErrorResponse(429, JSON.stringify({
 						error: 'daily_cost_limit_exceeded',
-						message: `You've reached your daily AI usage limit. Try a free model or wait until tomorrow.`,
-						free_models: ['gemini-3-flash'],
+						message: `You've hit today's AI usage limit. This is an account-wide budget that background pipes also consume. Switch to a free model (gemini-3-flash, qwen3.5-flash, claude-haiku-4-5) or review Settings → Pipes for chatty schedules.`,
+						resets_at: resetsAt.toISOString(),
+						tier: authResult.tier,
+						free_models: ['gemini-3-flash', 'qwen3.5-flash', 'claude-haiku-4-5'],
 					})));
 				}
 			}
@@ -438,10 +465,14 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 				const dailyCost = await getDailyUserCost(env, authResult.deviceId);
 				const maxCost = getTierDailyCostCap(authResult.tier, env);
 				if (dailyCost >= maxCost) {
+					const resetsAt = new Date();
+					resetsAt.setUTCHours(24, 0, 0, 0);
 					return addCorsHeaders(createErrorResponse(429, JSON.stringify({
 						error: 'daily_cost_limit_exceeded',
-						message: `You've reached your daily AI usage limit. Try a free model or wait until tomorrow.`,
-						free_models: ['gemini-3-flash'],
+						message: `You've hit today's AI usage limit. This is an account-wide budget that background pipes also consume. Switch to a free model (gemini-3-flash, qwen3.5-flash, claude-haiku-4-5) or review Settings → Pipes for chatty schedules.`,
+						resets_at: resetsAt.toISOString(),
+						tier: authResult.tier,
+						free_models: ['gemini-3-flash', 'qwen3.5-flash', 'claude-haiku-4-5'],
 					})));
 				}
 			}
@@ -520,6 +551,65 @@ async function handleRequest(request: Request, env: Env, ctx: ExecutionContext):
 	}
 }
 
+// Strip PII from a Sentry event before send. The default @sentry/cloudflare
+// integration attaches request headers, URL, and (for traces) query string —
+// all of which regularly contain Clerk JWTs (user_id + email inside the
+// token payload) and device fingerprints. Error messages can also include
+// full prompts. We keep enough context to debug (method, path, status,
+// model, provider tags) while redacting anything that identifies a user.
+function scrubSentryEvent(event: any): any {
+	const REDACTED = '[REDACTED]';
+	const cap = (s: unknown, n = 512): string => {
+		if (typeof s !== 'string') return typeof s === 'undefined' ? '' : String(s);
+		return s.length > n ? s.slice(0, n) + '…[truncated]' : s;
+	};
+	const redactQs = (qs: string): string =>
+		qs
+			.replace(/(^|&)(id|user_id|email|token)=[^&]*/gi, '$1$2=' + REDACTED)
+			.replace(/user_[A-Za-z0-9]+/g, 'user_' + REDACTED);
+	const redactUrl = (url: string): string => {
+		if (!url) return url;
+		const [base, qs] = url.split('?');
+		return qs ? `${base}?${redactQs(qs)}` : base;
+	};
+
+	try {
+		if (event.request) {
+			if (event.request.headers) {
+				// Headers often contain Authorization: Bearer <JWT>, Cookie, X-Device-Id
+				for (const k of Object.keys(event.request.headers)) {
+					const lk = k.toLowerCase();
+					if (
+						lk === 'authorization' ||
+						lk === 'cookie' ||
+						lk === 'x-device-id' ||
+						lk === 'x-forwarded-for' ||
+						lk === 'cf-connecting-ip'
+					) {
+						event.request.headers[k] = REDACTED;
+					}
+				}
+			}
+			if (event.request.url) event.request.url = redactUrl(event.request.url);
+			if (event.request.query_string) event.request.query_string = redactQs(event.request.query_string);
+			// Request body can contain full prompt text — drop it. Error tags will
+			// carry the model/provider which is what we actually need to triage.
+			if (event.request.data) event.request.data = '[body redacted]';
+		}
+		// Truncate exception messages so a stack trace with leaked prompt text
+		// doesn't fill the event — stack frames themselves stay intact.
+		if (event.exception?.values) {
+			for (const v of event.exception.values) {
+				if (v.value) v.value = cap(v.value);
+			}
+		}
+		if (event.message) event.message = cap(event.message);
+	} catch {
+		// Never let the scrubber itself throw — it would mask the real error.
+	}
+	return event;
+}
+
 // Wrap with Sentry for error tracking
 export default {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -528,6 +618,7 @@ export default {
 				options: {
 					dsn: env.SENTRY_DSN,
 					tracesSampleRate: 0.1,
+					beforeSend: scrubSentryEvent,
 				},
 				request: request as any,
 				context: ctx,

@@ -12,6 +12,7 @@ use serde_json::{json, Value};
 use specta::Type;
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Write};
+use tauri::Manager;
 use tokio::sync::oneshot;
 
 /// Read lines from a byte stream using lossy UTF-8 conversion.
@@ -689,7 +690,7 @@ fn default_max_tokens() -> i32 {
 /// Returns a map of provider entries to merge into the existing models.json.
 /// We merge instead of rebuilding from scratch to avoid a race condition where
 /// concurrent pipes overwrite each other's providers.
-fn build_models_json(
+async fn build_models_json(
     user_token: Option<&str>,
     provider_config: Option<&PiProviderConfig>,
 ) -> serde_json::Value {
@@ -700,12 +701,13 @@ fn build_models_json(
     // Users should configure their own provider (openai, ollama, anthropic, etc.).
     let api_key_value = user_token.unwrap_or("SCREENPIPE_API_KEY");
     if !SCREENPIPE_API_URL.is_empty() {
+        let models = screenpipe_cloud_models(SCREENPIPE_API_URL, user_token).await;
         let screenpipe_provider = json!({
             "baseUrl": SCREENPIPE_API_URL,
             "api": "openai-completions",
             "apiKey": api_key_value,
             "authHeader": true,
-            "models": screenpipe_cloud_models()
+            "models": models
         });
         providers_map.insert("screenpipe".to_string(), screenpipe_provider);
     }
@@ -757,19 +759,39 @@ fn build_models_json(
                     "openai-completions"
                 };
 
+                // Detect endpoints that require `max_completion_tokens` instead
+                // of `max_tokens`. Azure Foundry, Azure OpenAI (newer deployments),
+                // and GPT-5 / o-series models all reject `max_tokens`.
+                let requires_max_completion_tokens = base_url.contains("azure.com")
+                    || base_url.contains("openai.azure.com")
+                    || base_url.contains("services.ai.azure.com")
+                    || base_url.contains("cognitiveservices.azure.com")
+                    || config.model.starts_with("gpt-5")
+                    || config.model.starts_with("o1")
+                    || config.model.starts_with("o3")
+                    || config.model.starts_with("o4");
+
+                let mut model_def = serde_json::Map::new();
+                model_def.insert("id".into(), json!(config.model));
+                model_def.insert("name".into(), json!(config.model));
+                model_def.insert("input".into(), json!(["text", "image"]));
+                model_def.insert("maxTokens".into(), json!(config.max_tokens));
+                model_def.insert(
+                    "cost".into(),
+                    json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}),
+                );
+                if requires_max_completion_tokens && wire_api == "openai-completions" {
+                    model_def.insert(
+                        "compat".into(),
+                        json!({"maxTokensField": "max_completion_tokens"}),
+                    );
+                }
+
                 let user_provider = json!({
                     "baseUrl": base_url,
                     "api": wire_api,
                     "apiKey": api_key,
-                    "models": [
-                        {
-                            "id": config.model,
-                            "name": config.model,
-                            "input": ["text", "image"],
-                            "maxTokens": config.max_tokens,
-                            "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
-                        }
-                    ]
+                    "models": [ serde_json::Value::Object(model_def) ]
                 });
 
                 providers_map.insert(provider_name.to_string(), user_provider);
@@ -781,7 +803,7 @@ fn build_models_json(
 }
 
 /// Write pi's provider config (models.json + auth.json).
-fn ensure_pi_config(
+async fn ensure_pi_config(
     user_token: Option<&str>,
     provider_config: Option<&PiProviderConfig>,
 ) -> Result<(), String> {
@@ -789,7 +811,7 @@ fn ensure_pi_config(
     std::fs::create_dir_all(&config_dir)
         .map_err(|e| format!("Failed to create pi config dir: {}", e))?;
 
-    let new_providers = build_models_json(user_token, provider_config);
+    let new_providers = build_models_json(user_token, provider_config).await;
 
     // Merge into existing models.json to avoid race conditions with concurrent pipes
     let models_path = config_dir.join("models.json");
@@ -993,8 +1015,15 @@ fn resolve_screenpipe_model(requested: &str, provider: &str) -> String {
     base.to_string()
 }
 
-/// Maximum number of concurrent Pi sessions before evicting old ones.
-const MAX_PI_SESSIONS: usize = 4;
+/// Soft cap on concurrent Pi sessions. Each session is its own bun + node
+/// subprocess holding ~150–300 MB RSS plus a live LLM connection, so we
+/// guard against accidental fork-bombs (a misbehaving caller spawning
+/// hundreds of sessions). Originally 4, raised to 20 on 2026-04-24 because
+/// 4 was too small for normal multi-tab chat use — opening a 5th tab would
+/// silently kill the least-recently-active session mid-stream, which was
+/// confusing UX. 20 leaves enough headroom that real users won't hit it
+/// while still preventing a runaway loop from melting the machine.
+const MAX_PI_SESSIONS: usize = 20;
 
 /// Core Pi start logic — callable from both Tauri commands and Rust boot code.
 pub async fn pi_start_inner(
@@ -1021,7 +1050,7 @@ pub async fn pi_start_inner(
     ensure_web_search_extension(&project_dir, provider_config.as_ref())?;
 
     // Ensure Pi is configured with the user's provider
-    ensure_pi_config(user_token.as_deref(), provider_config.as_ref())?;
+    ensure_pi_config(user_token.as_deref(), provider_config.as_ref()).await?;
 
     // Determine which Pi provider and model to use
     let (pi_provider, pi_model) = match &provider_config {
@@ -1068,19 +1097,53 @@ pub async fn pi_start_inner(
     // Only kill orphans when pool has no live sessions (app startup scenario)
     kill_orphan_pi_processes(any_alive);
 
-    // Evict least-recently-active non-"chat" session if at capacity
+    // Evict least-recently-active idle session if at capacity. Two safety
+    // properties beyond the prior LRU-only scheme:
+    //   1. Skip sessions with in-flight RPC responses — those are mid-turn
+    //      (streaming a reply, running a tool). Killing them mid-stream is
+    //      a worse UX than refusing to open a new session.
+    //   2. Emit `pi_session_evicted` so the UI can reflect the loss instead
+    //      of the chat tab silently going dark. Frontend listens, marks the
+    //      tab as closed and explains why.
+    // The "chat" key (legacy singleton chat session) and the requesting sid
+    // remain exempt — same as before.
     if pool.sessions.len() >= MAX_PI_SESSIONS && !pool.sessions.contains_key(&sid) {
         let evict_key = pool
             .sessions
             .iter()
-            .filter(|(k, _)| k.as_str() != "chat" && k.as_str() != sid.as_str())
+            .filter(|(k, m)| {
+                k.as_str() != "chat"
+                    && k.as_str() != sid.as_str()
+                    && m.pending_responses
+                        .lock()
+                        .map(|r| r.is_empty())
+                        .unwrap_or(true)
+            })
             .min_by_key(|(_, m)| m.last_activity)
             .map(|(k, _)| k.clone());
         if let Some(key) = evict_key {
-            info!("Evicting Pi session '{}' to make room for '{}'", key, sid);
+            info!("Evicting idle Pi session '{}' to make room for '{}'", key, sid);
             if let Some(mut m) = pool.sessions.remove(&key) {
                 m.stop();
             }
+            // Stage 5: legacy `pi_session_evicted` topic dropped.
+            // Consumers read from `agent_session_evicted` via the bus.
+            let _ = app.emit(
+                "agent_session_evicted",
+                serde_json::json!({
+                    "sessionId": key,
+                    "source": "pi",
+                    "reason": "pool_full",
+                }),
+            );
+        } else {
+            // Every session in the pool is busy. Refuse rather than kill a
+            // streaming session — caller surfaces a "too many active chats"
+            // toast, user can close one manually.
+            return Err(format!(
+                "pi pool full ({} active sessions, all busy) — close one before opening a new chat",
+                MAX_PI_SESSIONS
+            ));
         }
     }
 
@@ -1216,19 +1279,11 @@ pub async fn pi_start_inner(
         }
     }
 
-    // For local/small models, inject minimal screenpipe API context directly into the system prompt
-    // so they don't need to discover and read the skill file (which they often skip)
+    // For local/small models (Ollama, custom), explicitly tell them to read the
+    // screenpipe-api skill file — they often skip reading skills on their own.
     let is_local_model = matches!(pi_provider.as_str(), "ollama" | "custom");
     if is_local_model {
-        let api_hint = concat!(
-            "You are a screen activity assistant. The user has screenpipe running locally.\n",
-            "Search their data with: curl \"http://localhost:3030/search?q=QUERY&content_type=all&limit=10&start_time=ISO8601\"\n",
-            "Parameters: q (keywords), content_type (all|ocr|audio), limit (1-20), start_time (ISO 8601, REQUIRED), end_time, app_name, window_name\n",
-            "ALWAYS include start_time. Use date -u for UTC. Example:\n",
-            "curl \"http://localhost:3030/search?content_type=all&limit=5&start_time=$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ)\"\n",
-            "For Linux use: date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ\n",
-            "Response is JSON with data[] array containing type (OCR/Audio/UI) and content with text/transcription, timestamp, app_name."
-        );
+        let api_hint = "IMPORTANT: You MUST read the screenpipe-api skill file BEFORE making any API calls. It contains authentication instructions, endpoint docs, and examples. Without reading it first, your API calls will fail with 403 unauthorized.";
         cmd.args(["--append-system-prompt", api_hint]);
     }
 
@@ -1263,9 +1318,47 @@ pub async fn pi_start_inner(
         cmd.env("SCREENPIPE_API_KEY", token);
     }
 
+    // Pass local API config so the Pi agent can authenticate to the runtime local API.
+    {
+        use crate::recording::local_api_context_from_app;
+        let api = local_api_context_from_app(&app);
+        cmd.env("SCREENPIPE_LOCAL_API_PORT", api.port.to_string());
+        cmd.env("SCREENPIPE_LOCAL_API_URL", api.url(""));
+        if let Some(ref key) = api.api_key {
+            cmd.env("SCREENPIPE_LOCAL_API_KEY", key);
+        }
+    }
+
+    // Auto-auth the agent's `curl localhost:3030/...` calls via a bash
+    // shim sourced from $BASH_ENV on every subshell. See bash_env.rs in
+    // screenpipe-core.
+    if let Ok(p) = screenpipe_core::agents::bash_env::ensure_wrapper_in_default_dir() {
+        cmd.env("BASH_ENV", p);
+    }
+
+    // Privacy filter: if the user enabled the toggle in chat, set the env
+    // var the shim reads so every `curl .../search*` gets rewritten with
+    // `filter_pii=1`. Pro-gated client-side — non-pro can't flip the UI
+    // toggle so this branch won't fire for them.
+    if let Some(home) = dirs::home_dir() {
+        let store_path = home.join(".screenpipe").join("store.bin");
+        if let Ok(data) = std::fs::read_to_string(&store_path) {
+            if let Ok(store) = serde_json::from_str::<serde_json::Value>(&data) {
+                let settings = store.get("settings").unwrap_or(&store);
+                if settings
+                    .get("piPrivacyFilter")
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false)
+                {
+                    cmd.env("SCREENPIPE_FILTER_PII", "1");
+                }
+            }
+        }
+    }
+
     // Pass the user's API key as env var for non-screenpipe providers
     if let Some(ref config) = provider_config {
-        // ChatGPT OAuth: inject token from stored OAuth file (no api_key in config)
+        // ChatGPT OAuth: inject token from secret store (no api_key in config)
         if config.provider == "openai-chatgpt" {
             match crate::chatgpt_oauth::get_valid_token().await {
                 Ok(token) => {
@@ -1348,6 +1441,38 @@ pub async fn pi_start_inner(
 
     // Grab queue_state for the stdout reader before dropping the lock
     let queue_state_for_reader = pool.sessions.get(&sid).and_then(|m| m.queue_state.clone());
+
+    // Spawn a watcher that mirrors queue-pending changes out as Tauri events.
+    // The frontend uses these to render "queued" cards under the in-flight
+    // streaming message and badges in the sidebar — without this, the UI has
+    // no visibility into the rust-side mpsc state.
+    if let Some(qs) = queue_state_for_reader.clone() {
+        let app_handle_for_queue = app.clone();
+        let sid_for_queue = sid.clone();
+        tokio::spawn(async move {
+            let mut rx = qs.subscribe_queued();
+            // Emit current state immediately so any UI that subscribes after
+            // the watcher boot still gets a fresh value without polling.
+            let snap = rx.borrow().clone();
+            let _ = app_handle_for_queue.emit(
+                "pi-queue-changed",
+                serde_json::json!({
+                    "sessionId": sid_for_queue,
+                    "queued": snap,
+                }),
+            );
+            while rx.changed().await.is_ok() {
+                let snap = rx.borrow().clone();
+                let _ = app_handle_for_queue.emit(
+                    "pi-queue-changed",
+                    serde_json::json!({
+                        "session_id": sid_for_queue,
+                        "queued": snap,
+                    }),
+                );
+            }
+        });
+    }
 
     // Snapshot the state BEFORE dropping the lock, so we don't hold it during I/O
     let snapshot = match pool.sessions.get_mut(&sid) {
@@ -1451,10 +1576,17 @@ pub async fn pi_start_inner(
                             }
                         }
                     }
-                    // Always emit as Tauri event too (frontend may need response events)
-                    let tagged = json!({ "sessionId": sid_clone, "event": event });
-                    if let Err(e) = app_handle.emit("pi_event", &tagged) {
-                        error!("Failed to emit pi_event: {}", e);
+                    // Frontend subscribes via the agent-event bus
+                    // (`apps/screenpipe-app-tauri/lib/events/bus.ts`).
+                    // Stage 5 cleanup: legacy `pi_event` topic removed
+                    // — every consumer now reads from `agent_event`.
+                    let unified = json!({
+                        "source": "pi",
+                        "sessionId": sid_clone,
+                        "event": event,
+                    });
+                    if let Err(e) = app_handle.emit("agent_event", &unified) {
+                        error!("Failed to emit agent_event: {}", e);
                     }
                 }
                 None => {
@@ -1480,9 +1612,15 @@ pub async fn pi_start_inner(
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .is_ok()
         {
+            // Stage 5 cleanup: legacy `pi_terminated` topic removed.
+            // Consumers read from `agent_terminated` via the bus.
             let _ = app_handle.emit(
-                "pi_terminated",
-                json!({ "sessionId": sid_clone, "pid": pid }),
+                "agent_terminated",
+                json!({
+                    "sessionId": sid_clone,
+                    "source": "pi",
+                    "pid": pid,
+                }),
             );
         } else {
             debug!("Pi stdout reader: pi_terminated already emitted for this session, skipping");
@@ -1505,9 +1643,15 @@ pub async fn pi_start_inner(
                         "Pi stderr JSON (session {}): type={}",
                         sid_stderr, event_type
                     );
-                    let tagged = json!({ "sessionId": sid_stderr, "event": event });
-                    if let Err(e) = app_handle.emit("pi_event", &tagged) {
-                        error!("Failed to emit pi_event from stderr: {}", e);
+                    // Stage 5: stderr JSON forwarded on the unified bus
+                    // (legacy `pi_event` topic dropped).
+                    let unified = json!({
+                        "source": "pi",
+                        "sessionId": sid_stderr,
+                        "event": event,
+                    });
+                    if let Err(e) = app_handle.emit("agent_event", &unified) {
+                        error!("Failed to emit agent_event from stderr: {}", e);
                     }
                     if let Err(e) = app_handle.emit("pi_output", &line) {
                         error!("Failed to emit pi_output from stderr: {}", e);
@@ -1607,11 +1751,63 @@ pub async fn pi_prompt(
         }
     }
 
-    let rx = queue
-        .send(cmd, crate::pi_command_queue::WaitMode::StreamThenWaitDone)
+    // Send through the prompt-aware path so the queue UI shows it as queued
+    // until the drain loop pulls and writes it to stdin.
+    let (_queue_id, rx) = queue
+        .send_prompt(
+            cmd,
+            crate::pi_command_queue::WaitMode::StreamThenWaitDone,
+            message.clone(),
+        )
         .await?;
     rx.await
         .map_err(|_| "Pi command queue dropped".to_string())?
+}
+
+/// Cancel a single queued prompt. Returns true if it was still in the queue
+/// (and is now removed), false if it had already been pulled into the
+/// in-flight slot — at that point `pi_abort` is the right tool.
+#[tauri::command]
+#[specta::specta]
+pub async fn pi_cancel_queued(
+    state: State<'_, PiState>,
+    session_id: Option<String>,
+    prompt_id: String,
+) -> Result<bool, String> {
+    let sid = session_id.unwrap_or_else(|| "chat".to_string());
+    let queue = {
+        let pool = state.0.lock().await;
+        let m = pool
+            .sessions
+            .get(&sid)
+            .ok_or("session not found".to_string())?;
+        m.queue_handle
+            .clone()
+            .ok_or("queue not initialized".to_string())?
+    };
+    queue.cancel_one(prompt_id).await
+}
+
+/// Read the current queued-prompt list for a session. Useful for an initial
+/// render before the first `pi-queue-changed` event arrives, and for new
+/// chat windows opening on top of an in-progress queue.
+#[tauri::command]
+#[specta::specta]
+pub async fn pi_pending(
+    state: State<'_, PiState>,
+    session_id: Option<String>,
+) -> Result<Vec<crate::pi_command_queue::PiQueuedPrompt>, String> {
+    let sid = session_id.unwrap_or_else(|| "chat".to_string());
+    let pool = state.0.lock().await;
+    let m = match pool.sessions.get(&sid) {
+        Some(m) => m,
+        None => return Ok(Vec::new()),
+    };
+    let qs = match m.queue_state.as_ref() {
+        Some(qs) => qs,
+        None => return Ok(Vec::new()),
+    };
+    Ok(qs.queued_snapshot())
 }
 
 /// Abort current Pi operation. Priority command — cancels all pending commands
@@ -1676,8 +1872,88 @@ pub async fn pi_check() -> Result<PiCheckResult, String> {
     })
 }
 
+/// Locate the bundled bun binary so the frontend can write absolute-path
+/// MCP configs (e.g. `{ command: <bun>, args: ["x", "screenpipe-mcp@latest"] }`)
+/// instead of `npx -y screenpipe-mcp`. npx requires a global Node install
+/// — many Claude Desktop users don't have it, and the silent first-run
+/// `npx` download often blows past Claude's MCP startup timeout. Using
+/// the bun we already ship sidesteps both failure modes.
+#[tauri::command]
+#[specta::specta]
+pub async fn bun_check() -> Result<PiCheckResult, String> {
+    let path = find_bun_executable();
+    Ok(PiCheckResult {
+        available: path.is_some(),
+        path,
+    })
+}
+
+/// Hot-swap Pi's active model without killing the subprocess. Preserves the
+/// full conversation state in-place — the user can switch haiku ↔ sonnet ↔ opus
+/// mid-session and the new model sees the real threaded history, not a
+/// glued-transcript workaround.
+///
+/// Pi's RPC `set_model` is the right path for provider+model changes only. If
+/// other preset fields change (url, apiKey, maxTokens, systemPrompt) the
+/// caller should fall back to `pi_update_config` which does a full restart
+/// because those are spawn-time args baked into models.json / CLI flags.
+#[tauri::command]
+#[specta::specta]
+pub async fn pi_set_model(
+    state: State<'_, PiState>,
+    session_id: Option<String>,
+    provider_config: PiProviderConfig,
+) -> Result<(), String> {
+    let sid = session_id.unwrap_or_else(|| "chat".to_string());
+
+    // Map frontend provider name → Pi's internal registry name. Must stay in
+    // sync with the mapping in `pi_start_inner` (line ~1045) — a mismatch
+    // means Pi can't find the model and returns "Model not found".
+    let pi_provider = match provider_config.provider.as_str() {
+        "openai" => "openai-byok",
+        "openai-chatgpt" => "openai-chatgpt",
+        "native-ollama" => "ollama",
+        "anthropic" => "anthropic-byok",
+        "custom" if !provider_config.url.is_empty() => "custom",
+        "screenpipe-cloud" | "pi" | _ => "screenpipe",
+    };
+    let pi_model = resolve_screenpipe_model(&provider_config.model, pi_provider);
+
+    let queue = {
+        let mut pool = state.0.lock().await;
+        let m = pool.sessions.get_mut(&sid).ok_or("Pi not initialized")?;
+        if !m.is_running() {
+            return Err("Pi is not running".to_string());
+        }
+        m.last_activity = std::time::Instant::now();
+        m.queue_handle
+            .clone()
+            .ok_or("Pi command queue not initialized")?
+    };
+
+    info!(
+        "Pi set_model (session '{}'): provider={} model={}",
+        sid, pi_provider, pi_model
+    );
+
+    let cmd = json!({
+        "type": "set_model",
+        "provider": pi_provider,
+        "modelId": pi_model,
+    });
+
+    let rx = queue
+        .send(cmd, crate::pi_command_queue::WaitMode::WaitDone)
+        .await?;
+    rx.await
+        .map_err(|_| "Pi command queue dropped".to_string())?
+}
+
 /// Update Pi config and restart the chat session so the new model takes effect.
 /// Without restart, Pi keeps using the provider/model from its original CLI args.
+///
+/// Prefer `pi_set_model` when only provider+model changed — it preserves the
+/// conversation state instead of killing the subprocess.
 #[tauri::command]
 #[specta::specta]
 pub async fn pi_update_config(
@@ -2584,6 +2860,82 @@ mod tests {
         assert_eq!(providers.len(), 2);
         assert!(providers.contains_key("custom"));
         assert_eq!(providers["custom"]["baseUrl"], "http://my-server:8080/v1");
+    }
+
+    #[test]
+    fn test_build_models_json_custom_generic_no_compat_override() {
+        // Plain OpenAI-compatible endpoints (Ollama, vLLM, OpenRouter-like)
+        // should NOT have compat.maxTokensField set — Pi's auto-detection
+        // defaults to max_completion_tokens which works for most of these.
+        let mut pc = make_provider_config("custom", "my-model");
+        pc.url = "http://localhost:8080/v1".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert!(
+            model.get("compat").is_none(),
+            "generic custom should not have compat"
+        );
+    }
+
+    #[test]
+    fn test_build_models_json_azure_openai_forces_max_completion_tokens() {
+        let mut pc = make_provider_config("custom", "gpt-4o");
+        pc.url = "https://myresource.openai.azure.com/openai/deployments/gpt-4o".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert_eq!(
+            model["compat"]["maxTokensField"], "max_completion_tokens",
+            "Azure OpenAI must use max_completion_tokens"
+        );
+    }
+
+    #[test]
+    fn test_build_models_json_azure_foundry_forces_max_completion_tokens() {
+        let mut pc = make_provider_config("custom", "gpt-5-mini");
+        pc.url = "https://myresource.services.ai.azure.com/api/projects/proj".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
+    }
+
+    #[test]
+    fn test_build_models_json_azure_cognitive_services_forces_max_completion_tokens() {
+        let mut pc = make_provider_config("custom", "my-deployment");
+        pc.url = "https://myresource.cognitiveservices.azure.com/".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
+    }
+
+    #[test]
+    fn test_build_models_json_gpt5_model_forces_max_completion_tokens() {
+        // Even on a generic OpenAI-compatible proxy, GPT-5 models require
+        // max_completion_tokens. Detect by model ID.
+        let mut pc = make_provider_config("custom", "gpt-5");
+        pc.url = "https://my-proxy.example.com/v1".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
+    }
+
+    #[test]
+    fn test_build_models_json_o3_model_forces_max_completion_tokens() {
+        let mut pc = make_provider_config("custom", "o3-mini");
+        pc.url = "https://my-proxy.example.com/v1".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
+    }
+
+    #[test]
+    fn test_build_models_json_regular_gpt4_no_compat_override() {
+        // gpt-4 and gpt-4o should NOT be forced — they work with both field names
+        // and Pi's default is already max_completion_tokens for non-chutes URLs.
+        let mut pc = make_provider_config("custom", "gpt-4o");
+        pc.url = "https://my-proxy.example.com/v1".to_string();
+        let config = build_models_json(None, Some(&pc));
+        let model = &config["providers"]["custom"]["models"][0];
+        assert!(model.get("compat").is_none());
     }
 
     #[test]

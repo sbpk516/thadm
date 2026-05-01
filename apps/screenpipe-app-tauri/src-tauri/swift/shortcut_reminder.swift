@@ -15,6 +15,13 @@ public func shortcutSetActionCallback(_ cb: @escaping ShortcutActionCallback) {
     gShortcutCallback = cb
 }
 
+@_cdecl("shortcut_set_meeting_active")
+public func shortcutSetMeetingActive(_ active: Int32) {
+    if #available(macOS 13.0, *) {
+        ShortcutReminderController.shared.setMeetingActive(active != 0)
+    }
+}
+
 // MARK: - Metrics data pushed from Rust
 
 struct OverlayMetrics {
@@ -336,17 +343,11 @@ struct HoverIconButton: View {
     }
 }
 
-// MARK: - Overlay scale (read from ~/.screenpipe/store.bin)
+// MARK: - Overlay scale
 
 private var gOverlayScale: CGFloat = 1.0
 
-private func loadOverlayScale() {
-    let home = FileManager.default.homeDirectoryForCurrentUser
-    let storePath = home.appendingPathComponent(".screenpipe/store.bin").path
-    guard let data = FileManager.default.contents(atPath: storePath),
-          let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-          let settings = json["settings"] as? [String: Any],
-          let size = settings["shortcutOverlaySize"] as? String else { return }
+private func setOverlayScale(_ size: String?) {
     switch size {
     case "large": gOverlayScale = 2.0
     case "medium": gOverlayScale = 1.5
@@ -371,17 +372,20 @@ class ShortcutReminderController: NSObject {
     @Published var isExpanded = false
     private var wsTask: URLSessionWebSocketTask?
     private var wsRetryTimer: Timer?
-    private var meetingPollTimer: Timer?
+    private var meetingWsTask: URLSessionWebSocketTask?
+    private var meetingWsRetryTimer: Timer?
     private var prevFramesCaptured: Int?
     private var prevOcrCompleted: Int?
+    /// Set from Rust `show_shortcut_reminder` when API auth is enabled (includes ?token=).
+    private var metricsWsUrl = "ws://127.0.0.1:3030/ws/metrics"
+    private var eventsWsUrl = "ws://127.0.0.1:3030/ws/meeting-status"
 
     func show(shortcuts: String?) {
         DispatchQueue.main.async { [self] in
+            let prevScale = gOverlayScale
             if let shortcuts = shortcuts {
                 parseShortcuts(shortcuts)
             }
-            let prevScale = gOverlayScale
-            loadOverlayScale()
             if panel == nil || prevScale != gOverlayScale {
                 panel?.orderOut(nil)
                 panel = nil
@@ -394,15 +398,14 @@ class ShortcutReminderController: NSObject {
             panel?.orderFrontRegardless()
             AnimationTick.shared.start()
             connectWebSocket()
-            startMeetingPoll()
+            connectMeetingEventsWebSocket()
         }
     }
 
     func hide() {
         AnimationTick.shared.stop()
         disconnectWebSocket()
-        meetingPollTimer?.invalidate()
-        meetingPollTimer = nil
+        disconnectMeetingEventsWebSocket()
         DispatchQueue.main.async { [self] in
             panel?.orderOut(nil)
         }
@@ -412,7 +415,7 @@ class ShortcutReminderController: NSObject {
 
     private func connectWebSocket() {
         disconnectWebSocket()
-        guard let url = URL(string: "ws://127.0.0.1:3030/ws/metrics") else { return }
+        guard let url = URL(string: metricsWsUrl) else { return }
         let session = URLSession(configuration: .default)
         let task = session.webSocketTask(with: url)
         self.wsTask = task
@@ -475,38 +478,89 @@ class ShortcutReminderController: NSObject {
         }
     }
 
-    // MARK: - Meeting status polling
+    // MARK: - Meeting status events
 
-    private func startMeetingPoll() {
-        checkMeetingStatus()
-        meetingPollTimer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
-            self?.checkMeetingStatus()
-        }
-        RunLoop.main.add(meetingPollTimer!, forMode: .common)
+    private func connectMeetingEventsWebSocket() {
+        disconnectMeetingEventsWebSocket()
+        guard let url = URL(string: eventsWsUrl) else { return }
+        let session = URLSession(configuration: .default)
+        let task = session.webSocketTask(with: url)
+        self.meetingWsTask = task
+        task.resume()
+        receiveMeetingEvent()
     }
 
-    private func checkMeetingStatus() {
-        guard let url = URL(string: "http://localhost:3030/meetings/status") else { return }
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, _ in
-            guard let self = self, let data = data,
-                  let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
-            let active = json["active"] as? Bool ?? false
-            DispatchQueue.main.async {
-                if self.metrics.meetingActive != active {
-                    self.metrics.meetingActive = active
-                    self.updateContent()
+    private func disconnectMeetingEventsWebSocket() {
+        meetingWsRetryTimer?.invalidate()
+        meetingWsRetryTimer = nil
+        meetingWsTask?.cancel(with: .goingAway, reason: nil)
+        meetingWsTask = nil
+    }
+
+    private func receiveMeetingEvent() {
+        meetingWsTask?.receive { [weak self] result in
+            guard let self = self else { return }
+            switch result {
+            case .success(let message):
+                if case .string(let text) = message {
+                    self.processMeetingEventMessage(text)
+                }
+                self.receiveMeetingEvent()
+            case .failure:
+                DispatchQueue.main.async {
+                    self.meetingWsRetryTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: false) { [weak self] _ in
+                        self?.connectMeetingEventsWebSocket()
+                    }
                 }
             }
-        }.resume()
+        }
+    }
+
+    private func processMeetingEventMessage(_ text: String) {
+        guard let data = text.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else { return }
+        let active = payload["active"] as? Bool ?? false
+        setMeetingActive(active)
+    }
+
+    func setMeetingActive(_ active: Bool) {
+        DispatchQueue.main.async { [self] in
+            if self.metrics.meetingActive != active {
+                self.metrics.meetingActive = active
+                self.updateContent()
+            }
+        }
     }
 
     private func parseShortcuts(_ json: String) {
-        // Simple parse — expects {"overlay":"⌘⌃S","chat":"⌘⌃L","search":"⌘⌃K"}
+        // Expects shortcut labels, size, and optional authenticated API URLs from Rust.
         guard let data = json.data(using: .utf8),
               let dict = try? JSONDecoder().decode([String: String].self, from: data) else { return }
-        if let s = dict["overlay"] { overlayShortcut = s }
-        if let s = dict["chat"] { chatShortcut = s }
-        if let s = dict["search"] { searchShortcut = s }
+        if let s = dict["overlay"] { overlayShortcut = prettifyShortcut(s) }
+        if let s = dict["chat"] { chatShortcut = prettifyShortcut(s) }
+        if let s = dict["search"] { searchShortcut = prettifyShortcut(s) }
+        if let s = dict["shortcutOverlaySize"] { setOverlayScale(s) }
+        if let s = dict["metrics_ws_url"] { metricsWsUrl = s }
+        if let s = dict["events_ws_url"] { eventsWsUrl = s }
+    }
+
+    /// Convert "Super+Ctrl+S" → "⌘⌃S" for compact overlay display.
+    private func prettifyShortcut(_ raw: String) -> String {
+        // Already contains symbols — return as-is
+        if raw.contains("⌘") || raw.contains("⌃") || raw.contains("⌥") || raw.contains("⇧") { return raw }
+        let parts = raw.split(separator: "+").map(String.init)
+        var symbols = ""
+        var key = ""
+        for part in parts {
+            switch part.lowercased() {
+            case "super", "cmd", "command", "meta":  symbols += "⌘"
+            case "ctrl", "control":                   symbols += "⌃"
+            case "alt", "option", "opt":              symbols += "⌥"
+            case "shift":                             symbols += "⇧"
+            default:                                  key = part.uppercased()
+            }
+        }
+        return symbols + key
     }
 
     private func createPanel() {

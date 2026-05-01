@@ -8,10 +8,38 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use specta::Type;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::AppHandle;
 use tauri_plugin_store::StoreBuilder;
-use tracing::error;
+use tracing::{error, warn};
+use screenpipe_secrets::keychain;
+
+/// Process-lifetime cache for the resolved API auth key.
+///
+/// `to_recording_config` is a sync function called many times per second
+/// (frontend polls `local_api_context_from_app`). Resolving the key —
+/// which requires async I/O against `db.sqlite` — happens once per
+/// recording start via `screenpipe_engine::auth_key::resolve_api_auth_key`,
+/// and the result is seeded here so every subsequent sync read is cheap and
+/// every caller agrees on the same value.
+///
+/// Uses RwLock (not OnceLock) so the key can be updated on every restart
+/// within the same process — OnceLock would silently ignore the second
+/// seed call and keep the original key forever.
+static RESOLVED_API_AUTH_KEY: RwLock<Option<String>> = RwLock::new(None);
+
+/// Seed the resolved API auth key. Overwrites any previously seeded value
+/// so that "Apply & Restart" picks up the new key on the next server start.
+pub fn seed_api_auth_key(key: String) {
+    if let Ok(mut guard) = RESOLVED_API_AUTH_KEY.write() {
+        *guard = Some(key);
+    }
+}
+
+/// Read the resolved API auth key if it has been seeded.
+pub fn resolved_api_auth_key() -> Option<String> {
+    RESOLVED_API_AUTH_KEY.read().ok()?.clone()
+}
 
 /// Magic header for encrypted store.bin files.
 const STORE_MAGIC: &[u8; 8] = b"SPSTORE1";
@@ -26,7 +54,9 @@ fn decrypt_store_file(path: &Path) {
     if data.len() < 8 || &data[..8] != STORE_MAGIC {
         return; // already plain JSON (or empty)
     }
-    let key = match secrets::get_key() {
+    // File is encrypted, so user must have encryption enabled
+    // Use get_key_if_encryption_enabled to prevent prompts if encryption is somehow disabled
+    let key = match secrets::get_key_if_encryption_enabled() {
         secrets::KeyResult::Found(k) => k,
         secrets::KeyResult::AccessDenied => {
             tracing::warn!(
@@ -76,8 +106,13 @@ fn decrypt_store_file(path: &Path) {
 /// To opt in: create ~/.screenpipe/.encrypt-store or set SCREENPIPE_ENCRYPT_STORE=1.
 fn encrypt_store_file(path: &Path) {
     // Check opt-in flag
-    let opted_in = std::env::var("SCREENPIPE_ENCRYPT_STORE").map(|v| v == "1").unwrap_or(false)
-        || path.parent().map(|p| p.join(".encrypt-store").exists()).unwrap_or(false);
+    let opted_in = std::env::var("SCREENPIPE_ENCRYPT_STORE")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+        || path
+            .parent()
+            .map(|p| p.join(".encrypt-store").exists())
+            .unwrap_or(false);
     if !opted_in {
         return;
     }
@@ -89,10 +124,13 @@ fn encrypt_store_file(path: &Path) {
     if data.len() >= 8 && &data[..8] == STORE_MAGIC {
         return; // already encrypted
     }
-    let key = match secrets::get_or_create_key() {
-        Some(k) => k,
-        None => {
-            // Keychain access denied or unavailable — disable encryption
+    // Use read-only get_key() instead of get_or_create_key() to avoid triggering
+    // keychain modal on every store save. The key should already exist if encryption
+    // was enabled; if not, we just skip encryption and leave the file unencrypted.
+    let key = match keychain::get_key() {
+        keychain::KeyResult::Found(k) => k,
+        keychain::KeyResult::AccessDenied => {
+            // Keychain access denied — disable encryption
             // and remove the opt-in flag so user isn't stuck in a broken state
             if let Some(parent) = path.parent() {
                 let flag = parent.join(".encrypt-store");
@@ -104,6 +142,10 @@ fn encrypt_store_file(path: &Path) {
                     );
                 }
             }
+            return;
+        }
+        keychain::KeyResult::NotFound | keychain::KeyResult::Unavailable => {
+            // Key doesn't exist or keychain unavailable — can't encrypt
             return;
         }
     };
@@ -240,13 +282,24 @@ pub fn get_store(
     app: &AppHandle,
     _profile_name: Option<String>, // Keep parameter for API compatibility but ignore it
 ) -> anyhow::Result<Arc<tauri_plugin_store::Store<tauri::Wry>>> {
-    let mut guard = STORE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    {
+        let guard = STORE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref cached) = *guard {
+            return Ok(cached.clone());
+        }
+    }
 
+    let in_tokio = tokio::runtime::Handle::try_current().is_ok();
+    let store = if in_tokio {
+        tokio::task::block_in_place(|| build_store(app))?
+    } else {
+        build_store(app)?
+    };
+
+    let mut guard = STORE_CACHE.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(ref cached) = *guard {
         return Ok(cached.clone());
     }
-
-    let store = build_store(app)?;
     *guard = Some(store.clone());
     Ok(store)
 }
@@ -344,6 +397,15 @@ impl OnboardingStore {
     }
 }
 
+fn deserialize_null_as_default<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    T: Default + Deserialize<'de>,
+    D: serde::Deserializer<'de>,
+{
+    let opt = Option::deserialize(deserializer)?;
+    Ok(opt.unwrap_or_default())
+}
+
 #[derive(Serialize, Deserialize, Type, Clone)]
 #[serde(default)]
 pub struct SettingsStore {
@@ -354,7 +416,7 @@ pub struct SettingsStore {
     pub recording: screenpipe_config::RecordingSettings,
 
     // ── App-only fields (UI, shortcuts, metadata) ────────────────────────
-    #[serde(rename = "aiPresets")]
+    #[serde(rename = "aiPresets", deserialize_with = "deserialize_null_as_default")]
     pub ai_presets: Vec<AIPreset>,
 
     #[serde(rename = "isLoading")]
@@ -366,15 +428,21 @@ pub struct SettingsStore {
     pub ocr_engine: String,
     #[serde(rename = "dataDir")]
     pub data_dir: String,
-    #[serde(rename = "embeddedLLM")]
+    #[serde(
+        rename = "embeddedLLM",
+        deserialize_with = "deserialize_null_as_default"
+    )]
     pub embedded_llm: EmbeddedLLM,
     #[serde(rename = "autoStartEnabled")]
     pub auto_start_enabled: bool,
     #[serde(rename = "platform")]
     pub platform: String,
-    #[serde(rename = "disabledShortcuts")]
+    #[serde(
+        rename = "disabledShortcuts",
+        deserialize_with = "deserialize_null_as_default"
+    )]
     pub disabled_shortcuts: Vec<String>,
-    #[serde(rename = "user")]
+    #[serde(rename = "user", deserialize_with = "deserialize_null_as_default")]
     pub user: User,
     #[serde(rename = "showScreenpipeShortcut")]
     pub show_screenpipe_shortcut: String,
@@ -894,13 +962,24 @@ impl SettingsStore {
             data_dir,
             Some(&resolved_engine),
         );
-        // Set the API auth key from the user's token/api_key for remote auth
+        // Resolve the API auth key from the seeded cache. The cache is populated
+        // asynchronously by `recording::spawn_screenpipe` via the shared helper
+        // (`screenpipe_engine::auth_key::resolve_api_auth_key`) — which is the
+        // single source of truth used by the CLI path, the auth CLI, and MCP.
+        // If this function is called before the server has spawned (e.g. an
+        // early frontend poll), fall back to the settings value if present;
+        // otherwise leave `api_auth_key` as `None` so the caller knows the
+        // key hasn't been resolved yet rather than receiving a fresh UUID
+        // that would drift from every other reader.
         if config.api_auth {
-            config.api_auth_key = self
-                .user
-                .api_key
-                .clone()
-                .or_else(|| self.user.token.clone());
+            let settings_key = settings.api_key.as_str();
+            config.api_auth_key = resolved_api_auth_key().or_else(|| {
+                if settings_key.is_empty() {
+                    None
+                } else {
+                    Some(settings_key.to_string())
+                }
+            });
         }
         config
     }
@@ -968,7 +1047,8 @@ pub fn init_store(app: &AppHandle) -> Result<SettingsStore, String> {
             // Fallback to defaults when deserialization fails (e.g., corrupted store)
             // DON'T save - preserve original store in case it can be manually recovered
             // This prevents crashes from invalid values like negative integers in u32 fields
-            error!(
+            // Non-fatal — logged as warn (not error) so Sentry doesn't pick it up.
+            warn!(
                 "Failed to deserialize settings, using defaults (store not overwritten): {}",
                 e
             );
@@ -1019,7 +1099,11 @@ pub fn init_store(app: &AppHandle) -> Result<SettingsStore, String> {
 
     if should_save {
         if let Err(e) = store.save(app) {
-            error!("Failed to save initial settings store (non-fatal): {}", e);
+            // Non-fatal — logged as warn (not error) so Sentry doesn't pick it up.
+            // Common cause on Windows: antivirus / Controlled Folder Access / OneDrive
+            // blocks the first write; we retry on subsequent saves so the user isn't
+            // actually stuck. Not worth paging Louis about.
+            warn!("Failed to save initial settings store (non-fatal): {}", e);
         }
     }
     Ok(store)
@@ -1034,7 +1118,8 @@ pub fn init_onboarding_store(app: &AppHandle) -> Result<OnboardingStore, String>
         Err(e) => {
             // Fallback to defaults when deserialization fails
             // DON'T save - preserve original store
-            error!(
+            // Non-fatal — logged as warn (not error) so Sentry doesn't pick it up.
+            warn!(
                 "Failed to deserialize onboarding, using defaults (store not overwritten): {}",
                 e
             );
@@ -1044,7 +1129,9 @@ pub fn init_onboarding_store(app: &AppHandle) -> Result<OnboardingStore, String>
 
     if should_save {
         if let Err(e) = onboarding.save(app) {
-            error!("Failed to save initial onboarding store (non-fatal): {}", e);
+            // Non-fatal — logged as warn (not error) so Sentry doesn't pick it up.
+            // See matching comment in init_settings_store.
+            warn!("Failed to save initial onboarding store (non-fatal): {}", e);
         }
     }
     Ok(onboarding)
@@ -1208,14 +1295,14 @@ mod tests {
 
     #[test]
     fn test_sanitize_legacy_fields_does_not_panic() {
-        let mut corrupted = json!({
+        let corrupted = json!({
             "aiPresets": ["corrupted_string_not_an_object"]
         });
 
-        let sanitized = SettingsStore::sanitize_legacy_fields(corrupted);
+        let _sanitized = SettingsStore::sanitize_legacy_fields(corrupted);
 
         // And let's test a valid object with missing/unknown provider to prove it works
-        let mut valid = json!({
+        let valid = json!({
             "aiPresets": [{"provider": "unknown_provider"}]
         });
         let sanitized2 = SettingsStore::sanitize_legacy_fields(valid);
@@ -1225,6 +1312,33 @@ mod tests {
             presets[0].get("provider").unwrap().as_str().unwrap(),
             "custom"
         );
+    }
+
+    #[test]
+    fn test_deserialize_settings_with_null_fields() {
+        let json_data = json!({
+            "recording": {
+                "audio": true,
+                "video": true
+            },
+            "user": null,
+            "embeddedLLM": null,
+            "aiPresets": null
+        });
+
+        let settings: Result<SettingsStore, _> = serde_json::from_value(json_data);
+        if let Err(e) = &settings {
+            println!("Deser error: {:?}", e);
+        }
+        assert!(
+            settings.is_ok(),
+            "Failed to deserialize settings with null fields"
+        );
+        let settings = settings.unwrap();
+
+        assert_eq!(settings.user.token, None);
+        assert_eq!(settings.embedded_llm.enabled, false);
+        assert_eq!(settings.ai_presets.len(), 0);
     }
 }
 

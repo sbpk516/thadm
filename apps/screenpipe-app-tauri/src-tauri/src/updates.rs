@@ -243,10 +243,13 @@ impl UpdatesManager {
                 );
             }
             Err(ref e) => {
-                error!("updater check() error: {}", e);
+                // warn, not error — updater failures are mostly transient network
+                // issues or "endpoints not set" on source builds; neither is actionable.
+                // Sentry would just get noise.
+                warn!("updater check() error: {}", e);
             }
         }
-        if let Some(update) = check_result? {
+        if let Ok(Some(update)) = check_result {
             *self.update_available.lock().await = true;
 
             // Emit "update-downloading" immediately so user sees feedback
@@ -616,7 +619,8 @@ impl UpdatesManager {
             if !*self.update_available.lock().await {
                 // Don't show dialog for periodic checks - only for manual checks
                 if let Err(e) = self.check_for_updates(false).await {
-                    error!("Failed to check for updates: {}", e);
+                    // warn, not error — see updater check() note above.
+                warn!("Failed to check for updates: {}", e);
                 }
             }
         }
@@ -742,7 +746,8 @@ pub fn start_update_check(
         let updates_manager = updates_manager.clone();
         async move {
             if let Err(e) = updates_manager.check_for_updates(false).await {
-                error!("Failed to check for updates: {}", e);
+                // warn, not error — see updater check() note above.
+                warn!("Failed to check for updates: {}", e);
             }
             info!("Update check started");
         }

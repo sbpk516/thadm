@@ -107,6 +107,13 @@ urlencoding = "2"
 # Cloud sync utilities
 hostname = "0.4"
 
+# Secret store DB access (chatgpt_oauth, oauth, commands) and websocket /
+# permission-events listener — added during 2026-05 upstream sync.
+sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls"] }
+url = "2.5"
+async-trait = "0.1"
+tokio-tungstenite = "0.24"
+
 # Screenpipe core (for sync)
 screenpipe-core = { path = "../../../crates/screenpipe-core", features = ["cloud-sync"] }
 

@@ -7,6 +7,7 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 // PipeMonitorView merged into PipesSection as device dropdown
 import { apiCache } from "@/lib/cache";
+import { localFetch } from "@/lib/api";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -246,7 +247,7 @@ function ConnectionsStrip() {
       setIntegrations(cached);
       return;
     }
-    fetch("http://localhost:3030/connections")
+    localFetch("/connections")
       .then((r) => r.json())
       .then((data) => {
         const list: IntegrationInfo[] = data.data || [];
@@ -323,7 +324,7 @@ export function PipeStoreView() {
   const [installedCount, setInstalledCount] = useState<number | null>(null);
 
   useEffect(() => {
-    fetch("http://localhost:3030/pipes")
+    localFetch("/pipes")
       .then((r) => r.json())
       .then((data) => {
         const list = Array.isArray(data) ? data : data.data || data.pipes || [];
@@ -332,27 +333,25 @@ export function PipeStoreView() {
       .catch(() => setInstalledCount(0));
   }, []);
 
-  // Read initial tab from URL param (e.g. ?section=pipes&tab=discover)
-  // Default to "discover" when user has no pipes installed
-  const [activeTab, setActiveTab] = useState<"discover" | "my-pipes">(() => {
-    if (typeof window !== "undefined") {
-      const params = new URLSearchParams(window.location.search);
-      if (params.get("tab") === "discover") return "discover";
-      if (params.get("tab") === "my-pipes") return "my-pipes";
+  const [activeTab, setActiveTab] = useState<"discover" | "my-pipes">("my-pipes");
+
+  // Read ?tab= from URL after mount, then strip it so it doesn't persist
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const tab = params.get("tab");
+    if (tab === "discover") setActiveTab("discover");
+    else if (tab === "my-pipes") setActiveTab("my-pipes");
+    if (tab) {
+      params.delete("tab");
+      window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
     }
-    return "my-pipes";
-  });
+  }, []);
 
   // Once we know installed count, switch new users to discover
   useEffect(() => {
     if (installedCount !== null && installedCount === 0) {
-      // Only auto-switch if no explicit tab param was set
-      if (typeof window !== "undefined") {
-        const params = new URLSearchParams(window.location.search);
-        if (!params.get("tab")) {
-          setActiveTab("discover");
-        }
-      }
+      const params = new URLSearchParams(window.location.search);
+      if (!params.get("tab")) setActiveTab("discover");
     }
   }, [installedCount]);
 
@@ -407,6 +406,18 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  // Prefill search from ?q= URL param after mount, then strip it so it doesn't persist
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const q = params.get("q") ?? "";
+    if (q) {
+      setSearchQuery(q);
+      setDebouncedQuery(q);
+      params.delete("q");
+      window.history.replaceState({}, "", `${window.location.pathname}?${params}`);
+    }
+  }, []);
   const [category, setCategory] = useState("All");
   const [sort, setSort] = useState("popular");
 
@@ -452,6 +463,20 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
   // Available updates from store
   const [availableUpdates, setAvailableUpdates] = useState<Record<string, { latest_version: number; installed_version: number; locally_modified: boolean }>>({});
 
+  // First-visit banner — show once, dismiss permanently
+  // Initialize false to match server render, set true after mount if not dismissed
+  const [showWelcome, setShowWelcome] = useState(false);
+  useEffect(() => {
+    if (!localStorage.getItem("screenpipe:pipes-welcome-dismissed")) {
+      setShowWelcome(true);
+    }
+  }, []);
+
+  const dismissWelcome = () => {
+    setShowWelcome(false);
+    localStorage.setItem("screenpipe:pipes-welcome-dismissed", "1");
+  };
+
   // Fetch installed pipes (cached 30s, invalidated on install)
   useEffect(() => {
     const cacheKey = "pipes/installed";
@@ -460,7 +485,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       setInstalledNames(cached);
       return;
     }
-    fetch("http://localhost:3030/pipes")
+    localFetch("/pipes")
       .then((r) => r.json())
       .then((data) => {
         const list = Array.isArray(data) ? data : data.data || data.pipes || [];
@@ -473,7 +498,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
 
   // Check for pipe updates
   useEffect(() => {
-    fetch("http://localhost:3030/pipes/store/check-updates")
+    localFetch("/pipes/store/check-updates")
       .then((r) => r.ok ? r.json() : null)
       .then((json) => {
         if (!json) return;
@@ -518,7 +543,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10_000);
-      const res = await fetch(`http://localhost:3030/pipes/store?${params}`, { signal: controller.signal });
+      const res = await localFetch(`/pipes/store?${params}`, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
@@ -548,7 +573,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
     setReviewRating(0);
     setReviewComment("");
     try {
-      const res = await fetch(`http://localhost:3030/pipes/store/${slug}`, {
+      const res = await localFetch(`/pipes/store/${slug}`, {
         headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -573,7 +598,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("http://localhost:3030/pipes/store/install", {
+      const res = await localFetch("/pipes/store/install", {
         method: "POST",
         headers,
         body: JSON.stringify({ slug }),
@@ -589,7 +614,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       const defaultPreset = settings.aiPresets?.find((p: any) => p.defaultPreset);
       if (defaultPreset?.id) {
         try {
-          await fetch(`http://localhost:3030/pipes/${pipeName}/config`, {
+          await localFetch(`/pipes/${pipeName}/config`, {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ preset: defaultPreset.id }),
@@ -630,8 +655,8 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(
-        `http://localhost:3030/pipes/store/${selectedPipe.slug}/review`,
+      const res = await localFetch(
+        `/pipes/store/${selectedPipe.slug}/review`,
         {
           method: "POST",
           headers,
@@ -662,7 +687,7 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
     try {
       const headers: Record<string, string> = { "Content-Type": "application/json" };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch(`http://localhost:3030/pipes/store/${slug}`, {
+      const res = await localFetch(`/pipes/store/${slug}`, {
         method: "DELETE",
         headers,
       });
@@ -733,19 +758,6 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
       </div>
     );
   }
-
-  // First-visit banner — show once, dismiss permanently
-  const [showWelcome, setShowWelcome] = useState(() => {
-    if (typeof window !== "undefined") {
-      return !localStorage.getItem("screenpipe:pipes-welcome-dismissed");
-    }
-    return true;
-  });
-
-  const dismissWelcome = () => {
-    setShowWelcome(false);
-    localStorage.setItem("screenpipe:pipes-welcome-dismissed", "1");
-  };
 
   return (
     <div className="space-y-6">
@@ -1054,12 +1066,12 @@ function PipeDetailPanel({
     }
     setPublishing(true);
     try {
-      const settingsRes = await fetch("http://localhost:3030/settings");
+      const settingsRes = await localFetch("/settings");
       const settingsData = await settingsRes.json();
       const token = settingsData?.user?.token;
       if (!token) throw new Error("not logged in — go to account settings");
 
-      const res = await fetch("http://localhost:3030/pipes/store/publish", {
+      const res = await localFetch("/pipes/store/publish", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -1505,7 +1517,7 @@ export function PublishDialog({
     if (!open) return;
     if (defaultPipe) setSelectedPipe(defaultPipe);
     setLoadingPipes(true);
-    fetch("http://localhost:3030/pipes")
+    localFetch("/pipes")
       .then((r) => r.json())
       .then((data) => {
         const list = Array.isArray(data) ? data : data.data || data.pipes || [];
@@ -1597,7 +1609,7 @@ STEP 5: PUBLISH (only after user says yes)
         "Content-Type": "application/json",
       };
       if (token) headers["Authorization"] = `Bearer ${token}`;
-      const res = await fetch("http://localhost:3030/pipes/store/publish", {
+      const res = await localFetch("/pipes/store/publish", {
         method: "POST",
         headers,
         body: JSON.stringify({

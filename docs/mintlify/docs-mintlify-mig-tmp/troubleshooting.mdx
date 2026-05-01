@@ -1,7 +1,7 @@
 ---
 title: "troubleshooting"
 sidebarTitle: "troubleshooting"
-description: "Fix common screenpipe issues — installation, permissions, audio, pipes, and MCP connection problems."
+description: "Fix common screenpipe issues including installation errors, screen and microphone permissions, missing audio, pipe failures, and MCP connection problems."
 icon: "wrench"
 ---
 
@@ -54,6 +54,25 @@ if health returns OK but search returns no results:
 - on macOS: grant microphone permission in System Settings → Privacy & Security → Microphone
 - verify audio is being recorded: `curl "http://localhost:3030/search?content_type=audio&limit=1"`
 
+### audio drops out during calls or long meetings
+
+if you notice gaps in transcription or missing audio segments, the transcription queue is likely full and screenpipe is dropping segments to prevent the system from freezing.
+
+**causes:**
+- transcription can't keep up with the incoming audio (especially with large batch sizes or slower hardware)
+- multiple audio devices selected simultaneously
+- transcription engine is overloaded (too many complex tasks running)
+
+**fixes (in order of effectiveness):**
+
+1. **reduce batch size:** settings → recording → audio chunk duration — try lowering from default (30-40s) to 10-15s. smaller batches process faster and drop less audio
+2. **switch to faster transcription:** settings → AI models → try `whisper-tiny` or `whisper-base` instead of `whisper-large-v3-turbo` (trades accuracy for speed)
+3. **disable unused audio devices:** settings → recording → uncheck devices you don't need — recording one device instead of multiple reduces queue pressure
+4. **use cloud transcription:** switch to **deepgram** or **screenpipe-cloud** for remote processing, which doesn't block your local system
+5. **reduce system load:** close heavy apps or run screenpipe on a machine with better CPU/RAM
+
+if the issue persists, check logs: settings → pipes → view logs to see "dropping audio segment" warnings.
+
 ### bluetooth headphone audio quality drops
 
 this is a macOS limitation, not a screenpipe bug. when any app opens a bluetooth microphone, macOS switches from A2DP (high quality) to HFP (phone quality).
@@ -69,6 +88,30 @@ note: AirPods don't have this issue — Apple uses a proprietary codec.
 - reduce background noise
 - use a better microphone
 - try `deepgram` or `screenpipe-cloud` for cloud-based transcription (highest accuracy)
+
+---
+
+## chat & AI interactions
+
+### chat hangs or stops responding
+
+if your chat window freezes, try these fixes in order:
+
+1. **restart screenpipe** — closes stalled message queues
+2. **check health:** `curl http://localhost:3030/health` — if it fails, backend is stuck
+3. **verify you have data** — screenpipe needs screen/audio history; wait 1-2 minutes after startup
+4. **verify AI provider connection** — settings → model selector. for ChatGPT/Claude, sign out/back in
+5. **reduce load** — disable unused pipes (settings → pipes), switch to faster model (gpt-4o mini), check logs for "timeout" errors
+
+### chat messages disappear
+
+if assistant replies vanish when navigating away, **update to v0.4+** — this message persistence bug was fixed. on older versions, reinstall screenpipe.
+
+### AI model connection fails
+
+1. verify subscription active: [openai.com](https://openai.com) (ChatGPT Plus/Pro) or [claude.ai](https://claude.ai) (Claude Pro)
+2. sign out/in: settings → model selector → sign out, restart, sign back in
+3. if still failing, your tokens expired — try again
 
 ---
 

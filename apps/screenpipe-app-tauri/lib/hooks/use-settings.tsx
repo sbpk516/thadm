@@ -7,10 +7,11 @@ import { getVersion } from "@tauri-apps/api/app";
 import { invoke } from "@tauri-apps/api/core";
 import { platform } from "@tauri-apps/plugin-os";
 import { Store } from "@tauri-apps/plugin-store";
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import posthog from "posthog-js";
 import { User } from "../utils/tauri";
 import { SettingsStore } from "../utils/tauri";
+import { installAuthInterceptor } from "../auth-guard";
 export type VadSensitivity = "low" | "medium" | "high";
 
 export type AIProviderType =
@@ -81,6 +82,34 @@ export interface ChatMessage {
 	contentBlocks?: any[];
 	model?: string;
 	provider?: string;
+	/** UI override — when set, the sidebar / panel header renders this
+	 *  instead of `content` for compact display (e.g. "pipe executed
+	 *  10:24 – 10:26" for synthetic prompts). Doesn't affect persistence
+	 *  or what's sent to the model. */
+	displayContent?: string;
+	images?: any[];
+}
+
+/** What kind of session a conversation represents.
+ *
+ *  - `chat`        — a normal Pi chat session. The default; assumed when
+ *                    `kind` is missing on disk.
+ *  - `pipe-watch`  — a live pipe execution the user is currently
+ *                    watching. The chat panel renders pipe events in
+ *                    real time; the conversation is volatile (not
+ *                    persisted unless the user opts to keep it).
+ *  - `pipe-run`    — a completed pipe execution kept around as
+ *                    history. Lives under "Pipe runs" in the sidebar
+ *                    rather than "Recents". */
+export type ConversationKind = "chat" | "pipe-watch" | "pipe-run";
+
+/** Pipe-specific context attached to `pipe-watch` / `pipe-run`
+ *  conversations. Drives the in-panel banner and the sidebar
+ *  grouping. */
+export interface PipeContext {
+	pipeName: string;
+	executionId: number;
+	startedAt?: string;
 }
 
 export interface ChatConversation {
@@ -89,6 +118,29 @@ export interface ChatConversation {
 	messages: ChatMessage[];
 	createdAt: number;
 	updatedAt: number;
+	/** User pinned this conversation in the chat sidebar — keeps it at the top.
+	 *  Persists across app restarts via the on-disk conversation file. */
+	pinned?: boolean;
+	/** User closed this conversation from the chat sidebar — keeps the file on
+	 *  disk (so deleting via close is non-destructive) but excludes it from the
+	 *  sidebar listing. Re-surface via a future "show hidden" UI; meanwhile a
+	 *  dedicated delete-forever action is the only way to actually remove. */
+	hidden?: boolean;
+	/** ms since epoch of the most recent USER-SENT message. Drives the
+	 *  sidebar sort order. Persisted so that order survives app restart;
+	 *  derived from messages on first hydration if not set on disk yet. */
+	lastUserMessageAt?: number;
+	/** Conversation type — defaults to "chat" when missing (back-compat
+	 *  with older on-disk files). See `ConversationKind`. */
+	kind?: ConversationKind;
+	/** Pipe metadata for `pipe-watch` / `pipe-run` conversations.
+	 *  Undefined for plain chats. */
+	pipeContext?: PipeContext;
+	/** Last URL the agent navigated the embedded browser sidebar to.
+	 *  Drives the right-side `<BrowserSidebar />` panel: when the user
+	 *  re-opens this conversation the panel restores to this URL.
+	 *  Cleared (set to undefined) when the user closes the sidebar. */
+	browserState?: { url: string; updatedAt: number };
 }
 
 export interface ChatHistoryStore {
@@ -147,6 +199,9 @@ export type Settings = SettingsStore & {
 	filterMusic?: boolean;
 	/** Maximum batch transcription duration in seconds (0 = engine default: Deepgram 5000s, OpenAI 3000s, Whisper 600s) */
 	batchMaxDurationSecs?: number;
+	/** Redact PII from screenpipe API responses before they reach the LLM.
+	 *  Pro-only; enforced client-side (UI hides the toggle for non-pro). */
+	piPrivacyFilter?: boolean;
 	/** Show periodic notifications suggesting pipe ideas based on user's data (default: true) */
 	pipeSuggestionsEnabled?: boolean;
 	/** Hours between pipe suggestion notifications (default: 24) */
@@ -157,14 +212,22 @@ export type Settings = SettingsStore & {
 	showRestartNotifications?: boolean;
 	/** Offline mode — blocks all external network from pipes, disables PostHog telemetry, keeps Sentry crash reports */
 	offlineMode?: boolean;
-	/** Pause all screen capture when a DRM streaming app (Netflix, Disney+, etc.) is focused */
+	/** Pause all screen capture when a DRM-protected streaming app (Netflix, Disney+, etc.) or a remote-desktop client (Omnissa/VMware Horizon) is focused — they blank their windows during screen recording */
 	pauseOnDrmContent?: boolean;
+	/** Experimental: capture System Audio via CoreAudio Process Tap (macOS 14.4+) instead of ScreenCaptureKit.
+	 *  Off by default. Ignored on macOS <14.4 and non-macOS — falls back to SCK. */
+	experimentalCoreaudioSystemAudio?: boolean;
+	/** Continue recording audio when the screen is locked (default: false) */
+	recordWhileLocked?: boolean;
 	/** Auto-append typed text to meeting notes when a meeting ends */
 	appendTypedTextToMeetingNotes?: boolean;
 	/** Auto-delete local data older than retention days (free alternative to cloud archive) */
 	localRetentionEnabled?: boolean;
 	/** Days to keep data locally before auto-deleting (default: 14) */
 	localRetentionDays?: number;
+	/** What gets deleted past the cutoff: "media" keeps DB rows (search/timeline still
+	 * work), only reclaims mp4/wav/jpeg files. "all" wipes everything. Default: "media". */
+	localRetentionMode?: "media" | "all";
 	/** Apply macOS vibrancy effect to sidebar for a translucent glass look */
 	translucentSidebar?: boolean;
 	/** Notification preferences — which notification sources are enabled */
@@ -190,6 +253,15 @@ export type Settings = SettingsStore & {
 		recordMode: string;
 	}>;
 	apiAuth?: boolean;
+	apiKey?: string;
+	/**
+	 * When true the backend binds the HTTP API to 0.0.0.0 instead of 127.0.0.1
+	 * so other devices on the LAN can reach it. api_auth is force-enabled
+	 * whenever this is true — the backend mirrors the guard in
+	 * RecordingConfig::from_settings so the two flags stay consistent even
+	 * if someone edits the settings file by hand.
+	 */
+	listenOnLan?: boolean;
 	encryptStore?: boolean;
 }
 
@@ -258,7 +330,7 @@ const DEFAULT_CLOUD_PRESET: AIPreset = {
 
 // Legacy presets removed — cloud preset is the only default now
 let DEFAULT_SETTINGS: Settings = {
-			aiPresets: [DEFAULT_CLOUD_PRESET as any],
+			aiPresets: makeDefaultPresets(false) as any,
 			deviceId: crypto.randomUUID(),
 			deepgramApiKey: "",
 			isLoading: false,
@@ -340,9 +412,12 @@ let DEFAULT_SETTINGS: Settings = {
 			filterMusic: false,
 			ignoreIncognitoWindows: true,
 			pauseOnDrmContent: false,
+			experimentalCoreaudioSystemAudio: false,
+			recordWhileLocked: false,
 			appendTypedTextToMeetingNotes: true,
 			localRetentionEnabled: true,
 			localRetentionDays: 14,
+			localRetentionMode: "media",
 		};
 
 export function createDefaultSettingsObject(): Settings {
@@ -421,9 +496,45 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
+		// One-time migration (V2 — supersedes V1): flip the CoreAudio Process
+		// Tap toggle OFF for every existing install, keeping SCK as the System
+		// Audio backend. V1 (run a few days earlier) had flipped it ON by
+		// default, but the Process Tap can't capture audio rendered through a
+		// VoiceProcessing AudioUnit — Zoom/Meet/Teams all use one for echo
+		// cancellation — so the tap silently captured zeroed buffers on every
+		// meeting. Users who explicitly want the tap (e.g. to dodge SCK's
+		// sleep/wake display-enumeration bug) can re-enable it in Settings.
+		// Reported by Ruark Ferreira on 2026-04-24 after his v2.4.46 calls
+		// kept dropping other participants.
+		if (!(settings as any).coreaudioTapMigrationV2) {
+			settings.experimentalCoreaudioSystemAudio = false;
+			(settings as any).coreaudioTapMigrationV2 = true;
+			needsUpdate = true;
+		}
+
 		// Migration: Add default presets if user has none
 		if (!settings.aiPresets || settings.aiPresets.length === 0) {
-			settings.aiPresets = [DEFAULT_CLOUD_PRESET as any];
+			const isPro = settings.user?.cloud_subscribed === true;
+			settings.aiPresets = makeDefaultPresets(isPro) as any;
+			needsUpdate = true;
+		}
+
+		// b2 seed: the first time we see a logged-in user, replace the anonymous
+		// "screenpipe" placeholder with the pro pair (chat + pipes) IF they're pro.
+		// Anonymous users keep the placeholder forever (which is correct — non-pro
+		// stays on the single "screenpipe" auto preset). Existing users with their
+		// own presets are untouched. Runs exactly once per install.
+		if (!(settings as any)._presetsSeededForUser && settings.user?.token) {
+			const isPro = settings.user?.cloud_subscribed === true;
+			const presets = settings.aiPresets ?? [];
+			const isAnonymousPlaceholder =
+				presets.length === 1 &&
+				(presets[0] as any)?.id === SCREENPIPE_PRESET_ID &&
+				(presets[0] as any)?.provider === "screenpipe-cloud";
+			if (isPro && isAnonymousPlaceholder) {
+				settings.aiPresets = makeDefaultPresets(true) as any;
+			}
+			(settings as any)._presetsSeededForUser = true;
 			needsUpdate = true;
 		}
 
@@ -553,6 +664,37 @@ function createSettingsStore() {
 			needsUpdate = true;
 		}
 
+		// Post-migration: if user becomes pro and the Chat preset is still on the
+		// non-pro fallback (Sonnet), upgrade it to Opus 4.7.
+		// Guards:
+		//   - only touches the preset with id === "chat" (leaves user-created presets alone)
+		//   - only if provider is still screenpipe-cloud and model is exactly the seeded
+		//     Sonnet value (prevents clobbering a manual override like glm-5)
+		//   - _chatOpusAppliedForPro flag prevents re-upgrading after user manually
+		//     switches back to something else
+		if (
+			settings.user?.cloud_subscribed &&
+			!(settings as any)._chatOpusAppliedForPro &&
+			Array.isArray(settings.aiPresets)
+		) {
+			let upgraded = false;
+			settings.aiPresets = settings.aiPresets.map((p: any) => {
+				if (
+					p?.id === "chat" &&
+					p?.provider === "screenpipe-cloud" &&
+					p?.model === "claude-sonnet-4-5"
+				) {
+					upgraded = true;
+					return { ...p, model: "claude-opus-4-7" };
+				}
+				return p;
+			});
+			if (upgraded) {
+				(settings as any)._chatOpusAppliedForPro = true;
+				needsUpdate = true;
+			}
+		}
+
 		// Save migrations if needed
 		if (needsUpdate) {
 			await store.set("settings", settings);
@@ -629,6 +771,21 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 				setSettings(loadedSettings);
 				setIsSettingsLoaded(true);
 				setLoadingError(null);
+
+				// Configure the API module — single source of truth for port + auth.
+				// `apiKey` is intentionally NOT passed: `ensureInitialized` in
+				// lib/api.ts loads the canonical key from the server via IPC
+				// (`get_local_api_config`). settings.apiKey is a user preference
+				// fed to the server's auth resolver; the server then exposes the
+				// resolved key via that IPC. Passing it here would race with the
+				// IPC and overwrite a good key with `null` for the majority of
+				// users (who never set a custom api key) — which silently breaks
+				// every WebSocket auth path.
+				const { configureApi } = await import("@/lib/api");
+				configureApi({
+					port: loadedSettings.port ?? 3030,
+					authEnabled: loadedSettings.apiAuth ?? true,
+				});
 			} catch (error) {
 				console.error("Failed to load settings:", error);
 				setLoadingError(error instanceof Error ? error.message : "Unknown error");
@@ -676,36 +833,42 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 	// 	return () => { cancelled = true; };
 	// }, [isSettingsLoaded, settings.user?.token]);
 
-	// Identify with persistent analyticsId for consistent tracking across frontend/backend
+	// Identify the user in PostHog. When a Clerk-authenticated user is present,
+	// we identify by clerk_id (matches the web's identify call), so PostHog
+	// merges the web profile (carrying UTM/gclid from ad attribution) with the
+	// desktop-app profile. Before switching, alias the machine analyticsId to
+	// the clerk_id so prior anonymous app events also merge forward.
 	useEffect(() => {
-		if (settings.analyticsId) {
-			getVersion()
-				.then((appVersion) => {
-					posthog.identify(settings.analyticsId, {
-						email: settings.user?.email,
-						name: settings.user?.name,
-						user_id: settings.user?.id,
-						github_username: settings.user?.github_username,
-						website: settings.user?.website,
-						contact: settings.user?.contact,
-						cloud_subscribed: !!settings.user?.cloud_subscribed,
-						app_version: appVersion,
-					});
-				})
-				.catch(() => {
-					posthog.identify(settings.analyticsId, {
-						email: settings.user?.email,
-						name: settings.user?.name,
-						user_id: settings.user?.id,
-						github_username: settings.user?.github_username,
-						website: settings.user?.website,
-						contact: settings.user?.contact,
-						cloud_subscribed: !!settings.user?.cloud_subscribed,
-					});
-				});
+		if (!settings.analyticsId) return;
+
+		const clerkId = settings.user?.clerk_id || undefined;
+		const distinctId = clerkId || settings.analyticsId;
+
+		if (clerkId) {
+			try { posthog.alias(clerkId); } catch {}
 		}
+
+		const baseProps = {
+			email: settings.user?.email,
+			name: settings.user?.name,
+			user_id: settings.user?.id,
+			clerk_id: clerkId,
+			github_username: settings.user?.github_username,
+			website: settings.user?.website,
+			contact: settings.user?.contact,
+			cloud_subscribed: !!settings.user?.cloud_subscribed,
+			machine_analytics_id: settings.analyticsId,
+		};
+
+		getVersion()
+			.then((appVersion) => {
+				posthog.identify(distinctId, { ...baseProps, app_version: appVersion });
+			})
+			.catch(() => {
+				posthog.identify(distinctId, baseProps);
+			});
 		// eslint-disable-next-line react-hooks/exhaustive-deps
-	}, [settings.analyticsId, settings.user?.id, settings.user?.cloud_subscribed]);
+	}, [settings.analyticsId, settings.user?.id, settings.user?.clerk_id, settings.user?.cloud_subscribed]);
 
 	// When user becomes a Pro subscriber, default to cloud transcription (one-time)
 	useEffect(() => {
@@ -718,9 +881,55 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [settings.user?.cloud_subscribed, isSettingsLoaded]);
 
+	// Upgrade the seeded "chat" preset Sonnet → Opus 4.7 the moment the user
+	// becomes pro (mirrors the on-load migration for same-session transitions).
+	// Guards match the migration: only touch the unmodified seeded chat preset,
+	// never clobber a user override, only fire once.
+	useEffect(() => {
+		if (!isSettingsLoaded) return;
+		if (!settings.user?.cloud_subscribed) return;
+		if ((settings as any)._chatOpusAppliedForPro) return;
+		if (!Array.isArray(settings.aiPresets)) return;
+
+		const idx = settings.aiPresets.findIndex(
+			(p: any) =>
+				p?.id === "chat" &&
+				p?.provider === "screenpipe-cloud" &&
+				p?.model === "claude-sonnet-4-5"
+		);
+		if (idx === -1) {
+			// Nothing to upgrade, but still record the decision so we don't re-check
+			// every render. User either (a) already has Opus, (b) customized, or
+			// (c) deleted the chat preset.
+			settingsStore.set({ _chatOpusAppliedForPro: true } as any);
+			return;
+		}
+
+		const nextPresets = settings.aiPresets.map((p: any, i: number) =>
+			i === idx ? { ...p, model: "claude-opus-4-7" } : p
+		);
+		settingsStore.set({
+			aiPresets: nextPresets,
+			_chatOpusAppliedForPro: true,
+		} as any);
+		// eslint-disable-next-line react-hooks/exhaustive-deps
+	}, [settings.user?.cloud_subscribed, isSettingsLoaded]);
+
 	const updateSettings = async (updates: Partial<Settings>) => {
 		await settingsStore.set(updates);
 		// Settings will be updated via the listener
+
+		// Only update the port in the API module immediately — auth changes
+		// (apiAuth / apiKey) must NOT be applied until after the server restarts.
+		// Calling configureApi({ authEnabled: false }) before restart clears the
+		// auth cookie, causing every frontend WebSocket to reconnect without a
+		// token and flood the logs with 403 rejections (the server still requires
+		// auth until it restarts with the new setting).
+		if ("port" in updates) {
+			const { configureApi } = await import("@/lib/api");
+			const merged = { ...settings, ...updates };
+			configureApi({ port: merged.port ?? 3030 });
+		}
 	};
 
 	const resetSettings = async () => {

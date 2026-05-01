@@ -7,7 +7,7 @@ use crate::enterprise_policy::is_tray_item_hidden;
 use crate::health::{
     get_audio_device_status, get_recording_info, get_recording_status, DeviceKind, RecordingStatus,
 };
-use crate::recording::RecordingState;
+use crate::recording::{local_api_context_from_app, RecordingState};
 use crate::store::{get_store, OnboardingStore, SettingsStore};
 use crate::updates::{is_enterprise_build, is_source_build};
 use crate::window::ShowRewindWindow;
@@ -19,9 +19,13 @@ use std::sync::Mutex;
 use tauri::tray::{TrayIcon, TrayIconBuilder};
 use tauri::Emitter;
 use tauri::{
-    menu::{CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem},
+    menu::{
+        CheckMenuItemBuilder, MenuBuilder, MenuItem, MenuItemBuilder, PredefinedMenuItem,
+        SubmenuBuilder,
+    },
     AppHandle, Manager, Wry,
 };
+use tauri::async_runtime::JoinHandle;
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons};
 use tauri_plugin_opener::OpenerExt;
 
@@ -30,6 +34,88 @@ use tracing::{debug, error, info};
 /// Flag set by the "quit screenpipe" menu item so that the ExitRequested
 /// handler in main.rs knows this is an intentional quit (not just a window close).
 pub static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+/// Pre-fetched data for building the tray menu. All store reads, settings
+/// deserialization, and permission checks happen OFF the main thread; only
+/// the lightweight menu-item construction runs on the main thread.
+#[derive(Clone)]
+struct TrayMenuData {
+    onboarding_completed: bool,
+    show_shortcut: String,
+    search_shortcut: String,
+    chat_shortcut: String,
+    cloud_subscribed: bool,
+    has_permission_issue: bool,
+}
+
+/// Gather all data needed by `create_dynamic_menu` on the current (non-main)
+/// thread so the main-thread closure does zero I/O.
+fn prefetch_tray_menu_data(app: &AppHandle) -> TrayMenuData {
+    let onboarding_completed = OnboardingStore::get(app)
+        .ok()
+        .flatten()
+        .map(|o| o.is_completed)
+        .unwrap_or(false);
+
+    let (default_show, default_search, default_chat) = if cfg!(target_os = "windows") {
+        ("Alt+S", "Alt+K", "Alt+L")
+    } else {
+        ("Control+Super+S", "Control+Super+K", "Control+Super+L")
+    };
+
+    let (show_shortcut, search_shortcut, chat_shortcut) = if let Ok(store) = get_store(app, None) {
+        (
+            store
+                .get("showScreenpipeShortcut")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| default_show.to_string()),
+            store
+                .get("searchShortcut")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| default_search.to_string()),
+            store
+                .get("showChatShortcut")
+                .and_then(|v| v.as_str().map(String::from))
+                .unwrap_or_else(|| default_chat.to_string()),
+        )
+    } else {
+        (
+            default_show.to_string(),
+            default_search.to_string(),
+            default_chat.to_string(),
+        )
+    };
+
+    let cloud_subscribed = SettingsStore::get(app)
+        .unwrap_or_default()
+        .unwrap_or_default()
+        .user
+        .cloud_subscribed
+        == Some(true);
+
+    let has_permission_issue = if onboarding_completed {
+        #[cfg(target_os = "macos")]
+        {
+            let perms = crate::permissions::do_permissions_check(false);
+            !perms.screen_recording.permitted() || !perms.microphone.permitted()
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
+    } else {
+        false
+    };
+
+    TrayMenuData {
+        onboarding_completed,
+        show_shortcut,
+        search_shortcut,
+        chat_shortcut,
+        cloud_subscribed,
+        has_permission_issue,
+    }
+}
 
 /// Global storage for the update menu item so we can recreate the tray
 /// without needing to pass the update_item through every call chain.
@@ -51,6 +137,72 @@ fn set_optimistic_status(status: RecordingStatus) {
     ));
 }
 
+/// Pending "pause for X minutes" timer. Held so a manual resume — or a fresh
+/// pause click — can abort the previous one and prevent a stale auto-resume
+/// from firing later. The start instant + total duration are kept so the tray
+/// tooltip can show a live "resumes in 12m" countdown via the existing 5-sec
+/// updater loop. No persistence: app quit / crash drops the timer and
+/// recording stays paused, which is the safer default for a privacy bias.
+struct PauseTimer {
+    handle: JoinHandle<()>,
+    started: std::time::Instant,
+    total: std::time::Duration,
+}
+
+static PAUSE_TIMER: Lazy<Mutex<Option<PauseTimer>>> = Lazy::new(|| Mutex::new(None));
+
+fn cancel_pause_timer() {
+    if let Some(t) = PAUSE_TIMER.lock().unwrap_or_else(|e| e.into_inner()).take() {
+        t.handle.abort();
+    }
+}
+
+/// Remaining time until auto-resume, if a pause timer is currently active.
+/// Returns None if the timer has already fired or no timer is set.
+fn pause_remaining() -> Option<std::time::Duration> {
+    let guard = PAUSE_TIMER.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().and_then(|t| {
+        let elapsed = t.started.elapsed();
+        if elapsed >= t.total {
+            None
+        } else {
+            Some(t.total - elapsed)
+        }
+    })
+}
+
+fn format_remaining(d: std::time::Duration) -> String {
+    let secs = d.as_secs();
+    if secs >= 3600 {
+        let h = secs / 3600;
+        let m = (secs % 3600) / 60;
+        if m == 0 { format!("{}h", h) } else { format!("{}h {}m", h, m) }
+    } else if secs >= 60 {
+        format!("{}m", (secs + 59) / 60) // round up
+    } else {
+        format!("{}s", secs.max(1))
+    }
+}
+
+/// Fire-and-forget POST to the local /notify endpoint. Used for pause /
+/// auto-resume notifications; failures are swallowed (notifications are
+/// best-effort UI fluff, not load-bearing).
+fn send_notify(title: impl Into<String>, body: impl Into<String>) {
+    let payload = serde_json::json!({
+        "title": title.into(),
+        "body": body.into(),
+        "type": "system",
+    });
+    tauri::async_runtime::spawn(async move {
+        let client = reqwest::Client::new();
+        let _ = client
+            .post("http://127.0.0.1:11435/notify")
+            .json(&payload)
+            .send()
+            .await;
+    });
+}
+
 /// Immediately rebuild the tray menu (called from main thread after optimistic status set).
 fn force_tray_rebuild(app: &AppHandle) -> Result<()> {
     let update_item = UPDATE_MENU_ITEM
@@ -69,7 +221,8 @@ fn force_tray_rebuild(app: &AppHandle) -> Result<()> {
     let mut new_state = state;
     new_state.recording_status = Some(effective);
 
-    let menu = create_dynamic_menu(app, &new_state, update_item.as_ref())?;
+    let data = prefetch_tray_menu_data(app);
+    let menu = create_dynamic_menu(app, &new_state, update_item.as_ref(), &data)?;
     if let Some(tray) = app.tray_by_id("screenpipe_main") {
         if let Ok(mut guard) = PREVIOUS_TRAY_MENU.lock() {
             *guard = Some(menu.clone());
@@ -142,7 +295,8 @@ pub fn setup_tray(app: &AppHandle, update_item: Option<&tauri::menu::MenuItem<Wr
 
     if let Some(main_tray) = app.tray_by_id("screenpipe_main") {
         // Initial menu setup with empty state
-        let menu = create_dynamic_menu(app, &MenuState::default(), update_item)?;
+        let data = prefetch_tray_menu_data(app);
+        let menu = create_dynamic_menu(app, &MenuState::default(), update_item, &data)?;
         // Keep a clone alive to prevent use-after-free (see PREVIOUS_TRAY_MENU doc).
         if let Ok(mut guard) = PREVIOUS_TRAY_MENU.lock() {
             *guard = Some(menu.clone());
@@ -251,9 +405,13 @@ pub fn recreate_tray(app: &AppHandle) {
                     Ok(new_tray) => {
                         debug!("recreate_tray: build succeeded, setting menu");
                         // Setup menu
-                        if let Ok(menu) =
-                            create_dynamic_menu(&app, &MenuState::default(), update_item.as_ref())
-                        {
+                        let data = prefetch_tray_menu_data(&app);
+                        if let Ok(menu) = create_dynamic_menu(
+                            &app,
+                            &MenuState::default(),
+                            update_item.as_ref(),
+                            &data,
+                        ) {
                             // Keep a clone alive to prevent use-after-free (see PREVIOUS_TRAY_MENU doc).
                             if let Ok(mut guard) = PREVIOUS_TRAY_MENU.lock() {
                                 *guard = Some(menu.clone());
@@ -308,19 +466,12 @@ fn create_dynamic_menu(
     app: &AppHandle,
     _state: &MenuState,
     update_item: Option<&tauri::menu::MenuItem<Wry>>,
+    data: &TrayMenuData,
 ) -> Result<tauri::menu::Menu<Wry>> {
-    let store = get_store(app, None)?;
     let mut menu_builder = MenuBuilder::new(app);
 
-    // Check if onboarding is completed
-    let onboarding_completed = OnboardingStore::get(app)
-        .ok()
-        .flatten()
-        .map(|o| o.is_completed)
-        .unwrap_or(false);
-
     // During onboarding: show minimal menu (version + skip + quit)
-    if !onboarding_completed {
+    if !data.onboarding_completed {
         menu_builder = menu_builder
             .item(
                 &MenuItemBuilder::with_id(
@@ -342,25 +493,9 @@ fn create_dynamic_menu(
         return menu_builder.build().map_err(Into::into);
     }
 
-    // Full menu after onboarding is complete
-    // Get shortcuts from store (must match frontend defaults in use-settings.tsx)
-    let (default_show, default_search, default_chat) = if cfg!(target_os = "windows") {
-        ("Alt+S", "Alt+K", "Alt+L")
-    } else {
-        ("Control+Super+S", "Control+Super+K", "Control+Super+L")
-    };
-    let show_shortcut = store
-        .get("showScreenpipeShortcut")
-        .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_else(|| default_show.to_string());
-    let search_shortcut = store
-        .get("searchShortcut")
-        .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_else(|| default_search.to_string());
-    let chat_shortcut = store
-        .get("showChatShortcut")
-        .and_then(|v| v.as_str().map(String::from))
-        .unwrap_or_else(|| default_chat.to_string());
+    let show_shortcut = &data.show_shortcut;
+    let search_shortcut = &data.search_shortcut;
+    let chat_shortcut = &data.chat_shortcut;
 
     // --- Open screenpipe ---
     menu_builder = menu_builder
@@ -396,6 +531,7 @@ fn create_dynamic_menu(
     let status_text = match effective_status {
         RecordingStatus::Starting => "○ Starting…",
         RecordingStatus::Recording => "● Recording",
+        RecordingStatus::Paused => "◐ Paused",
         RecordingStatus::Stopped => "○ Stopped",
         RecordingStatus::Error => "○ Error",
     };
@@ -472,23 +608,14 @@ fn create_dynamic_menu(
     }
 
     // Show "fix permissions" when recording is in error state
-    if effective_status == RecordingStatus::Error {
-        let perms = crate::permissions::do_permissions_check(false);
-        let has_permission_issue =
-            !perms.screen_recording.permitted() || !perms.microphone.permitted();
-        if has_permission_issue {
-            menu_builder = menu_builder.item(
-                &MenuItemBuilder::with_id("fix_permissions", "⚠ Fix permissions").build(app)?,
-            );
-        }
+    if effective_status == RecordingStatus::Error && data.has_permission_issue {
+        menu_builder = menu_builder
+            .item(&MenuItemBuilder::with_id("fix_permissions", "⚠ Fix permissions").build(app)?);
     }
 
     // --- Plan / usage info ---
     if !is_tray_item_hidden("tray_plan") {
-        let settings = SettingsStore::get(app)
-            .unwrap_or_default()
-            .unwrap_or_default();
-        let is_pro = settings.user.cloud_subscribed == Some(true);
+        let is_pro = data.cloud_subscribed;
         menu_builder = menu_builder.item(&PredefinedMenuItem::separator(app)?);
         if is_pro {
             menu_builder = menu_builder.item(
@@ -533,15 +660,28 @@ fn create_dynamic_menu(
         menu_builder = menu_builder.item(&PredefinedMenuItem::separator(app)?);
 
         let is_recording = effective_status == RecordingStatus::Recording;
-        let label = if is_recording {
-            "Recording"
-        } else {
-            "Stopped — click to record"
+        let label = match effective_status {
+            RecordingStatus::Recording => "Recording",
+            RecordingStatus::Paused => "Paused — click to resume",
+            _ => "Stopped — click to record",
         };
         let toggle = CheckMenuItemBuilder::with_id("toggle_recording", label)
             .checked(is_recording)
             .build(app)?;
         menu_builder = menu_builder.item(&toggle);
+
+        // "Pause for…" submenu — only meaningful while currently recording.
+        // Each click stops capture immediately, then a tokio task auto-resumes
+        // after the chosen interval. See cancel_pause_timer / handle_menu_event.
+        if is_recording {
+            let pause_submenu = SubmenuBuilder::new(app, "Pause for…")
+                .item(&MenuItemBuilder::with_id("pause_5", "5 minutes").build(app)?)
+                .item(&MenuItemBuilder::with_id("pause_15", "15 minutes").build(app)?)
+                .item(&MenuItemBuilder::with_id("pause_30", "30 minutes").build(app)?)
+                .item(&MenuItemBuilder::with_id("pause_60", "1 hour").build(app)?)
+                .build()?;
+            menu_builder = menu_builder.item(&pause_submenu);
+        }
     }
 
     // TODO: vault lock tray item disabled — CLI-only for now
@@ -649,9 +789,14 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             });
         }
         "start_recording" | "stop_recording" | "toggle_recording" => {
-            let is_recording = get_recording_status() == RecordingStatus::Recording;
+            // Manual toggle cancels any pending auto-resume — otherwise a user
+            // who paused for 30 min and then resumed early would get re-paused
+            // when the original timer fires.
+            cancel_pause_timer();
+            let status = get_recording_status();
+            let is_recording = status == RecordingStatus::Recording;
             let (optimistic, event) = if is_recording {
-                (RecordingStatus::Stopped, "shortcut-stop-recording")
+                (RecordingStatus::Paused, "shortcut-stop-recording")
             } else {
                 (RecordingStatus::Starting, "shortcut-start-recording")
             };
@@ -667,11 +812,56 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
                 }
             });
         }
+        id if id.starts_with("pause_") => {
+            let mins: u64 = id.strip_prefix("pause_").and_then(|s| s.parse().ok()).unwrap_or(15);
+            let total = std::time::Duration::from_secs(mins * 60);
+            // Cancel any in-flight pause timer before scheduling a new one.
+            cancel_pause_timer();
+            // Pause now (same path as the manual toggle).
+            set_optimistic_status(RecordingStatus::Paused);
+            let app_for_stop = app_handle.clone();
+            tauri::async_runtime::spawn(async move {
+                let _ = app_for_stop.emit("shortcut-stop-recording", ());
+            });
+            // Schedule auto-resume — also fires a notification so the user knows
+            // recording is back on without having to open the menu.
+            let app_for_resume = app_handle.clone();
+            let handle = tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(total).await;
+                let _ = app_for_resume.emit("shortcut-start-recording", ());
+                send_notify(
+                    "Recording resumed",
+                    "screenpipe is recording again.",
+                );
+            });
+            *PAUSE_TIMER.lock().unwrap_or_else(|e| e.into_inner()) = Some(PauseTimer {
+                handle,
+                started: std::time::Instant::now(),
+                total,
+            });
+            // Tell the user via a system notification (the tray icon doesn't
+            // visually change between recording / paused, so the menubar gives
+            // no glance-level signal otherwise).
+            let pretty = if mins >= 60 {
+                let h = mins / 60;
+                if h == 1 { "1 hour".to_string() } else { format!("{} hours", h) }
+            } else {
+                format!("{} minutes", mins)
+            };
+            send_notify(
+                "Recording paused",
+                format!("screenpipe will auto-resume in {}.", pretty),
+            );
+            // Repaint the tray so "Recording" flips to "Paused" immediately.
+            let app_for_rebuild = app_handle.clone();
+            let _ = app_handle.run_on_main_thread(move || {
+                if let Err(e) = force_tray_rebuild(&app_for_rebuild) {
+                    error!("tray rebuild failed: {}", e);
+                }
+            });
+        }
         id if id.starts_with("toggle_audio_device_") => {
-            let device_name = id
-                .strip_prefix("toggle_audio_device_")
-                .unwrap()
-                .to_string();
+            let device_name = id.strip_prefix("toggle_audio_device_").unwrap().to_string();
 
             // Check current state from cached device status.
             // Default to "running" if device isn't in cache yet (it's shown
@@ -685,19 +875,18 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
 
             // macOS CheckMenuItem already toggles the visual check on click.
             // Just fire the API call — the health poll (every 1s) will sync state.
+            let api = local_api_context_from_app(&app_handle);
             let endpoint = if is_running {
-                "http://localhost:3030/audio/device/stop"
+                api.url("/audio/device/stop")
             } else {
-                "http://localhost:3030/audio/device/start"
+                api.url("/audio/device/start")
             };
             tauri::async_runtime::spawn(async move {
                 let client = reqwest::Client::new();
-                let _ = client
-                    .post(endpoint)
+                let _ = api
+                    .apply_auth(client.post(endpoint))
                     .header("Content-Type", "application/json")
-                    .body(
-                        serde_json::json!({"device_name": device_name}).to_string(),
-                    )
+                    .body(serde_json::json!({"device_name": device_name}).to_string())
                     .send()
                     .await;
             });
@@ -838,16 +1027,15 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             tauri::async_runtime::spawn(async move {
                 info!("Stopping screenpipe recording before quit...");
                 if let Some(recording_state) = app_handle_clone.try_state::<RecordingState>() {
-                    let mut handle_guard = recording_state.handle.lock().await;
-                    if let Some(handle) = handle_guard.take() {
-                        // Wait for UI recorder tasks to actually finish before exiting.
-                        // This prevents the crash where the runtime tears down while
-                        // the tree walker is still mid-DB-write.
-                        handle.shutdown_and_wait().await;
-                        info!("Screenpipe recording stopped successfully");
-                    } else {
-                        debug!("No recording running to stop");
+                    // Stop capture first (self-contained)
+                    if let Some(session) = recording_state.capture.lock().await.take() {
+                        session.stop().await;
                     }
+                    // Then shutdown server
+                    if let Some(server) = recording_state.server.lock().await.take() {
+                        server.shutdown().await;
+                    }
+                    info!("Screenpipe server + recording stopped successfully");
                 }
                 info!("All tasks stopped, exiting process");
                 // Use _exit() instead of exit() to skip C++ atexit/static destructors.
@@ -876,48 +1064,29 @@ async fn update_menu_if_needed(
     app: &AppHandle,
     update_item: &tauri::menu::MenuItem<Wry>,
 ) -> Result<()> {
-    // Get current state including onboarding status
-    let onboarding_completed = OnboardingStore::get(app)
-        .ok()
-        .flatten()
-        .map(|o| o.is_completed)
-        .unwrap_or(false);
-
-    // Check permission status for tray tooltip
-    let has_permission_issue = if onboarding_completed {
-        #[cfg(target_os = "macos")]
-        {
-            let perms = crate::permissions::do_permissions_check(false);
-            !perms.screen_recording.permitted() || !perms.microphone.permitted()
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            false
-        }
-    } else {
-        false
-    };
-
-    let cloud_subscribed = SettingsStore::get(app)
-        .unwrap_or_default()
-        .unwrap_or_default()
-        .user
-        .cloud_subscribed
-        == Some(true);
+    // Pre-fetch all data on the tokio thread (off main thread) so the
+    // main-thread closure only does lightweight menu-item construction.
+    let data = prefetch_tray_menu_data(app);
 
     let recording_info = get_recording_info();
     let effective_status = get_effective_recording_status();
     let new_state = MenuState {
-        shortcuts: get_current_shortcuts(app)?,
+        shortcuts: {
+            let mut m = HashMap::new();
+            m.insert("show".to_string(), data.show_shortcut.clone());
+            m.insert("search".to_string(), data.search_shortcut.clone());
+            m.insert("chat".to_string(), data.chat_shortcut.clone());
+            m
+        },
         recording_status: Some(effective_status),
-        onboarding_completed,
-        has_permission_issue,
+        onboarding_completed: data.onboarding_completed,
+        has_permission_issue: data.has_permission_issue,
         devices: recording_info
             .devices
             .iter()
             .map(|d| (d.name.clone(), d.active))
             .collect(),
-        cloud_subscribed,
+        cloud_subscribed: data.cloud_subscribed,
     };
 
     // Compare with last state (poison-safe: run handler must not panic)
@@ -931,6 +1100,27 @@ async fn update_menu_if_needed(
         }
     };
 
+    // Tooltip refreshes every tick regardless of menu rebuild — countdown
+    // ("paused, resumes in 12m") needs to tick down even when no other state
+    // has changed. Cheap: just an NSString swap on the existing status item.
+    let has_perm_issue = new_state.has_permission_issue;
+    let tooltip: String = if has_perm_issue {
+        "screenpipe — ⚠️ permissions needed".to_string()
+    } else if effective_status == RecordingStatus::Paused {
+        match pause_remaining() {
+            Some(d) => format!("screenpipe — paused, resumes in {}", format_remaining(d)),
+            None => "screenpipe — paused".to_string(),
+        }
+    } else {
+        "screenpipe".to_string()
+    };
+    let app_for_tooltip = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(tray) = app_for_tooltip.tray_by_id("screenpipe_main") {
+            let _ = tray.set_tooltip(Some(&tooltip));
+        }
+    });
+
     if should_update {
         // IMPORTANT: All NSStatusItem/TrayIcon operations must happen on the main thread.
         // If the TrayIcon is dropped on a tokio thread (e.g., after recreate_tray removed
@@ -938,13 +1128,12 @@ async fn update_menu_if_needed(
         // thread and crashes.
         let app_for_thread = app.clone();
         let update_item = update_item.clone();
-        let has_perm_issue = new_state.has_permission_issue;
         let _ = app.run_on_main_thread(move || {
             if let Err(e) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if let Some(tray) = app_for_thread.tray_by_id("screenpipe_main") {
                     debug!("tray_menu_update: setting menu");
                     if let Ok(menu) =
-                        create_dynamic_menu(&app_for_thread, &new_state, Some(&update_item))
+                        create_dynamic_menu(&app_for_thread, &new_state, Some(&update_item), &data)
                     {
                         // Keep a clone alive to prevent use-after-free (see PREVIOUS_TRAY_MENU doc).
                         if let Ok(mut guard) = PREVIOUS_TRAY_MENU.lock() {
@@ -978,32 +1167,6 @@ async fn update_menu_if_needed(
     }
 
     Ok(())
-}
-
-fn get_current_shortcuts(app: &AppHandle) -> Result<HashMap<String, String>> {
-    let store = get_store(app, None)?;
-    let mut shortcuts = HashMap::new();
-
-    if let Some(s) = store
-        .get("showScreenpipeShortcut")
-        .and_then(|v| v.as_str().map(String::from))
-    {
-        shortcuts.insert("show".to_string(), s);
-    }
-    if let Some(s) = store
-        .get("searchShortcut")
-        .and_then(|v| v.as_str().map(String::from))
-    {
-        shortcuts.insert("search".to_string(), s);
-    }
-    if let Some(s) = store
-        .get("showChatShortcut")
-        .and_then(|v| v.as_str().map(String::from))
-    {
-        shortcuts.insert("chat".to_string(), s);
-    }
-
-    Ok(shortcuts)
 }
 
 pub fn setup_tray_menu_updater(app: AppHandle, update_item: &tauri::menu::MenuItem<Wry>) {

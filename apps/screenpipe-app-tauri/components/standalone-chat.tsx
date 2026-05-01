@@ -6,12 +6,22 @@
 import * as React from "react";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import {
+  mountAgentEventBus,
+  registerForeground,
+  onTerminated as onAgentTerminated,
+  onEvicted as onAgentEvicted,
+} from "@/lib/events/bus";
+import { pipeSessionId } from "@/lib/events/types";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useSettings, ChatMessage, ChatConversation } from "@/lib/hooks/use-settings";
 import { cn } from "@/lib/utils";
-import { Loader2, Send, Square, User, Settings, ExternalLink, X, ImageIcon, History, Search, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, Copy, Check, Clock, Paperclip, Filter, RefreshCw, GitBranch, MoreHorizontal, Pencil } from "lucide-react";
+import { Loader2, Send, Square, User, Settings, ExternalLink, X, ImageIcon, History, Search, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, Copy, Check, Clock, Paperclip, Filter, RefreshCw, GitBranch, MoreHorizontal, Pencil, Pin, Shield, ShieldCheck } from "lucide-react";
 import { SchedulePromptDialog } from "@/components/chat/schedule-prompt-dialog";
+import { PipeContextBanner } from "@/components/chat/pipe-context-banner";
+import { BrowserSidebar } from "@/components/browser-sidebar";
 import { toast } from "@/components/ui/use-toast";
 import { motion, AnimatePresence } from "framer-motion";
 import { PipeAIIcon, PipeAIIconLarge } from "@/components/pipe-ai-icon";
@@ -21,7 +31,7 @@ import { VideoComponent } from "@/components/rewind/video";
 import { MermaidDiagram } from "@/components/rewind/mermaid-diagram";
 import { convertFileSrc } from "@tauri-apps/api/core";
 import { AIPresetsSelector } from "@/components/rewind/ai-presets-selector";
-import { AIPreset } from "@/lib/utils/tauri";
+import { AIPreset, PiQueuedPrompt } from "@/lib/utils/tauri";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
 // OpenAI SDK no longer used directly — all providers route through Pi agent
@@ -32,6 +42,8 @@ import { writeTextFile, readFile } from "@tauri-apps/plugin-fs";
 import { commands } from "@/lib/utils/tauri";
 import { emit } from "@tauri-apps/api/event";
 import { useChatConversations } from "@/components/hooks/use-chat-conversations";
+import { useChatStore } from "@/lib/stores/chat-store";
+import { statusForEvent } from "@/lib/stores/pi-event-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { usePlatform } from "@/lib/hooks/use-platform";
@@ -49,8 +61,7 @@ import { useAutoSuggestions } from "@/lib/hooks/use-auto-suggestions";
 import { SummaryCards } from "@/components/chat/summary-cards";
 import { type CustomTemplate } from "@/lib/summary-templates";
 import { usePipes } from "@/lib/hooks/use-pipes";
-
-const SCREENPIPE_API = "http://localhost:3030";
+import { localFetch, getApiBaseUrl } from "@/lib/api";
 // Session ID is per-conversation — set on mount (new conv) and updated on load/new.
 // Stored as a ref so event listeners always see the current value without stale closures.
 
@@ -95,7 +106,10 @@ function buildDailyLimitMessage(errorStr: string): string {
     }
 
     if (isCostLimit) {
-      return "Daily usage limit reached for this model. Try a lighter model or wait until tomorrow.";
+      // Don't leak the raw dollar cap — that's our internal margin. Frame it
+      // as an account-wide budget so the user understands why it fired even
+      // when they "didn't use much" (background pipes consume it too).
+      return "You've hit today's AI usage limit. This is an account-wide budget — background pipes count too. Switch to a free model (gemini-3-flash, haiku) or check Settings → Pipes for chatty schedules.";
     }
 
     const tierMatch = errorStr.match(/"tier":\s*"([^"]+)"/);
@@ -113,6 +127,34 @@ function buildDailyLimitMessage(errorStr: string): string {
   }
 }
 
+function classifyQuotaError(errorStr: string): "daily" | "rate" | "none" {
+  const normalized = errorStr.toLowerCase();
+  const isDailyLimit =
+    normalized.includes("credits_exhausted") ||
+    normalized.includes("daily_limit_exceeded") ||
+    normalized.includes("daily_cost_limit_exceeded");
+  if (isDailyLimit) {
+    return "daily";
+  }
+
+  const isRateLimit =
+    normalized.includes("429") ||
+    normalized.includes("rate limit") ||
+    normalized.includes("rate_limit") ||
+    normalized.includes("requests per minute") ||
+    normalized.includes("too many requests");
+  return isRateLimit ? "rate" : "none";
+}
+
+function buildRateLimitMessage(errorStr: string): string {
+  const waitMatch = errorStr.match(/wait (\d+) seconds/i);
+  const waitTime = waitMatch ? waitMatch[1] : "a moment";
+  const isPerMinuteRate = /rate limit exceeded|requests per minute/i.test(errorStr);
+  return isPerMinuteRate
+    ? `Rate limited — please wait ${waitTime} seconds and try again.`
+    : "Rate limited — try again in a moment or switch to a different model.";
+}
+
 /** Extract the gateway-reported tier from an error string, if present. */
 // Helper to get timezone offset string (e.g., "+1" or "-5")
 function getTimezoneOffsetString(): string {
@@ -127,66 +169,92 @@ function buildSystemPrompt(): string {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offsetStr = getTimezoneOffsetString();
 
-  return `You are a helpful AI assistant that can search through the user's Screenpipe data - their screen recordings, audio transcriptions, and UI interactions.
+  return `You are the user's Screenpipe assistant. You have read access to their screen recordings, audio transcriptions, and UI activity, and tools to search, summarize, and act on them.
 
-BEHAVIOR RULES:
-- Act immediately on clear requests. NEVER ask for confirmation when the user's intent is obvious.
-- If a search returns empty, silently fix your query and retry (widen time range, remove filters). Do NOT list "possibilities" or ask the user what to do.
-- Be concise. Cite timestamps when relevant. Convert all UTC timestamps to the user's local timezone before displaying.
-- Never show raw process names (.exe) to the user. Translate to human-readable app names — strip the .exe suffix and title-case if unknown.
-- When summarizing activity, write like a knowledgeable assistant recapping the user's day — connect the dots between windows, content, and audio into a narrative. Name specific projects, files, people, and URLs. Say "you were debugging a Windows crash for 20 min, then reviewed a PR about team member display names" not "you used WezTerm for 39 min and Arc for 8 min." The window titles and key_texts from activity-summary contain the specifics — use them.
+# Voice and length — the most important rule
 
-TOOL SELECTION (use the right tool for the job):
-- "meeting", "call", "conversation", "what did I/they say" → search with content_type: "audio", NO q param
-- "how long", "time spent", "which apps", "most used" → use activity-summary (NOT raw frame counts or SQL)
-- "what was on screen", "what was I reading/looking at" → search with content_type: "all" or "accessibility"
-- Broad overview ("what was I doing?") → activity-summary FIRST. The windows field shows exactly what the user was working on (window titles, URLs, time per tab). Usually sufficient without further searches.
+Default to plain prose, like a friend texting back. Most answers are short: a few sentences for lookups, a short paragraph for recaps. Long answers only when the work itself is long or technical. No headings, no tables, no bullet lists, no code blocks, no numbered "Phase 1 / Phase 2" decomposition — unless the question itself is long or technical.
 
-CRITICAL SEARCH RULES (database has 600k+ entries):
-1. ALWAYS include start_time in EVERY search - NEVER search without a time range
-2. Default time range: last 1-2 hours. Expand ONLY if no results found
-3. First search: ONLY use time params (start_time, end_time). No q, no app_name, no content_type. This gives ground truth of what's recorded. Scan results to find correct app_name values, then narrow with filters using exact observed values. App names are case-sensitive (e.g. "Discord" vs "Discord.exe"). The q param searches captured text, NOT app names.
-4. NEVER report "no data found" after one filtered search. Verify with unfiltered time-only search first.
-5. Keep limit=5-10 per search. NEVER use limit > 50
-6. Maximum 10 search/API calls per user request. Stop and summarize what you have
-7. For weekly/multi-day queries: search ONE DAY AT A TIME with small limits
-8. Prefer /raw_sql with COUNT(*), GROUP BY for aggregation over fetching raw rows
-9. All /raw_sql SELECT queries MUST include a LIMIT clause (max 10000)
+Don't lecture. Skip "Why this matters", "the reusable pattern is", "in summary", "key takeaways". Answer the question and stop. No closing recap of what you just said.
 
-EXAMPLES OF GOOD SEARCHES:
-- User: "summarize my meeting" → search content_type:"audio", start_time:"2h ago", NO q param → summarize transcriptions
-- User: "what apps did I use today" → call activity-summary with start_time: today_start, end_time: now → report active_minutes per app
-- User: "what was I reading about X" → search q:"X", start_time:"3h ago" → show text with deep links
+Hide the plumbing. By default never show: frame IDs, file paths, raw ISO timestamps, schema field names (\`speaker_ids\`, \`accessibility_text\`, etc.), API parameters (\`content_type\`, \`limit=\`), or process names ending in \`.exe\`. Translate to human terms — strip \`.exe\` and title-case unknown app names, convert UTC timestamps to the user's local timezone, say "yesterday around 3pm" not \`2026-04-27T15:00:00Z\`.
 
-Rules for showing media:
-- Show videos/images using standard markdown: ![description](/path/to/file.mp4) or ![description](/path/to/image.jpg)
-- ONLY use the exact, unmodified file_path or audio_file_path from search results. NEVER construct or guess paths.
-- Before showing a video, verify the file exists by checking it with the shell (e.g. ls or Test-Path). If missing, tell the user and retry search with a different time range instead of showing a broken player.
+# Flip to technical mode when the user signals it
 
-SPEAKER MANAGEMENT (localhost:3030):
-- GET /speakers/unnamed?limit=10 — list unnamed speakers
-- GET /speakers/search?name=John — search by name
-- POST /speakers/update — rename: {"id": 5, "name": "John"}
-- POST /speakers/merge — merge duplicates: {"speaker_to_keep_id": 1, "speaker_to_merge_id": 2}
-- GET /speakers/similar?speaker_id=5 — find similar speakers
-- POST /speakers/reassign — reassign audio chunk to different speaker
+Match the user's energy. Go detailed/structured when any of these is true:
+- They pasted code, JSON, SQL, error traces, configs, or credentials
+- They wrote a numbered task list, a role prompt ("you are an X advisor"), or a multi-step instruction
+- Their words include "debug", "trace", "explain how", "show me the code", "step by step", "I'm building", "I'm optimizing", "outline", "table"
+- The earlier turns of this conversation were already technical
 
-FULL API REFERENCE:
-For the complete list of 60+ screenpipe API endpoints (frames, audio, pipes, tags, etc.), fetch: https://docs.screenpi.pe/llms-full.txt
-Fetch this when you need endpoints beyond /search, /activity-summary, or /speakers.
+In technical mode you can use headings, tables, code blocks, exact timestamps, file paths, and longer answers. Match the depth they brought — don't exceed it.
 
-DEEP LINKS & MEDIA:
-- Frame (PREFERRED): [10:30 AM — Chrome](thadm://frame/12345) — use frame_id from screen text search results. NEVER invent frame IDs.
-- Timeline (audio only): [meeting at 3pm](thadm://timeline?timestamp=2024-01-15T15:00:00Z) — use exact timestamp from audio search results.
-- Video/Image: use markdown ![description](/path/to/file.mp4)
-NEVER fabricate frame IDs or timestamps — only use values from actual search results.
+# Ambiguous / one-word / typo input
 
-RENDERING COMPONENTS:
-You can embed these in your response when they genuinely add value. Don't force them into simple answers.
+If the user sends "hi", "gih", "d", a single word, or an obvious typo, ask one short clarifying question. Don't launch a capability tour or read your own skills aloud.
 
-- Mermaid diagrams: \`\`\`mermaid fenced blocks for flowcharts, sequence diagrams, timelines.
-- App usage breakdown: \`\`\`app-stats fenced blocks, one row per app, format "App Name|minutes_as_decimal". Deduplicate — merge variants like "discord.exe" and "Discord" into one row with summed minutes.
-- Collapsible sections: <details><summary>label</summary> content </details> for optional / secondary info the user can expand.
+# Activity recaps (the most common request)
+
+When summarizing what the user did, write like a friend recapping their day. Connect windows, content, and audio into a short narrative. Name specific projects, people, files, URLs from the data. "You spent the morning debugging a Windows crash, then took a call with Pat about pricing" — not "WezTerm 39m, Arc 8m, Zoom 12m". Pull the specifics from window titles and key_texts in activity-summary. Cap at ~150 words unless the user asked for depth.
+
+# Acting on requests
+
+- Act immediately on clear intent. Don't ask to confirm what's obvious.
+- If a search returns empty, silently widen and retry. Don't enumerate possibilities or ask the user to choose.
+- Never say "no data found" after one filtered search — verify first with an unfiltered time-only search.
+
+# Tool selection
+
+- "meeting / call / conversation / what did I/they say" → search with content_type: "audio", no q param
+- "how long / time spent / which apps / most used" → activity-summary (not raw frame counts or SQL)
+- "what was on screen / what was I reading" → search with content_type: "all" or "accessibility"
+- "what was I doing" → activity-summary first; the windows field usually has enough without further searches
+
+# Local server auth
+
+The local screenpipe server (localhost:3030) requires a bearer token, exposed as env var SCREENPIPE_API_AUTH_KEY. Every curl to localhost:3030 must include \`-H "Authorization: Bearer $SCREENPIPE_API_AUTH_KEY"\`. Don't ask the user for a key — you already have it. On 401, retry without the header (auth is disabled on that install).
+
+# Search rules (DB has 600k+ rows)
+
+1. Always include start_time. Default: last 1–2 hours. Widen only when empty.
+2. First search: time only — no q, no app_name, no content_type. Scan results for real app_name values, then narrow. App names are case-sensitive ("Discord" vs "Discord.exe"). The q param searches captured text, not app names.
+3. limit=5–10 per call. Never >50.
+4. Cap at 10 search/API calls per user request, then summarize what you have.
+5. Multi-day queries: one day at a time.
+6. Prefer /raw_sql with COUNT/GROUP BY for aggregation over fetching raw rows. SELECT queries must include LIMIT (max 10000).
+
+# Showing media
+
+- Markdown only: \`![description](/path/to/file.mp4)\` or \`![description](/path/to/image.jpg)\`
+- Use the exact file_path / audio_file_path from results. Never construct or guess paths.
+- Verify the file exists (\`ls\` / \`Test-Path\`) before showing it. If missing, retry the search instead of rendering a broken player.
+
+# Deep links — sparingly
+
+Only when jumping to that exact moment is the answer the user wants. Not as decoration on every timestamp in a recap.
+- Frame: \`[10:30 AM — Chrome](thadm://frame/12345)\` — only with a real frame_id from results
+- Timeline (audio): \`[meeting at 3pm](thadm://timeline?timestamp=2024-01-15T15:00:00Z)\` — exact timestamp from audio results
+Never fabricate frame IDs or timestamps.
+
+# Speakers (localhost:3030)
+
+- GET /speakers/unnamed?limit=10
+- GET /speakers/search?name=John
+- POST /speakers/update — \`{"id": 5, "name": "John"}\`
+- POST /speakers/merge — \`{"speaker_to_keep_id": 1, "speaker_to_merge_id": 2}\`
+- GET /speakers/similar?speaker_id=5
+- POST /speakers/reassign
+
+# Full API reference
+
+60+ endpoints (frames, audio, pipes, tags, etc.) at https://docs.screenpi.pe/llms-full.txt. Fetch when you need anything beyond /search, /activity-summary, or /speakers.
+
+# Rich rendering — only when it earns its space
+
+- Mermaid: \`\`\`mermaid blocks for flowcharts / sequences / timelines
+- App breakdown: \`\`\`app-stats blocks, one row per app as "App Name|minutes_decimal". Dedupe variants ("discord.exe" + "Discord" → one row with summed minutes)
+- Collapsible: \`<details><summary>label</summary>content</details>\` for optional / secondary info
+Don't reach for these on short answers.
 
 Current time: ${now.toISOString()}
 User's timezone: ${timezone} (UTC${offsetStr})
@@ -255,13 +323,11 @@ function GridDissolveLoader({
   label,
   toolName,
   thinkingSecs,
-  tokenCount,
 }: {
   phase?: LoaderPhase;
   label?: string;
   toolName?: string;
   thinkingSecs?: number;
-  tokenCount?: number;
 }) {
   const ROWS = 3;
   const COLS = 5;
@@ -311,12 +377,6 @@ function GridDissolveLoader({
     "analyzing..."
   );
 
-  const tokenLabel = tokenCount != null && tokenCount > 0
-    ? tokenCount >= 1000
-      ? `${(tokenCount / 1000).toFixed(1)}k tokens`
-      : `${tokenCount} tokens`
-    : null;
-
   return (
     <div className="flex items-center gap-2">
       <div
@@ -343,7 +403,7 @@ function GridDissolveLoader({
         ))}
       </div>
       <span className="text-[11px] font-mono text-muted-foreground tracking-wide">
-        {displayLabel}{tokenLabel && <span className="ml-1.5 opacity-60">· {tokenLabel}</span>}
+        {displayLabel}
       </span>
     </div>
   );
@@ -722,7 +782,7 @@ function MarkdownBlock({ text, isUser }: { text: string; isUser: boolean }) {
             try {
               imgSrc = convertFileSrc(src);
             } catch {
-              imgSrc = `http://localhost:3030/experimental/frames/from-file?path=${encodeURIComponent(src)}`;
+              imgSrc = `${getApiBaseUrl()}/experimental/frames/from-file?path=${encodeURIComponent(src)}`;
             }
           }
           return (
@@ -1026,12 +1086,218 @@ function CollapsibleUserMessage({ label, fullContent }: { label: string; fullCon
   );
 }
 
-export function StandaloneChat({ className }: { className?: string } = {}) {
+/**
+ * Title + actions for the current chat. Click → menu with Rename
+ * (inline edit), Pin, Delete. Renders nothing for empty chats (no user
+ * message yet) — there's no useful title and the actions are no-ops
+ * for something that doesn't exist on disk.
+ */
+function ChatTitleMenu({
+  conversationId,
+  messages,
+  renameConversation,
+  deleteConversation,
+  startNewConversation,
+}: {
+  conversationId: string | null;
+  messages: Message[];
+  renameConversation: (id: string, title: string) => Promise<void> | void;
+  deleteConversation: (id: string) => Promise<void> | void;
+  startNewConversation: (id?: string) => Promise<void> | void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
+  const [draft, setDraft] = useState("");
+  const inputRef = useRef<HTMLInputElement | null>(null);
+
+  // Title source order:
+  //   1. The session's title from the chat-store (in-memory, freshest;
+  //      reflects user renames immediately).
+  //   2. The first user message, truncated. Matches the auto-derive
+  //      logic in saveConversation so what the menu shows is what
+  //      will end up on disk.
+  // Hide the menu entirely when neither source has anything — the
+  // chat is brand new and the actions don't apply yet.
+  const storeTitle = useChatStore((s) =>
+    conversationId ? s.sessions[conversationId]?.title : undefined
+  );
+  const session = useChatStore((s) =>
+    conversationId ? s.sessions[conversationId] : undefined
+  );
+  const isPinned = session?.pinned ?? false;
+  const firstUserMsg = messages.find((m) => m.role === "user");
+  const derivedTitle = firstUserMsg?.content?.slice(0, 50);
+  const title =
+    storeTitle && storeTitle !== "new chat" && storeTitle !== "untitled"
+      ? storeTitle
+      : derivedTitle || "";
+
+  // No conversation id OR no real content → don't render. The "+ New"
+  // button on the right is enough; no point showing actions for a
+  // nothing-chat.
+  if (!conversationId || !title) return null;
+
+  const handleStartRename = () => {
+    setDraft(title);
+    setRenaming(true);
+    setOpen(false);
+    // Focus on next tick once the input is in the DOM.
+    setTimeout(() => inputRef.current?.focus(), 0);
+  };
+  const commitRename = async () => {
+    const next = draft.trim();
+    setRenaming(false);
+    if (!next || next === title) return;
+    try {
+      await renameConversation(conversationId, next);
+      // Mirror to the in-memory store so the sidebar reflects the
+      // change without waiting for the next disk hydration cycle.
+      useChatStore.getState().actions.patch(conversationId, { title: next });
+    } catch (e) {
+      console.warn("[chat] rename failed:", e);
+    }
+  };
+  const handleTogglePin = async () => {
+    setOpen(false);
+    const next = !isPinned;
+    useChatStore.getState().actions.togglePinned(conversationId);
+    try {
+      const { updateConversationFlags } = await import("@/lib/chat-storage");
+      await updateConversationFlags(conversationId, { pinned: next });
+    } catch {
+      // best-effort persistence
+    }
+  };
+  const handleDelete = async () => {
+    setOpen(false);
+    if (!confirm("Delete this chat? This cannot be undone.")) return;
+    try {
+      await deleteConversation(conversationId);
+      useChatStore.getState().actions.drop(conversationId);
+      // Land the user on a fresh chat — the panel was rendering the
+      // one we just deleted.
+      await startNewConversation();
+    } catch (e) {
+      console.warn("[chat] delete failed:", e);
+    }
+  };
+
+  if (renaming) {
+    return (
+      <input
+        ref={inputRef}
+        value={draft}
+        onChange={(e) => setDraft(e.target.value)}
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void commitRename();
+          } else if (e.key === "Escape") {
+            e.preventDefault();
+            setRenaming(false);
+          }
+        }}
+        onBlur={() => void commitRename()}
+        className="relative z-10 h-7 px-2 max-w-[260px] text-xs font-medium bg-background border border-border rounded-md focus:outline-none focus:ring-1 focus:ring-foreground/30"
+      />
+    );
+  }
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setOpen((o) => !o);
+          }}
+          className="relative z-10 inline-flex items-center gap-1 max-w-[260px] h-7 px-2 rounded-md text-xs font-medium text-foreground hover:bg-muted/50 transition-colors"
+          title="Chat options"
+        >
+          <span className="truncate">{title}</span>
+          <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground/70" />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent
+        className="w-44 p-1"
+        align="start"
+        side="bottom"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button
+          className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md hover:bg-muted text-left"
+          onClick={handleStartRename}
+        >
+          <Pencil className="h-3.5 w-3.5 shrink-0" />
+          Rename
+        </button>
+        <button
+          className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md hover:bg-muted text-left"
+          onClick={() => void handleTogglePin()}
+        >
+          <Pin className="h-3.5 w-3.5 shrink-0" />
+          {isPinned ? "Unpin" : "Pin"}
+        </button>
+        <div className="my-1 border-t border-border" />
+        <button
+          className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md hover:bg-muted text-destructive text-left"
+          onClick={() => void handleDelete()}
+        >
+          <Trash2 className="h-3.5 w-3.5 shrink-0" />
+          Delete
+        </button>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
+export function StandaloneChat({
+  className,
+  hideInlineHistory,
+}: {
+  className?: string;
+  /** When true, the in-panel History button + slide-in panel are hidden.
+   *  Set this from the home page where the chat list lives in the main
+   *  app sidebar (avoids two history UIs side-by-side). The overlay
+   *  chat at `/chat` leaves it false so users still have a history
+   *  affordance in the floating window — that window has no AppSidebar. */
+  hideInlineHistory?: boolean;
+} = {}) {
   const { settings, updateSettings, isSettingsLoaded, reloadStore } = useSettings();
   const { isMac } = usePlatform();
   const { items: appItems } = useSqlAutocomplete("app");
   const { suggestions: autoSuggestions, refreshing: suggestionsRefreshing, forceRefresh: refreshSuggestions } = useAutoSuggestions();
   const { templatePipes, loading: pipesLoading } = usePipes();
+  // Connected integrations (gmail, google-sheets, slack, etc.) surfaced in the
+  // filter popover so users can mention them directly with @id — helps the
+  // agent pick the right connection for a query instead of having to guess.
+  const [connections, setConnections] = useState<
+    Array<{ id: string; name: string; category?: string }>
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await localFetch("/connections");
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          data?: Array<{ id: string; name: string; connected: boolean; category?: string }>;
+        };
+        const list = (json.data ?? [])
+          .filter((c) => c.connected)
+          .map((c) => ({ id: c.id, name: c.name, category: c.category }));
+        if (!cancelled) setConnections(list);
+      } catch {
+        // silent — filter just won't surface connections, no UI regression
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Custom summary templates (persisted in settings)
   const [customTemplates, setCustomTemplates] = useState<CustomTemplate[]>([]);
@@ -1065,14 +1331,75 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   const [isLoading, setIsLoading] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [streamedCharCount, setStreamedCharCount] = useState(0);
+  // Prompts the user has queued while a previous one is still streaming.
+  // Sourced from rust via the `pi-queue-changed` event — single source of
+  // truth lives in `pi_command_queue.rs`. Cleared as soon as the drain loop
+  // pulls a queued item and writes it to stdin (it's then in-flight).
+  const [queuedPrompts, setQueuedPrompts] = useState<PiQueuedPrompt[]>([]);
   const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null);
   const [openMessageMenuId, setOpenMessageMenuId] = useState<string | null>(null);
+  // Cursor-style inline edit: click a sent user message to tweak and resend
+  const [editingMessageId, setEditingMessageId] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState<string>("");
+  // Character offset to seed the caret at when the textarea mounts. Computed
+  // from the click event so the cursor lands where the user pointed, not at
+  // the start of the text — matches Cursor / iMessage edit-in-place feel.
+  const pendingCaretRef = useRef<number | null>(null);
+  const editTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  // Tracks where mousedown landed on a user message bubble so the mouseup
+  // handler can distinguish a real click (enter edit mode) from a drag-
+  // select (let the browser select text — don't swallow it).
+  const pendingEditDownXYRef = useRef<{ x: number; y: number } | null>(null);
+
+  // Given a click on a rendered message bubble, compute the character offset
+  // into `content` that corresponds to where the user clicked. Falls back to
+  // end-of-text if the browser can't resolve a caret position (old Safari).
+  const caretOffsetFromClick = useCallback((e: React.MouseEvent, content: string): number => {
+    try {
+      // Firefox / WebView2: caretPositionFromPoint ; WebKit: caretRangeFromPoint.
+      const doc = document as Document & {
+        caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null;
+        caretRangeFromPoint?: (x: number, y: number) => Range | null;
+      };
+      let clickedNode: Node | null = null;
+      let clickedOffset = 0;
+      if (doc.caretPositionFromPoint) {
+        const pos = doc.caretPositionFromPoint(e.clientX, e.clientY);
+        if (pos) { clickedNode = pos.offsetNode; clickedOffset = pos.offset; }
+      } else if (doc.caretRangeFromPoint) {
+        const range = doc.caretRangeFromPoint(e.clientX, e.clientY);
+        if (range) { clickedNode = range.startContainer; clickedOffset = range.startOffset; }
+      }
+      if (!clickedNode) return content.length;
+
+      // Walk text nodes under the clicked bubble in document order, summing
+      // their lengths until we reach the clicked node. Gives a best-effort
+      // offset into the visible text — good enough for plain messages; for
+      // markdown it'll be off by the characters of any markup consumed by
+      // the rendered HTML, but the caret still lands near the click.
+      const bubble = (e.currentTarget as HTMLElement);
+      const walker = document.createTreeWalker(bubble, NodeFilter.SHOW_TEXT);
+      let offset = 0;
+      let n: Node | null;
+      while ((n = walker.nextNode())) {
+        if (n === clickedNode) {
+          offset += clickedOffset;
+          return Math.min(offset, content.length);
+        }
+        offset += (n.textContent || "").length;
+      }
+    } catch {
+      // Fall through to end-of-text fallback.
+    }
+    return content.length;
+  }, []);
   const [openConvMenuId, setOpenConvMenuId] = useState<string | null>(null);
   const [renamingConvId, setRenamingConvId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
   const [deletingConvId, setDeletingConvId] = useState<string | null>(null);
   const [activePreset, setActivePreset] = useState<AIPreset | undefined>();
   const [showMentionDropdown, setShowMentionDropdown] = useState(false);
+  const [isComposing, setIsComposing] = useState(false);
   const [mentionFilter, setMentionFilter] = useState("");
   const [selectedMentionIndex, setSelectedMentionIndex] = useState(0);
   const [speakerSuggestions, setSpeakerSuggestions] = useState<MentionSuggestion[]>([]);
@@ -1090,6 +1417,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   const [prefillContext, setPrefillContext] = useState<string | null>(null);
   const [prefillSource, setPrefillSource] = useState<string>("search");
   const [prefillFrameId, setPrefillFrameId] = useState<number | null>(null);
+  const [isPreparingPrefill, setIsPreparingPrefill] = useState(false);
   const [pastedImages, setPastedImages] = useState<string[]>([]); // Base64 data URLs
   const [imageViewer, setImageViewer] = useState<{ images: string[]; index: number } | null>(null);
   const [isDragging, setIsDragging] = useState(false);
@@ -1102,6 +1430,10 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   const piStreamingTextRef = useRef<string>("");
   const piMessageIdRef = useRef<string | null>(null);
   const piContentBlocksRef = useRef<ContentBlock[]>([]);
+  // Last error text observed anywhere in the current Pi stream — used to surface
+  // quota / credits_exhausted errors when agent_end arrives with no content and
+  // no explicit stopReason=error on any message (some providers drop that flag).
+  const piLastErrorRef = useRef<string | null>(null);
   const piStartInFlightRef = useRef(false);
   const piFirstCallRetried = useRef(false);
   const piStoppedIntentionallyRef = useRef(false);
@@ -1109,8 +1441,27 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   const piLastCrashRef = useRef(0);
   const piThinkingStartRef = useRef<number | null>(null);
   const piSessionSyncedRef = useRef(false);
-  const piSessionIdRef = useRef<string>(crypto.randomUUID());
-  const piRunningConfigRef = useRef<{ provider: string; model: string; token: string | null } | null>(null);
+  // Initial Pi session id. The chat panel's foreground bus registration
+  // is keyed by `conversationId`, and Pi emits events with
+  // `sessionId === piSessionIdRef.current`. Keep them in lockstep from
+  // mount so the panel's foreground handler receives events even on the
+  // very first message of a fresh app launch (no chat selected, no
+  // history loaded). Same invariant as `startNewConversation` /
+  // `loadConversation` — see use-chat-conversations.ts.
+  const initialSessionIdRef = useRef<string>(crypto.randomUUID());
+  const piSessionIdRef = useRef<string>(initialSessionIdRef.current);
+  // Tracks the config Pi is currently running with so `handlePiRestart` can
+  // decide between a hot-swap (`pi_set_model`) and a full respawn. Update
+  // this ref on every Pi start/restart/swap.
+  const piRunningConfigRef = useRef<{
+    provider: string;
+    model: string;
+    url: string;
+    apiKey: string | null;
+    maxTokens: number;
+    systemPrompt: string | null;
+    token: string | null;
+  } | null>(null);
 
   // Active pipe execution (when watching a running pipe)
   const [activePipeExecution, setActivePipeExecution] = useState<{
@@ -1129,8 +1480,24 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   // Bypass guard for auto-send from chat-prefill (Pi confirmed running but React state stale)
   const autoSendBypassRef = useRef(false);
 
-  // Chat history state
-  const [conversationId, setConversationId] = useState<string | null>(null);
+  // Forwarding ref for the per-event handler. Updated whenever the
+  // listener-setup useEffect runs so foreground bus registrations can
+  // dispatch through the latest closure without a re-registration on
+  // every render. The function itself is created inside that effect
+  // (it closes over local state setters and refs); routing through a
+  // ref avoids an expensive re-extraction.
+  const handleAgentEventDataRef = useRef<((data: any) => void) | null>(null);
+  // True until the component unmounts. Used by bus handlers to avoid
+  // touching React state after unmount; equivalent to the per-effect
+  // `mounted` flag but visible across all useEffect boundaries.
+  const mountedRef = useRef(true);
+
+  // Chat history state. Initialised to the same uuid as
+  // `piSessionIdRef` so the foreground bus key matches Pi's emitted
+  // sessionId from message 0 — see comment above piSessionIdRef.
+  const [conversationId, setConversationId] = useState<string | null>(
+    initialSessionIdRef.current,
+  );
 
   // Process an image file to base64
   // Resize image to max 1024px and compress as JPEG to keep base64 payload small
@@ -1311,23 +1678,98 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   // Other windows wait for "chat-ready" before emitting "chat-prefill"
   // to avoid the event being lost when the chat webview is freshly created.
   useEffect(() => {
-    emit("chat-ready", {});
+    const windowLabel = getCurrentWindow().label;
+    emit("chat-ready", { windowLabel });
     // Also respond to "chat-ping" for when the chat is already open
-    const unlisten = listen("chat-ping", () => {
-      emit("chat-ready", {});
+    const unlisten = listen<{ targetWindow?: string }>("chat-ping", (event) => {
+      const targetWindow = event.payload?.targetWindow;
+      if (targetWindow && targetWindow !== windowLabel) return;
+      emit("chat-ready", { windowLabel });
     });
     // Check for pending prefill from same-window navigation (e.g. pipes → home)
     const pending = sessionStorage.getItem("pendingChatPrefill");
     if (pending) {
+      setIsPreparingPrefill(true);
       sessionStorage.removeItem("pendingChatPrefill");
       try {
         const data = JSON.parse(pending);
-        // Small delay to let the chat fully initialize
-        setTimeout(() => emit("chat-prefill", data), 500);
-      } catch {}
+        // Small delay to let the chat fully initialize without showing setup flashes.
+        setTimeout(() => emit("chat-prefill", data), 120);
+      } catch {
+        setIsPreparingPrefill(false);
+      }
     }
+    // Clean up stale pipe-generation markers (>30 min old) so they don't
+    // leak into a future unrelated chat session.
+    try {
+      const raw = sessionStorage.getItem("pipeGenerationContext");
+      if (raw) {
+        const ctx = JSON.parse(raw);
+        if (!ctx?.started_at || Date.now() - ctx.started_at > 30 * 60 * 1000) {
+          sessionStorage.removeItem("pipeGenerationContext");
+          if (ctx?.generation_id) {
+            posthog.capture("pipe_generation_abandoned", {
+              generation_id: ctx.generation_id,
+              age_ms: Date.now() - (ctx.started_at ?? Date.now()),
+            });
+          }
+        }
+      }
+    } catch {}
     return () => { unlisten.then((fn) => fn()); };
   }, []);
+
+  // Pipe-generation funnel completion detector.
+  // Fires `pipe_generation_completed` the first time Pi's message stream
+  // ends (isLoading: true → false) AFTER we see a new pipe installed
+  // compared to the baseline captured when the user submitted the
+  // "describe a pipe to create" form. Single-shot per generation_id.
+  const prevIsLoadingRef = useRef(isLoading);
+  useEffect(() => {
+    const wasLoading = prevIsLoadingRef.current;
+    prevIsLoadingRef.current = isLoading;
+    if (!wasLoading || isLoading) return; // only fire on true → false edge
+
+    let cancelled = false;
+    (async () => {
+      let ctx: { generation_id: string; started_at: number; baseline_pipes: string[] } | null = null;
+      try {
+        const raw = sessionStorage.getItem("pipeGenerationContext");
+        if (!raw) return;
+        ctx = JSON.parse(raw);
+      } catch {
+        return;
+      }
+      if (!ctx?.generation_id) return;
+
+      try {
+        const res = await localFetch("/pipes");
+        if (!res.ok) return;
+        const data = await res.json();
+        if (cancelled) return;
+        const installedNames: string[] = (data?.data ?? [])
+          .map((p: any) => p?.config?.name ?? p?.name)
+          .filter((n: unknown): n is string => typeof n === "string");
+        const baseline = new Set(ctx.baseline_pipes ?? []);
+        const newPipes = installedNames.filter((n) => !baseline.has(n));
+        if (newPipes.length === 0) return;
+
+        posthog.capture("pipe_generation_completed", {
+          generation_id: ctx.generation_id,
+          pipe_name: newPipes[0],
+          new_pipes_count: newPipes.length,
+          duration_ms: Date.now() - ctx.started_at,
+        });
+        sessionStorage.removeItem("pipeGenerationContext");
+      } catch {
+        // Leave context in place — maybe the next assistant turn installs the pipe.
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [isLoading]);
 
   // Guard against duplicate chat-prefill processing. The listener below
   // re-subscribes when piInfo changes; during the brief overlap window
@@ -1343,13 +1785,15 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       // Only process if this window is the intended target (or no target for backwards compat)
       if (targetWindow && getCurrentWindow().label !== targetWindow) return;
 
-      if (autoSend && prompt && context) {
+      if (autoSend && prompt) {
         // Deduplicate: skip if another listener instance is already handling this
         if (prefillInFlightRef.current) return;
         prefillInFlightRef.current = true;
+        setIsPreparingPrefill(true);
 
         // Auto-send: compose full message (context above, user text below) and send immediately
-        const fullMessage = `${context}\n\n${prompt}`;
+        const trimmedContext = context?.trim();
+        const fullMessage = trimmedContext ? `${trimmedContext}\n\n${prompt}` : prompt;
         // Start a new conversation then send
         (async () => {
           try {
@@ -1357,18 +1801,25 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             piStreamingTextRef.current = "";
             piMessageIdRef.current = null;
             piContentBlocksRef.current = [];
+            piLastErrorRef.current = null;
             setIsLoading(false);
             setIsStreaming(false);
             setMessages([]);
-            setConversationId(null);
             setPrefillContext(null);
             setPrefillFrameId(null);
             // Set input as fallback in case auto-send fails
             setInput(fullMessage);
             // Assign a fresh session ID — this is a brand-new conversation.
             // Without this, the prefill would send to the previous conversation's
-            // Pi process which still has old context baked in.
-            piSessionIdRef.current = crypto.randomUUID();
+            // Pi process which still has old context baked in. Set
+            // conversationId to the same value so the foreground bus key
+            // tracks Pi's emitted sessionId — see comment on
+            // initialSessionIdRef. Skipping setConversationId(null) here so
+            // there's no transient null-key window where Pi events could miss
+            // the panel's foreground handler.
+            const newSid = crypto.randomUUID();
+            piSessionIdRef.current = newSid;
+            setConversationId(newSid);
             piSessionSyncedRef.current = true; // fresh session, no history to inject
             // With multi-session, Pi starts fresh per conversation — sendPiMessage
             // handles auto-starting it. Just bypass the canChat guard and send.
@@ -1382,11 +1833,13 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           } finally {
             autoSendBypassRef.current = false;
             prefillInFlightRef.current = false;
+            setIsPreparingPrefill(false);
           }
         })();
         return;
       }
 
+      setIsPreparingPrefill(false);
       setPrefillContext(context);
       setPrefillSource(source || "search");
       if (frameId) {
@@ -1404,18 +1857,288 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     };
   }, [piInfo]);
 
-  // Listen for chat-load-conversation events from timeline
+  // Listen for chat-load-conversation events. Sources:
+  //   - timeline (clicking a previous chat in the timeline view)
+  //   - chat sidebar (selecting a row, OR clicking "+ new chat" which
+  //     sends a freshly-generated id we've never seen before)
+  //   - pi_session_evicted handler below (fresh id when the pool kills
+  //     the current session)
+  //
+  // If the id corresponds to a saved conversation on disk, load it. If
+  // not, treat it as "start a new chat using THIS id" — the caller (e.g.
+  // the sidebar's + new chat button) generated the id and wants the chat
+  // panel to adopt it so both agree on the session id from message 1.
+  // CRITICAL: the listener registers ONCE (deps: []) but the functions
+  // it calls (loadConversation, startNewConversation) close over `messages`
+  // and other state from useChatConversations. If we called the functions
+  // directly here, the listener would forever invoke the FIRST render's
+  // versions — which captured `messages = []` at mount time. Every
+  // snapshot-on-switch would then write empty messages to the store, and
+  // the chat that "should be there when you click back" would actually be
+  // wiped. Route through refs that we update on every render so the
+  // listener always invokes the freshest closure.
+  const loadConversationRef = useRef(loadConversation);
+  const startNewConversationRef = useRef(startNewConversation);
+  loadConversationRef.current = loadConversation;
+  startNewConversationRef.current = startNewConversation;
+
   useEffect(() => {
     const unlisten = listen<{ conversationId: string }>("chat-load-conversation", async (event) => {
       const { conversationId: convId } = event.payload;
-      // Load from file-based storage
       const { loadConversationFile } = await import("@/lib/chat-storage");
+      const { useChatStore } = await import("@/lib/stores/chat-store");
+
+      // 0) Already on this conversation — skip the snapshot+swap. The
+      //    page-level listener handles navigation back to home; we
+      //    just make sure currentId reflects the panel so the sidebar
+      //    re-highlights the row. Without this short-circuit, clicking
+      //    the already-loaded chat from a non-home section would
+      //    snapshot+reset+rehydrate the same id and briefly blank the
+      //    panel.
+      if (convId === piSessionIdRef.current) {
+        useChatStore.getState().actions.setCurrent(convId);
+        emit("chat-current-session", { id: convId });
+        return;
+      }
+
+      // 1) Disk first — saved conversations are the canonical source.
       const conv = await loadConversationFile(convId);
       if (conv) {
-        loadConversation(conv);
+        loadConversationRef.current(conv);
+        return;
       }
+
+      // 2) Store fallback — the conversation may exist only in memory
+      //    because it was started in this session and hasn't completed
+      //    a turn yet (no agent_end → no save). Without this branch,
+      //    clicking back to a chat that's been streaming in the
+      //    background would fall through to startNewConversation and
+      //    silently WIPE the in-memory state.
+      const session = useChatStore.getState().sessions[convId];
+      if (session?.messages && session.messages.length > 0) {
+        // Stub conversation — loadConversation prefers store messages
+        // over the conv arg whenever the store has them, so the empty
+        // messages array here is just a satisfaction of the type.
+        loadConversationRef.current({
+          id: convId,
+          title: session.title || "untitled",
+          messages: [],
+          createdAt: Date.now(),
+          updatedAt: session.updatedAt,
+        });
+        return;
+      }
+
+      // 3) Truly new id (sidebar's "+ new chat" path) — adopt the
+      //    requested id so sidebar + chat (and the chat-store's
+      //    currentId) all agree from message 0.
+      await startNewConversationRef.current(convId);
+      // Mirror the new id back to the sidebar so its currentId matches.
+      emit("chat-current-session", { id: convId });
     });
     return () => { unlisten.then((fn) => fn()); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Tell the sidebar which session is current whenever the chat panel
+  // assigns or resumes a session id. Without this the sidebar wouldn't
+  // know about session changes initiated inside the chat (in-panel "new",
+  // chat-prefill auto-send, history pick from the in-panel history view).
+  // Also mirror to chat-store.panelSessionId so the home page can restore
+  // the sidebar highlight when the user navigates back from a non-chat
+  // section without us emitting an event.
+  useEffect(() => {
+    if (!conversationId) return;
+    emit("chat-current-session", { id: conversationId });
+    useChatStore.getState().actions.setPanelSession(conversationId);
+  }, [conversationId]);
+
+  // Cross-window rename sync. The chat-store is window-local (zustand
+  // lives in each WebView's JS context), so a rename done in the /chat
+  // overlay would otherwise never reach the chat-sidebar in /home. The
+  // canonical rename path (`renameConversation` in use-chat-conversations)
+  // emits this event to all windows; we patch the local store on receipt.
+  // Self-receipt is a harmless idempotent no-op (patch sets the same
+  // title we just wrote).
+  useEffect(() => {
+    const unlisten = listen<{ id: string; title: string }>(
+      "chat-renamed",
+      (event) => {
+        const { id, title } = event.payload;
+        if (!id || !title) return;
+        if (useChatStore.getState().sessions[id]) {
+          useChatStore.getState().actions.patch(id, { title });
+        }
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn()).catch(() => {});
+    };
+  }, []);
+
+  // Component-lifetime guard for bus handlers that fire across the
+  // longer-lived useEffects (terminated, foreground registrations).
+  // Useful because the panel's per-effect `mounted` flags are scoped
+  // to their own effects.
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  // Foreground registration on the agent-event bus. Switches with
+  // `conversationId` so the bus always knows exactly one panel owns
+  // events for the current chat. The router's exclusive routing means
+  // we don't have to filter by sessionId in the handler — the bus
+  // delivers only events whose envelope sessionId matches the
+  // registration key.
+  //
+  // This is also where pipe-watch sessions register: initWatch swaps
+  // conversationId to a `pipe:<name>:<execId>` id, so this effect
+  // re-runs and registers the panel as the foreground owner of pipe
+  // stdout. Switching to a chat unregisters the pipe foreground (via
+  // the cleanup) and registers the chat — pipe events naturally stop
+  // reaching the panel and start hitting the pipe-run-recorder
+  // instead, which is what we want.
+  // Pipe-watch sessions don't register foreground — pipe-watch-writer
+  // is the sole writer for them, panel mirrors store messages below.
+  // We grab `kind` synchronously here (not via the Zustand selector) so
+  // the effect re-runs on conversationId change without an extra render
+  // cycle that could miss the foreground registration window for chats.
+  useEffect(() => {
+    if (!conversationId) return;
+    const kind = useChatStore.getState().sessions[conversationId]?.kind;
+    if (kind === "pipe-watch") return;
+    let cancelled = false;
+    let off: (() => void) | null = null;
+    (async () => {
+      await mountAgentEventBus();
+      if (cancelled) return;
+      off = registerForeground(conversationId, (envelope) => {
+        if (!mountedRef.current) return;
+        handleAgentEventDataRef.current?.(envelope.event);
+      });
+    })();
+    return () => {
+      cancelled = true;
+      try { off?.(); } catch { /* ignore */ }
+    };
+  }, [conversationId]);
+
+  // Mirror chat-store messages into local React state when the panel is
+  // showing a pipe-watch session. The writer is the source of truth;
+  // this hook makes the existing render path (which reads `messages`)
+  // pick up writer updates without forking the rendering code.
+  const pipeWatchMessages = useChatStore((s) =>
+    conversationId && s.sessions[conversationId]?.kind === "pipe-watch"
+      ? s.sessions[conversationId]?.messages
+      : undefined,
+  );
+  useEffect(() => {
+    if (!pipeWatchMessages) return;
+    setMessages(pipeWatchMessages as any);
+  }, [pipeWatchMessages, setMessages]);
+
+  // Mirror isLoading / isStreaming from the store for pipe-watch
+  // sessions. Without this the panel's "writing…" indicator strands
+  // forever once the pipe finishes — the writer flips the flags in the
+  // store on agent_end, but the panel's local React state was set to
+  // true at initWatch and never gets cleared (no foreground bus
+  // registration → no panel-side terminal handler runs).
+  // Two scalar selectors instead of one returning {isLoading,isStreaming}
+  // — Zustand's shallow-equal would re-render every store mutation if
+  // the selector built a fresh object each call.
+  const pipeWatchIsLoading = useChatStore((s) => {
+    if (!conversationId) return undefined;
+    const sess = s.sessions[conversationId];
+    if (sess?.kind !== "pipe-watch") return undefined;
+    return !!sess.isLoading;
+  });
+  const pipeWatchIsStreaming = useChatStore((s) => {
+    if (!conversationId) return undefined;
+    const sess = s.sessions[conversationId];
+    if (sess?.kind !== "pipe-watch") return undefined;
+    return !!sess.isStreaming;
+  });
+  useEffect(() => {
+    if (pipeWatchIsLoading !== undefined) setIsLoading(pipeWatchIsLoading);
+    if (pipeWatchIsStreaming !== undefined) setIsStreaming(pipeWatchIsStreaming);
+  }, [pipeWatchIsLoading, pipeWatchIsStreaming]);
+
+  // Self-heal a stuck "writing…" indicator on regular chat sessions.
+  // The router (background) and the panel's foreground listener both set
+  // store.isStreaming/isLoading to false on agent_end. Local React
+  // state is also cleared by the foreground listener — but if that
+  // listener missed the event for any reason (race during section
+  // change, mountedRef brief flicker, bus dispatch landing on default
+  // instead of foreground), local can drift `true` while the store
+  // says `false`. Returning to the panel from Settings then shows
+  // "writing…" forever even though the turn is over.
+  // One-way: only sync false→false. The forward direction (true) is
+  // owned by the panel itself when the user sends, so we never want to
+  // reach in and turn the indicator off mid-typing.
+  const storeChatIsStreaming = useChatStore((s) => {
+    if (!conversationId) return undefined;
+    const sess = s.sessions[conversationId];
+    if (!sess || sess.kind === "pipe-watch") return undefined;
+    return !!sess.isStreaming;
+  });
+  const storeChatIsLoading = useChatStore((s) => {
+    if (!conversationId) return undefined;
+    const sess = s.sessions[conversationId];
+    if (!sess || sess.kind === "pipe-watch") return undefined;
+    return !!sess.isLoading;
+  });
+  useEffect(() => {
+    if (storeChatIsStreaming === false) setIsStreaming(false);
+    if (storeChatIsLoading === false) setIsLoading(false);
+  }, [storeChatIsStreaming, storeChatIsLoading]);
+
+  // Keep the pipe-context banner in sync with the current session.
+  // When the panel switches AWAY from a pipe-watch session (user
+  // clicks a chat), `activePipeExecution` would otherwise stay set
+  // and the banner would render on top of the chat. Reading the
+  // current session record's kind / pipeContext gives us a single
+  // source of truth tied to conversationId.
+  const currentSessionKind = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId]?.kind : undefined,
+  );
+  const currentSessionPipeContext = useChatStore((s) =>
+    s.currentId ? s.sessions[s.currentId]?.pipeContext : undefined,
+  );
+  useEffect(() => {
+    if (currentSessionKind === "pipe-watch" && currentSessionPipeContext) {
+      setActivePipeExecution({
+        name: currentSessionPipeContext.pipeName,
+        executionId: currentSessionPipeContext.executionId,
+      });
+    } else {
+      setActivePipeExecution(null);
+    }
+  }, [currentSessionKind, currentSessionPipeContext?.pipeName, currentSessionPipeContext?.executionId]);
+
+  // If the Pi pool evicted the session we're currently viewing, swap the
+  // panel to a fresh one. The pool only evicts idle sessions (see
+  // pi.rs::pi_start_inner), so this is rare — but when it does happen the
+  // user shouldn't be left with a panel pointing at a dead pid.
+  useEffect(() => {
+    let cancelled = false;
+    let off: (() => void) | null = null;
+    (async () => {
+      await mountAgentEventBus();
+      if (cancelled) return;
+      off = onAgentEvicted(async (payload) => {
+        if (cancelled) return;
+        if (payload.sessionId !== piSessionIdRef.current) return;
+        await startNewConversationRef.current();
+        emit("chat-current-session", { id: piSessionIdRef.current });
+      });
+    })();
+    return () => {
+      cancelled = true;
+      try { off?.(); } catch { /* ignore */ }
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1429,7 +2152,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         const { loadConversationFile } = await import("@/lib/chat-storage");
         const conv = await loadConversationFile(pendingId);
         if (conv) {
-          loadConversation(conv);
+          loadConversationRef.current(conv);
         }
       })();
     }
@@ -1527,8 +2250,8 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     const searchSpeakers = async () => {
       setIsLoadingSpeakers(true);
       try {
-        const response = await fetch(
-          `${SCREENPIPE_API}/speakers/search?name=${encodeURIComponent(mentionFilter)}`
+        const response = await localFetch(
+          `/speakers/search?name=${encodeURIComponent(mentionFilter)}`
         );
         if (response.ok) {
           const speakers: Speaker[] = await response.json();
@@ -1608,10 +2331,21 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       e.stopPropagation();
     }
 
-    // Enter without shift submits the form
+    const nativeEvent = e.nativeEvent as KeyboardEvent & { isComposing?: boolean; keyCode?: number };
+    const nativeIsComposing = nativeEvent.isComposing || nativeEvent.keyCode === 229;
+
+    // Ignore Enter while an IME composition is active so confirmation does not submit the message.
+    if (isComposing || nativeIsComposing) {
+      return;
+    }
+
+    // Enter without shift submits the form. We intentionally don't gate on
+    // isLoading anymore — if a previous prompt is still streaming, the new
+    // one is enqueued at the rust level (see `pi_command_queue.rs`) and
+    // shown in the queued-cards rail under the transcript.
     if (e.key === "Enter" && !e.shiftKey && !showMentionDropdown) {
       e.preventDefault();
-      if ((input.trim() || pastedImages.length > 0) && !isLoading) {
+      if (input.trim() || pastedImages.length > 0) {
         sendMessage(input.trim());
       }
       return;
@@ -1726,7 +2460,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     if (!appFilterOpen || recentSpeakers.length > 0) return;
     (async () => {
       try {
-        const response = await fetch(`${SCREENPIPE_API}/speakers/search?name=`);
+        const response = await localFetch("/speakers/search?name=");
         if (response.ok) {
           const speakers: Speaker[] = await response.json();
           setRecentSpeakers(
@@ -1793,11 +2527,69 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     return () => clearInterval(interval);
   }, []);
 
-  // Restart Pi explicitly when user saves a preset — no useEffect, no debounce.
+  // Apply a preset change to the running Pi process.
+  //
+  // - If ONLY provider/model changed: `pi_set_model` — keeps the subprocess
+  //   alive and preserves the full conversation, so the user can switch
+  //   haiku ↔ sonnet ↔ opus mid-session without losing context.
+  // - If any other spawn-time field changed (url, apiKey, maxTokens, systemPrompt):
+  //   full restart via `pi_update_config` — those are baked into Pi's CLI args
+  //   and models.json, so the subprocess has to be respawned to see them.
+  //
   // Called directly from the AIPresetsSelector onPresetSaved callback.
   const handlePiRestart = useCallback((preset: AIPreset) => {
     const providerConfig = buildProviderConfig(preset);
-    console.log("[Pi] User saved preset, restarting:", providerConfig?.provider, providerConfig?.model);
+    if (!providerConfig) return;
+
+    // Compare against the currently-running config. If we only know
+    // provider+model (older ref shape), we can still decide on the hot-swap
+    // path as long as the non-tracked fields are unchanged from the last
+    // full restart — which is exactly the invariant we maintain here by
+    // updating the ref on every hot-swap/restart.
+    const running = piRunningConfigRef.current;
+    const providerChanged = !running || running.provider !== providerConfig.provider;
+    const modelChanged = !running || running.model !== providerConfig.model;
+    const spawnTimeFieldsChanged =
+      !running ||
+      running.url !== providerConfig.url ||
+      running.apiKey !== providerConfig.apiKey ||
+      running.maxTokens !== providerConfig.maxTokens ||
+      running.systemPrompt !== providerConfig.systemPrompt ||
+      running.token !== (settings.user?.token ?? null);
+
+    if (!providerChanged && !modelChanged && !spawnTimeFieldsChanged) {
+      // Preset save that didn't actually change anything Pi cares about.
+      return;
+    }
+
+    if (!spawnTimeFieldsChanged && (providerChanged || modelChanged)) {
+      // Hot-swap path — preserves conversation state.
+      console.log("[Pi] Hot-swap model:", providerConfig.provider, providerConfig.model);
+      commands
+        .piSetModel(piSessionIdRef.current, providerConfig)
+        .then(() => {
+          piRunningConfigRef.current = {
+            provider: providerConfig.provider,
+            model: providerConfig.model,
+            url: providerConfig.url,
+            apiKey: providerConfig.apiKey,
+            maxTokens: providerConfig.maxTokens,
+            systemPrompt: providerConfig.systemPrompt,
+            token: settings.user?.token ?? null,
+          };
+        })
+        .catch((e) => {
+          console.error("[Pi] Hot-swap failed, falling back to full restart:", e);
+          piSessionSyncedRef.current = false;
+          commands.piUpdateConfig(settings.user?.token ?? null, providerConfig).catch((err) => {
+            console.error("[Pi] Fallback restart also failed:", err);
+          });
+        });
+      return;
+    }
+
+    // Full restart — spawn-time field changed.
+    console.log("[Pi] Full restart (spawn-time field changed):", providerConfig.provider, providerConfig.model);
     piSessionSyncedRef.current = false;
     commands.piUpdateConfig(settings.user?.token ?? null, providerConfig).catch((e) => {
       console.error("[Pi] Preset switch failed:", e);
@@ -1805,21 +2597,121 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [settings.user?.token]);
 
-  // Listen for Pi events (all providers route through Pi) and pipe events
+  // Listen for Pi / pipe events.
+  //
+  // Stage 3 of the events refactor: the panel registers with the
+  // agent-event bus instead of subscribing to legacy Tauri topics
+  // directly. Foreground registration is exclusive — the bus routes
+  // events for the registered sessionId to this handler and skips the
+  // background router. See `lib/events/bus.ts`.
+  //
+  // The panel may hold up to two foreground registrations at once:
+  //   - one for the chat session (`conversationId`), bound below in a
+  //     dedicated useEffect that re-registers on every session switch
+  //   - one for a synthetic pipe id (`pipe:<name>:<execId>`) when the
+  //     user is actively watching a pipe — bound inside `initWatch`
+  //     and released on watch end
+  //
+  // The shared `handleAgentEventDataRef` lets both registrations
+  // dispatch through the same event-handling switch without forcing a
+  // costly re-extraction every time the closure changes.
   useEffect(() => {
-    let unlistenEvent: UnlistenFn | null = null;
-    let unlistenPipeEvent: UnlistenFn | null = null;
-    let unlistenTerminated: UnlistenFn | null = null;
     let unlistenLog: UnlistenFn | null = null;
     let unlistenReauth: UnlistenFn | null = null;
     let mounted = true;
+    // Bus registrations to release on cleanup. Mixed with the legacy
+    // unlisten handles below so the cleanup section drains them
+    // uniformly.
+    const busUnregistrations: Array<() => void> = [];
 
-    // Shared handler for Pi event data — used by both pi_event and pipe_event
+    // Shared handler for Pi event data — used by both pi_event and pipe_event.
+    //
+    // When the rust queue drains a queued prompt, Pi emits text_delta /
+    // thinking_start / tool_execution_start for a NEW turn — but the previous
+    // turn's `agent_end` cleared `piMessageIdRef`, so deltas have no target.
+    // `ensureAssistantPlaceholder` lazily creates one when the trailing message
+    // is a user prompt waiting for a reply (the shape `enqueuePiMessage`
+    // leaves the array in). Idempotent — does nothing when a placeholder
+    // already exists.
+    const ensureAssistantPlaceholder = (): boolean => {
+      if (piMessageIdRef.current) return true;
+      const newAssistantId = (Date.now() + 1).toString();
+      let created = false;
+      setMessages((prev) => {
+        const last = prev[prev.length - 1];
+        if (!last || last.role !== "user") return prev;
+        created = true;
+        return [
+          ...prev,
+          {
+            id: newAssistantId,
+            role: "assistant",
+            content: "Processing...",
+            timestamp: Date.now(),
+            model: activePreset?.model,
+            provider: activePreset?.provider,
+          },
+        ];
+      });
+      if (!created) return false;
+      piMessageIdRef.current = newAssistantId;
+      piStreamingTextRef.current = "";
+      piContentBlocksRef.current = [];
+      setStreamedCharCount(0);
+      setIsLoading(true);
+      setIsStreaming(true);
+      const sidNow = piSessionIdRef.current;
+      if (sidNow) {
+        const storeState = useChatStore.getState();
+        storeState.actions.appendMessage(sidNow, {
+          id: newAssistantId,
+          role: "assistant",
+          content: "Processing...",
+          timestamp: Date.now(),
+          model: activePreset?.model,
+          provider: activePreset?.provider,
+        } as any);
+        storeState.actions.setStreaming(sidNow, {
+          streamingMessageId: newAssistantId,
+          streamingText: "",
+          contentBlocks: [],
+          isStreaming: true,
+          isLoading: true,
+        });
+      }
+      return true;
+    };
+
     const handlePiEventData = (data: any) => {
+
+        // Mirror status into the chat-store so the sidebar dot reflects what
+        // Pi is actually doing. The bus routes foreground events exclusively
+        // to this listener, so the router (default subscriber) never sees
+        // them — without this mirror, session.status stays at whatever was
+        // set last time the chat was on the background path (usually
+        // "idle"), and the sidebar shows a hollow gray ring while the
+        // chat is mid-stream. Mirroring covers all of: streaming /
+        // thinking / tool / idle / error per `statusForEvent`.
+        try {
+          const sid = piSessionIdRef.current;
+          const next = sid ? statusForEvent(data) : null;
+          if (sid && next) {
+            const store = useChatStore.getState();
+            const cur = store.sessions[sid]?.status;
+            if (cur !== next) {
+              store.actions.patch(sid, { status: next });
+            }
+          }
+        } catch {
+          /* defensive — never let a status-mirror failure break the
+             foreground event handler */
+        }
 
         if (data.type === "message_update" && data.assistantMessageEvent) {
           const evt = data.assistantMessageEvent;
           if (evt.type === "text_delta" && evt.delta) {
+            // First delta of a queued turn → create the placeholder lazily.
+            if (!ensureAssistantPlaceholder()) return;
             piStreamingTextRef.current += evt.delta;
             setStreamedCharCount(piStreamingTextRef.current.length);
 
@@ -1853,6 +2745,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               );
             }
           } else if (evt.type === "thinking_start") {
+            if (!ensureAssistantPlaceholder()) return;
             piThinkingStartRef.current = Date.now();
             const blocks = piContentBlocksRef.current;
             blocks.push({ type: "thinking", text: "", isThinking: true });
@@ -1894,6 +2787,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             }
           }
         } else if (data.type === "tool_execution_start") {
+          if (!ensureAssistantPlaceholder()) return;
           if (piMessageIdRef.current) {
             const msgId = piMessageIdRef.current;
             const toolCall: ToolCall = {
@@ -1936,30 +2830,20 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           // Pi exhausted retries on a transient error (rate limit, overloaded, etc.)
           const errorStr = data.finalError || "Request failed after retries";
           console.error("[Pi] Auto-retry failed:", errorStr);
+          piLastErrorRef.current = errorStr;
 
           // Detect rate limit or daily limit from the error
-          if (errorStr.includes("daily_limit_exceeded") || errorStr.includes("daily_cost_limit_exceeded") || errorStr.includes("429") || errorStr.includes("rate limit")) {
-            // Distinguish between daily limit and per-minute rate limit
-            const isDailyLimit = errorStr.includes("daily_limit_exceeded") || errorStr.includes("daily_cost_limit_exceeded");
-            const isPerMinuteRate = errorStr.includes("rate limit exceeded") || errorStr.includes("requests per minute");
-
-            if (isDailyLimit) {
+          const quotaErrorType = classifyQuotaError(errorStr);
+          if (quotaErrorType === "daily" || quotaErrorType === "rate") {
+            if (quotaErrorType === "daily") {
               posthog.capture("wall_hit", { reason: "daily_limit", source: "chat" });
             }
 
             if (piMessageIdRef.current) {
               const msgId = piMessageIdRef.current;
-              let content: string;
-              if (isDailyLimit) {
-                content = buildDailyLimitMessage(errorStr);
-              } else if (isPerMinuteRate) {
-                // Extract wait time from error
-                const waitMatch = errorStr.match(/wait (\d+) seconds/i);
-                const waitTime = waitMatch ? waitMatch[1] : "a moment";
-                content = `Rate limited — please wait ${waitTime} seconds and try again.`;
-              } else {
-                content = "Rate limited — try again in a moment or switch to a different model.";
-              }
+              const content = quotaErrorType === "daily"
+                ? buildDailyLimitMessage(errorStr)
+                : buildRateLimitMessage(errorStr);
               setMessages((prev) =>
                 prev.map((m) => m.id === msgId ? { ...m, content } : m)
               );
@@ -1982,11 +2866,11 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           if (piMessageIdRef.current) {
             const msgId = piMessageIdRef.current;
             const fullError = `${reason} ${errorDetail}`.trim();
+            piLastErrorRef.current = fullError;
 
-            if (fullError.includes("daily_limit_exceeded") || fullError.includes("daily_cost_limit_exceeded") || fullError.includes("429") || fullError.includes("rate limit")) {
-              const isDailyLimit = fullError.includes("daily_limit_exceeded") || fullError.includes("daily_cost_limit_exceeded");
-              const isPerMinuteRate = fullError.includes("rate limit exceeded") || fullError.includes("requests per minute");
-              if (isDailyLimit) {
+            const quotaErrorType = classifyQuotaError(fullError);
+            if (quotaErrorType === "daily" || quotaErrorType === "rate") {
+              if (quotaErrorType === "daily") {
                 try {
                   const match = fullError.match(/"resets_at":\s*"([^"]+)"/);
                 } catch {}
@@ -1994,11 +2878,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                   prev.map((m) => m.id === msgId ? { ...m, content: buildDailyLimitMessage(fullError) } : m)
                 );
               } else {
-                  const waitMatch = fullError.match(/wait (\d+) seconds/i);
-                const waitTime = waitMatch ? waitMatch[1] : "a moment";
-                const content = isPerMinuteRate
-                  ? `Rate limited — please wait ${waitTime} seconds and try again.`
-                  : "Rate limited — try again in a moment or switch to a different model.";
+                const content = buildRateLimitMessage(fullError);
                 setMessages((prev) =>
                   prev.map((m) => m.id === msgId ? { ...m, content } : m)
                 );
@@ -2022,11 +2902,13 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           // LLM returned an error (credits_exhausted, rate limit, provider error, etc.)
           const errMsg = data.message.errorMessage || data.message.error || "Unknown error";
           console.error("[Pi] LLM error via", data.type, ":", errMsg);
+          piLastErrorRef.current = errMsg;
 
           if (piMessageIdRef.current) {
             const msgId = piMessageIdRef.current;
 
-            if (errMsg.includes("credits_exhausted") || errMsg.includes("daily_limit_exceeded") || errMsg.includes("daily_cost_limit_exceeded") || errMsg.includes("429")) {
+            const quotaErrorType = classifyQuotaError(errMsg);
+            if (quotaErrorType === "daily") {
               try {
                 const resetsAtMatch = errMsg.match(/"resets_at":\s*"([^"]+)"/);
                 } catch {}
@@ -2034,9 +2916,9 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               setMessages((prev) =>
                 prev.map((m) => m.id === msgId ? { ...m, content: buildDailyLimitMessage(errMsg) } : m)
               );
-            } else if (errMsg.includes("rate limit") || errMsg.includes("rate_limit")) {
+            } else if (quotaErrorType === "rate") {
               setMessages((prev) =>
-                prev.map((m) => m.id === msgId ? { ...m, content: "Rate limited — try again in a moment." } : m)
+                prev.map((m) => m.id === msgId ? { ...m, content: buildRateLimitMessage(errMsg) } : m)
               );
             } else {
               setMessages((prev) =>
@@ -2046,6 +2928,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             piStreamingTextRef.current = "";
             piMessageIdRef.current = null;
             piContentBlocksRef.current = [];
+            piLastErrorRef.current = null;
             setIsLoading(false);
             setIsStreaming(false);
           }
@@ -2081,13 +2964,14 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             // Surface credits_exhausted / rate limit errors from agent_end
             if (agentEndError && !content) {
               const errStr = agentEndError;
-              if (errStr.includes("credits_exhausted") || errStr.includes("daily_limit_exceeded") || errStr.includes("daily_cost_limit_exceeded") || errStr.includes("429")) {
+              const quotaErrorType = classifyQuotaError(errStr);
+              if (quotaErrorType === "daily") {
                 try {
                   const resetsAtMatch = errStr.match(/"resets_at":\s*"([^"]+)"/);
                     } catch {}
                                   content = buildDailyLimitMessage(errStr);
-              } else if (errStr.includes("rate limit")) {
-                  content = "Rate limited — try again in a moment.";
+              } else if (quotaErrorType === "rate") {
+                  content = buildRateLimitMessage(errStr);
               } else {
                 content = `Error: ${errStr}`;
               }
@@ -2120,14 +3004,32 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               const contentBlocks = [...blocksSnapshot];
               // If no text content but we have tool/thinking blocks, don't show "no response"
               const hasNonTextBlocks = contentBlocks.some((b) => b.type === "tool" || b.type === "thinking");
+              let emptyResponseRetryPrompt: string | undefined;
               if (!content && hasNonTextBlocks) {
                 content = ""; // empty — tool/thinking blocks will render
               } else if (!content) {
-                const provider = activePreset?.provider;
-                if (provider === "native-ollama") {
-                  content = "No response — is Ollama running? Start it with `ollama serve` and make sure the model is pulled.";
+                // If any error text was observed during this stream (e.g. a 429
+                // credits_exhausted or daily_cost_limit_exceeded emitted as a
+                // message_update error or auto-retry failure) classify it
+                // before falling back to the generic "no response" string.
+                const lastErr = piLastErrorRef.current;
+                const lastErrKind = lastErr ? classifyQuotaError(lastErr) : "none";
+                if (lastErr && lastErrKind === "daily") {
+                  posthog.capture("wall_hit", { reason: "daily_limit", source: "chat" });
+                  content = buildDailyLimitMessage(lastErr);
+                } else if (lastErr && lastErrKind === "rate") {
+                  content = buildRateLimitMessage(lastErr);
+                } else if (lastErr) {
+                  content = `Error: ${lastErr}`;
+                  emptyResponseRetryPrompt = lastUserMessageRef.current || undefined;
                 } else {
-                  content = "No response from model — try again or check your AI preset in settings.";
+                  const provider = activePreset?.provider;
+                  if (provider === "native-ollama") {
+                    content = "No response — is Ollama running? Start it with `ollama serve` and make sure the model is pulled.";
+                  } else {
+                    content = "No response from model — try again or check your AI preset in settings.";
+                  }
+                  emptyResponseRetryPrompt = lastUserMessageRef.current || undefined;
                 }
               }
               // Add text as a content block if no text block exists yet
@@ -2135,7 +3037,9 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               if (!streamedText && content && !hasTextBlock) {
                 contentBlocks.push({ type: "text", text: content });
               }
-              return prev.map((m) => m.id === msgId ? { ...m, content, contentBlocks } : m);
+              return prev.map((m) => m.id === msgId
+                ? { ...m, content, contentBlocks, ...(emptyResponseRetryPrompt ? { retryPrompt: emptyResponseRetryPrompt } : {}) }
+                : m);
             });
 
             if (!isPipeWatch) {
@@ -2151,6 +3055,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             piStreamingTextRef.current = "";
             piMessageIdRef.current = null;
             piContentBlocksRef.current = [];
+            piLastErrorRef.current = null;
             piThinkingStartRef.current = null;
             followUpFiredRef.current = false;
             setIsLoading(false);
@@ -2175,10 +3080,9 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           if (piMessageIdRef.current) {
             const msgId = piMessageIdRef.current;
 
-            if (errorStr.includes("daily_limit_exceeded") || errorStr.includes("daily_cost_limit_exceeded") || errorStr.includes("429") || errorStr.includes("rate limit")) {
-              const isDailyLimit = errorStr.includes("daily_limit_exceeded") || errorStr.includes("daily_cost_limit_exceeded");
-              const isPerMinuteRate = errorStr.includes("rate limit exceeded") || errorStr.includes("requests per minute");
-              if (isDailyLimit) {
+            const quotaErrorType = classifyQuotaError(errorStr);
+            if (quotaErrorType === "daily" || quotaErrorType === "rate") {
+              if (quotaErrorType === "daily") {
                 try {
                   const match = errorStr.match(/"resets_at":\s*"([^"]+)"/);
                 } catch {}
@@ -2186,11 +3090,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                   prev.map((m) => m.id === msgId ? { ...m, content: buildDailyLimitMessage(errorStr) } : m)
                 );
               } else {
-                  const waitMatch = errorStr.match(/wait (\d+) seconds/i);
-                const waitTime = waitMatch ? waitMatch[1] : "a moment";
-                const content = isPerMinuteRate
-                  ? `Rate limited — please wait ${waitTime} seconds and try again.`
-                  : "Rate limited — try again in a moment or switch to a different model.";
+                const content = buildRateLimitMessage(errorStr);
                 setMessages((prev) =>
                   prev.map((m) => m.id === msgId ? { ...m, content } : m)
                 );
@@ -2223,8 +3123,9 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               );
             }
           }
-          const errorCategory = errorStr.includes("daily_limit") ? "daily_limit"
-            : errorStr.includes("rate limit") || errorStr.includes("429") ? "rate_limit"
+          const quotaErrorType = classifyQuotaError(errorStr);
+          const errorCategory = quotaErrorType === "daily" ? "daily_limit"
+            : quotaErrorType === "rate" ? "rate_limit"
             : errorStr.includes("model_not_allowed") ? "model_not_allowed"
             : "other";
           posthog.capture("chat_response_error", {
@@ -2233,7 +3134,9 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             error_type: errorCategory,
           });
           piStreamingTextRef.current = "";
-          if (piMessageIdRef.current?.startsWith("pipe-")) setActivePipeExecution(null);
+          if (piMessageIdRef.current?.startsWith("pipe-")) {
+            setActivePipeExecution(null);
+          }
           piMessageIdRef.current = null;
           piContentBlocksRef.current = [];
           setIsLoading(false);
@@ -2250,6 +3153,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             piStreamingTextRef.current = "";
             piMessageIdRef.current = null;
             piContentBlocksRef.current = [];
+            piLastErrorRef.current = null;
             piThinkingStartRef.current = null;
             setActivePipeExecution(null);
             setIsLoading(false);
@@ -2258,30 +3162,24 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         }
       };
 
+    // Publish the current handler to the forwarding ref so foreground
+    // registrations (chat + pipe-watch) dispatch through the same
+    // closure without re-binding.
+    handleAgentEventDataRef.current = handlePiEventData;
+
     const setup = async () => {
-      unlistenEvent = await listen<any>("pi_event", (event) => {
-        if (!mounted) return;
-        const { sessionId, event: piEvent } = event.payload;
-        if (sessionId !== piSessionIdRef.current) return;
-        handlePiEventData(piEvent);
-      });
+      // Ensure the bus's Tauri listener is up before any consumer
+      // (router, panel, pipes hook) starts registering. Idempotent.
+      await mountAgentEventBus();
 
-      // Listen for pipe execution events (only when actively watching a pipe)
-      unlistenPipeEvent = await listen<any>("pipe_event", (event) => {
+      // Termination — broadcast event, filter by current session id.
+      // Replaces the prior `listen("pi_terminated", ...)`. The bus
+      // mirrors `agent_terminated`; legacy `pi_terminated` is a Stage 5
+      // cleanup target.
+      busUnregistrations.push(onAgentTerminated((payload) => {
         if (!mounted) return;
-        // Only process events for the pipe we're actively watching
-        if (!piMessageIdRef.current?.startsWith("pipe-")) return;
-        const payload = event.payload;
-        const piEvent = payload?.event;
-        if (!piEvent) return;
-
-        handlePiEventData(piEvent);
-      });
-
-      unlistenTerminated = await listen<any>("pi_terminated", (event) => {
-        if (!mounted) return;
-        const { sessionId, pid: terminatedPid } = event.payload;
-        if (sessionId !== piSessionIdRef.current) return;
+        if (payload.sessionId !== piSessionIdRef.current) return;
+        const terminatedPid = payload.pid;
         if (piStoppedIntentionallyRef.current) {
           piStoppedIntentionallyRef.current = false;
           return;
@@ -2353,7 +3251,15 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                 piSessionSyncedRef.current = false;
                 // Keep running-config ref in sync so preset watcher doesn't re-trigger
                 if (providerConfig) {
-                  piRunningConfigRef.current = { provider: providerConfig.provider, model: providerConfig.model, token: settings.user?.token ?? null };
+                  piRunningConfigRef.current = {
+                    provider: providerConfig.provider,
+                    model: providerConfig.model,
+                    url: providerConfig.url,
+                    apiKey: providerConfig.apiKey,
+                    maxTokens: providerConfig.maxTokens,
+                    systemPrompt: providerConfig.systemPrompt,
+                    token: settings.user?.token ?? null,
+                  };
                 }
               } else {
                 console.error("[Pi] Auto-restart failed:", result.error);
@@ -2365,7 +3271,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             }
           }
         }, delay);
-      });
+      }));
       // Listen for Pi stderr — only surface errors when user is actively waiting for a response
       unlistenLog = await listen<string>("pi_log", (event) => {
         if (!mounted) return;
@@ -2407,6 +3313,25 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
 
     setup();
 
+    // Subscribe to queue-pending updates emitted by the rust queue. Each
+    // event carries the full snapshot for ONE session — we filter to the
+    // session this panel is bound to. Single source of truth lives in
+    // `pi_command_queue.rs`; this listener just mirrors it into local state.
+    let unlistenQueue: UnlistenFn | undefined;
+    listen<{ sessionId: string; queued: PiQueuedPrompt[] }>("pi-queue-changed", (event) => {
+      if (!mounted) return;
+      if (event.payload.sessionId !== piSessionIdRef.current) return;
+      setQueuedPrompts(event.payload.queued ?? []);
+    }).then(fn => { unlistenQueue = fn; });
+
+    // Initial fetch — closes the gap between component mount and first event.
+    (async () => {
+      try {
+        const res = await commands.piPending(piSessionIdRef.current);
+        if (mounted && res.status === "ok") setQueuedPrompts(res.data);
+      } catch { /* ignore — queue may not be initialized yet */ }
+    })();
+
     // Restart the current session when a new auth token arrives (deeplink login).
     listen<{ apiKey: string }>("pi-reauth", async (event) => {
       if (!mounted) return;
@@ -2425,11 +3350,12 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
 
     return () => {
       mounted = false;
-      unlistenEvent?.();
-      unlistenPipeEvent?.();
-      unlistenTerminated?.();
+      for (const off of busUnregistrations) {
+        try { off(); } catch { /* ignore — tearing down */ }
+      }
       unlistenLog?.();
       unlistenReauth?.();
+      unlistenQueue?.();
       // Abort any in-flight Pi request when navigating away from chat.
       // Without this, Pi keeps streaming in the background and rejects
       // new messages with "already processing" when the user returns.
@@ -2443,59 +3369,46 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     let watchPollTimer: ReturnType<typeof setTimeout> | null = null;
 
     // Poll execution API to check if pipe already finished (race condition fix)
-    const pollExecutionStatus = async (pipeName: string, executionId: number, msgId: string) => {
+    const pollExecutionStatus = async (pipeName: string, executionId: number, pipeSid: string) => {
       try {
-        const res = await fetch(`http://localhost:3030/pipes/${pipeName}/executions?limit=20`);
+        const res = await localFetch(`/pipes/${pipeName}/executions?limit=20`);
         if (!res.ok) return;
         const data = await res.json();
         const exec = (data.data || []).find((e: any) => e.id === executionId);
         if (!exec) return;
 
-        // If execution is already done (completed/failed/timed_out), show the result
+        // Pipe already finished before live events could reach the writer
+        // (race between pipe completion and bus mount). Reconstruct the
+        // conversation from stdout and write it directly to chat-store —
+        // the panel mirrors store messages for pipe-watch sessions, so
+        // this surfaces the result without a separate render path.
         if (exec.status !== "running") {
-          // Parse stdout to extract assistant text (same logic as cleanPipeStdout)
-          let output = "";
-          if (exec.stdout) {
-            const parts: string[] = [];
-            for (const line of exec.stdout.split("\n")) {
-              if (!line.trim()) continue;
-              try {
-                const evt = JSON.parse(line);
-                if (evt.type === "content_block_delta" && evt.delta?.type === "text_delta") {
-                  parts.push(evt.delta.text);
-                } else if ((evt.type === "message_start" || evt.type === "message_end") &&
-                           evt.message?.role === "assistant") {
-                  for (const c of evt.message?.content || []) {
-                    if (c.type === "text" && c.text) parts.push(c.text);
-                  }
-                }
-              } catch {}
-            }
-            output = parts.join("").trim();
+          const { parsePipeNdjsonToMessages } = await import(
+            "@/lib/pipe-ndjson-to-chat"
+          );
+          let messagesFromStdout = exec.stdout
+            ? parsePipeNdjsonToMessages(exec.stdout)
+            : [];
+          if (messagesFromStdout.length === 0) {
+            const fallback =
+              exec.status === "failed"
+                ? `Pipe failed: ${exec.error_message || exec.stderr || "unknown error"}`
+                : "Pipe completed with no output.";
+            messagesFromStdout = [
+              {
+                id: `pipe-poll-${executionId}`,
+                role: "assistant",
+                content: fallback,
+                timestamp: Date.now(),
+              } as any,
+            ];
           }
-
-          if (!output && exec.status === "failed") {
-            output = `Pipe failed: ${exec.error_message || exec.stderr || "unknown error"}`;
-          } else if (!output) {
-            output = "Pipe completed with no output.";
+          const store = useChatStore.getState();
+          if (store.sessions[pipeSid]) {
+            store.actions.setMessages(pipeSid, messagesFromStdout as any);
+            store.actions.endTurn(pipeSid);
           }
-
-          // Only update if we're still watching this pipe
-          if (piMessageIdRef.current === msgId) {
-            piStreamingTextRef.current = output;
-            setMessages((prev) =>
-              prev.map((m) => m.id === msgId ? { ...m, content: output } : m)
-            );
-            // Clean up watch state
-            piStreamingTextRef.current = "";
-            piMessageIdRef.current = null;
-            piContentBlocksRef.current = [];
-            piThinkingStartRef.current = null;
-            setActivePipeExecution(null);
-            setIsLoading(false);
-            setIsStreaming(false);
-          }
-          return true; // done
+          return true;
         }
         return false; // still running
       } catch {
@@ -2503,7 +3416,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       }
     };
 
-    const initWatch = (pipeName: string, executionId: number, presetId?: string | null) => {
+    const initWatch = async (pipeName: string, executionId: number, presetId?: string | null) => {
       setActivePipeExecution({ name: pipeName, executionId });
 
       // Apply the pipe's AI preset so the chat header reflects it
@@ -2512,59 +3425,92 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         if (match) setActivePreset(match);
       }
 
-      const msgId = `pipe-${pipeName}-${executionId}`;
-      piStreamingTextRef.current = "";
-      piContentBlocksRef.current = [];
-      piThinkingStartRef.current = null;
-      piMessageIdRef.current = msgId;
-      setMessages((prev) => {
-        if (prev.some((m) => m.id === msgId)) return prev;
-        return [
-          ...prev,
-          {
-            id: `pipe-user-${executionId}`,
-            role: "user" as const,
-            content: `Watching pipe: ${pipeName}`,
-            timestamp: Date.now(),
-          },
-          {
-            id: msgId,
-            role: "assistant" as const,
-            content: "",
-            timestamp: Date.now(),
-            contentBlocks: [],
-          },
-        ];
-      });
-      setIsStreaming(true);
+      const pipeSid = pipeSessionId(pipeName, executionId);
 
-      // Poll immediately in case execution already finished before we started listening
-      // Then poll every 3s as a fallback if streaming events are missed
+      // Pipe-watch is a real session (kind: "pipe-watch"). The writer
+      // (`pipe-watch-writer`) is the sole authority for its message
+      // content — it implicit-creates messages on first content event
+      // and prefers `agent_end`'s authoritative messages array on
+      // terminal events. We upsert the session record synchronously
+      // here so the writer can identify the sid as kind=pipe-watch
+      // for any events that arrive between this call and
+      // loadConversation finishing its async setup.
+      const startedAt = new Date().toISOString();
+      const storeNow = useChatStore.getState();
+      if (!storeNow.sessions[pipeSid]) {
+        storeNow.actions.upsert({
+          id: pipeSid,
+          title: pipeName,
+          preview: "",
+          status: "streaming",
+          messageCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          pinned: false,
+          unread: false,
+          kind: "pipe-watch",
+          pipeContext: { pipeName, executionId, startedAt },
+          isLoading: true,
+          isStreaming: true,
+        });
+      }
+
+      const pipeConv: ChatConversation = {
+        id: pipeSid,
+        title: pipeName,
+        // No placeholder — the writer creates the first message on the
+        // first real content event. Until then the panel shows a
+        // loading indicator (isLoading=true) which matches the visual
+        // we want during pipe startup.
+        messages: [],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        kind: "pipe-watch",
+        pipeContext: { pipeName, executionId, startedAt },
+      };
+      await loadConversationRef.current(pipeConv);
+
+      // No piMessageIdRef setup — the writer owns message lifecycle
+      // for pipe-watch. The local refs stay null/empty so the chat
+      // panel's chat-shaped event handlers (which only fire if
+      // foreground is registered, which it isn't for pipe-watch)
+      // can't accidentally write to a stale placeholder id.
+      setIsStreaming(true);
+      setIsLoading(true);
+
+      // Poll the executions API as a safety net — catches the case
+      // where the pipe finished BEFORE we mounted the foreground bus
+      // registration (the events fired and went to the recorder, not
+      // here). Once the live agent_event stream has had a chance to
+      // arrive, this poll has done its job; the live stream is the
+      // authoritative source for in-progress runs.
+      //
+      // Bug fix (2026-04-26): the previous version tore down the watch
+      // after 30s "timeout" — clearing activePipeExecution, unregistering
+      // the foreground, and nulling piMessageIdRef. For pipes that take
+      // longer than 30s this would silently (a) hide the banner, (b)
+      // strand the thinking indicator at isThinking:true, and (c) drop
+      // every subsequent live event on the floor because piMessageIdRef
+      // was null. Now we just stop polling — the watch stays alive and
+      // is driven by live events to completion.
       let pollCount = 0;
-      const maxPolls = 10; // 30s max (10 * 3s)
+      const maxPolls = 10; // 30s of safety-net polling
       const doPoll = async () => {
-        if (piMessageIdRef.current !== msgId) return; // no longer watching
-        const done = await pollExecutionStatus(pipeName, executionId, msgId);
+        // Stop polling if the user navigated to a different chat. The
+        // writer still accumulates events for this sid in the
+        // background — we just don't need the poll fallback once we're
+        // not actively viewing.
+        if (piSessionIdRef.current !== pipeSid) return;
+        const done = await pollExecutionStatus(pipeName, executionId, pipeSid);
         if (done) {
           watchPollTimer = null;
           return;
         }
         pollCount++;
         if (pollCount >= maxPolls) {
-          // Timeout — give up watching, show what we have
-          if (piMessageIdRef.current === msgId) {
-            const content = piStreamingTextRef.current || "Pipe is still running — check execution history for results.";
-            setMessages((prev) =>
-              prev.map((m) => m.id === msgId ? { ...m, content } : m)
-            );
-            piStreamingTextRef.current = "";
-            piMessageIdRef.current = null;
-            piContentBlocksRef.current = [];
-            piThinkingStartRef.current = null;
-            setActivePipeExecution(null);
-            setIsLoading(false);
-            setIsStreaming(false);
-          }
+          // Safety-net budget exhausted. The pipe is running and live
+          // events are doing their job — no teardown here. The watch
+          // ends when agent_end / pipe_done arrives via the bus.
           watchPollTimer = null;
           return;
         }
@@ -2602,7 +3548,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   async function generateFollowUps(userMsg: string, partialResponse: string) {
     try {
       // Check if Apple Intelligence is available
-      const statusResp = await fetch("http://localhost:3030/ai/status");
+      const statusResp = await localFetch("/ai/status");
       if (!statusResp.ok) return;
       const statusData = await statusResp.json();
       if (!statusData.available) return;
@@ -2610,7 +3556,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       const controller = new AbortController();
       followUpAbortRef.current = controller;
 
-      const resp = await fetch("http://localhost:3030/ai/chat/completions", {
+      const resp = await localFetch("/ai/chat/completions", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal: controller.signal,
@@ -2660,6 +3606,96 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
   }
 
   // Send message using Pi agent
+  /**
+   * Enqueue a follow-up while another prompt is still streaming.
+   *
+   * Distinct from `sendPiMessage` because we explicitly want to NOT:
+   *   - abort the in-flight turn,
+   *   - clobber `piMessageIdRef` / streaming refs,
+   *   - flip `isLoading`/`isStreaming`.
+   *
+   * The rust queue (`pi_command_queue.rs`) holds the prompt until the current
+   * turn's `agent_end` fires, then writes it to stdin. The pi-event-router
+   * downstream picks up the new turn and appends user/assistant content to
+   * the chat-store — same path used for any other message, just kicked off
+   * after the queue drains.
+   */
+  async function enqueuePiMessage(userMessage: string, displayLabel?: string) {
+    if (!piInfo?.running) {
+      // No Pi running → fall back to the normal start-and-send path.
+      return sendPiMessage(userMessage, displayLabel);
+    }
+
+    // Local optimistic message + chat-store mirror. Skips assistant placeholder
+    // entirely; the new turn's `agent_start` (downstream from the rust queue
+    // dequeue) will create one through the existing event flow.
+    const newUserMessage: Message = {
+      id: Date.now().toString(),
+      role: "user",
+      content: userMessage,
+      ...(displayLabel ? { displayContent: displayLabel } : {}),
+      ...(pastedImages.length > 0 ? { images: [...pastedImages] } : {}),
+      timestamp: Date.now(),
+    };
+    setMessages((prev) => [...prev, newUserMessage]);
+    setInput("");
+    if (inputRef.current) inputRef.current.style.height = "auto";
+
+    const sidNow = piSessionIdRef.current;
+    if (sidNow) {
+      const storeState = useChatStore.getState();
+      if (!storeState.sessions[sidNow]) {
+        storeState.actions.upsert({
+          id: sidNow,
+          title: "new chat",
+          preview: "",
+          status: "streaming",
+          messageCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          pinned: false,
+          unread: false,
+        });
+      }
+      storeState.actions.appendMessage(sidNow, newUserMessage as any);
+      storeState.actions.patch(sidNow, { lastUserMessageAt: Date.now() });
+    }
+
+    // Persist immediately — covers the edge case where Pi crashes between
+    // enqueue and dequeue, leaving the user's message stranded otherwise.
+    void saveConversation([...messages, newUserMessage]);
+
+    posthog.capture("chat_message_enqueued", {
+      provider: activePreset?.provider,
+      model: activePreset?.model,
+      pending_count: queuedPrompts.length + 1,
+    });
+
+    // Convert any data-URL pastes to the Pi image-content shape (same format
+    // used by the normal send path further down in this file).
+    const piImages: Array<{ type: string; mimeType: string; data: string }> = [];
+    for (const img of pastedImages) {
+      const match = img.match(/^data:(image\/[^;]+);base64,(.+)$/);
+      if (match) {
+        piImages.push({ type: "image", mimeType: match[1], data: match[2] });
+      }
+    }
+    if (pastedImages.length > 0) setPastedImages([]);
+
+    try {
+      const result = await commands.piPrompt(
+        piSessionIdRef.current,
+        userMessage,
+        piImages.length > 0 ? piImages : null,
+      );
+      if (result.status !== "ok") {
+        toast({ title: "failed to queue message", description: result.error, variant: "destructive" });
+      }
+    } catch (e) {
+      console.warn("[Pi] failed to enqueue follow-up:", e);
+    }
+  }
+
   async function sendPiMessage(userMessage: string, displayLabel?: string) {
     // Auto-start Pi if it's not running yet (new session or crash recovery)
     if (!piInfo?.running) {
@@ -2678,8 +3714,8 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         console.log("[Pi] Not running, auto-starting before sending message");
         piStartInFlightRef.current = true;
         setPiStarting(true);
+        const providerConfig = buildProviderConfig();
         try {
-          const providerConfig = buildProviderConfig();
           const home = await homeDir();
           const dir = await join(home, ".thadm", "pi-chat");
           const result = await commands.piStart(piSessionIdRef.current, dir, settings.user?.token ?? null, providerConfig);
@@ -2689,14 +3725,24 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             piCrashCountRef.current = 0; // reset crash loop counter on manual start
             // Keep running-config ref in sync so preset watcher doesn't re-trigger
             if (providerConfig) {
-              piRunningConfigRef.current = { provider: providerConfig.provider, model: providerConfig.model, token: settings.user?.token ?? null };
+              piRunningConfigRef.current = {
+                provider: providerConfig.provider,
+                model: providerConfig.model,
+                url: providerConfig.url,
+                apiKey: providerConfig.apiKey,
+                maxTokens: providerConfig.maxTokens,
+                systemPrompt: providerConfig.systemPrompt,
+                token: settings.user?.token ?? null,
+              };
             }
           } else {
-            toast({ title: "Failed to start Thadm Cloud", description: result.status === "error" ? result.error : "Unknown error", variant: "destructive" });
+            const providerLabel = providerConfig?.provider || "AI";
+            toast({ title: `failed to start ${providerLabel}`, description: result.status === "error" ? result.error : "Unknown error", variant: "destructive" });
             return;
           }
         } catch (e) {
-          toast({ title: "Failed to start Thadm Cloud", description: String(e), variant: "destructive" });
+          const providerLabel = providerConfig?.provider || "AI";
+          toast({ title: `failed to start ${providerLabel}`, description: String(e), variant: "destructive" });
           return;
         } finally {
           setPiStarting(false);
@@ -2752,6 +3798,66 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
     setIsLoading(true);
     setIsStreaming(true);
 
+    // Mirror the user message + assistant placeholder DIRECTLY into the
+    // chat-store, synchronously. The snapshot-on-switch path reads
+    // `messages` from the React closure, which lags behind setMessages
+    // by one render cycle (React batches). If the user clicks "+ new
+    // chat" in that gap, the snapshot writes stale messages (without
+    // the freshly-sent user message) to the store. Then the router
+    // takes over for the now-backgrounded session and only knows about
+    // assistant deltas — the user comes back and sees the assistant
+    // reply with no preceding user message. By writing both messages
+    // here, the store is at least as fresh as the panel and survives
+    // any closure staleness.
+    const sidNow = piSessionIdRef.current;
+    if (sidNow) {
+      const storeState = useChatStore.getState();
+      if (!storeState.sessions[sidNow]) {
+        storeState.actions.upsert({
+          id: sidNow,
+          title: "new chat",
+          preview: "",
+          status: "streaming",
+          messageCount: 0,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          pinned: false,
+          unread: false,
+        });
+      }
+      storeState.actions.appendMessage(sidNow, newUserMessage as any);
+      storeState.actions.appendMessage(sidNow, {
+        id: assistantMessageId,
+        role: "assistant",
+        content: "Processing...",
+        timestamp: Date.now(),
+        model: activePreset?.model,
+        provider: activePreset?.provider,
+      } as any);
+      storeState.actions.setStreaming(sidNow, {
+        streamingMessageId: assistantMessageId,
+        streamingText: "",
+        contentBlocks: [],
+        isStreaming: true,
+        isLoading: true,
+      });
+      // Bump the sort key — sending a message is the one user action
+      // that should pull a chat to the top of the sidebar. Pi-driven
+      // activity (text_delta, agent_end) does NOT bump this; the
+      // sidebar order is otherwise stable.
+      storeState.actions.patch(sidNow, { lastUserMessageAt: Date.now() });
+    }
+
+    // Persist user message to disk immediately so it survives a
+    // navigate-away-mid-stream or a Pi crash before agent_end. The
+    // existing save-on-isLoading-transition only fires when the stream
+    // completes cleanly — if anything kills the turn before then, the
+    // user's message would otherwise live only in the in-memory store
+    // and vanish on the next cold reload. Fire-and-forget: the next
+    // save (on agent_end) will overwrite the same file with the full
+    // conversation including the assistant reply.
+    void saveConversation([...messages, newUserMessage]);
+
     posthog.capture("chat_message_sent", {
       provider: activePreset?.provider,
       model: activePreset?.model,
@@ -2771,7 +3877,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
 
       if (prefillFrameId) {
         try {
-          const response = await fetch(`http://localhost:3030/frames/${prefillFrameId}`);
+          const response = await localFetch(`/frames/${prefillFrameId}`);
           if (response.ok) {
             const blob = await response.blob();
             const arrayBuffer = await blob.arrayBuffer();
@@ -2848,11 +3954,39 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       }
 
       // Send prompt — abort/new_session now await completion, so no retry needed
-      const result = await commands.piPrompt(
+      let result = await commands.piPrompt(
         piSessionIdRef.current,
         promptMessage,
         piImages.length > 0 ? piImages : null,
       );
+
+      // Race: user hit "+ NEW" before Pi finished registering the new session
+      // in the pool. Auto-spawn once and retry before surfacing the error.
+      if (result.status === "error" && result.error.includes("Pi not initialized")) {
+        console.log("[Pi] session not registered yet — auto-spawning and retrying");
+        try {
+          const home = await homeDir();
+          const dir = await join(home, ".screenpipe", "pi-chat");
+          const providerConfig = buildProviderConfig();
+          const startRes = await commands.piStart(
+            piSessionIdRef.current,
+            dir,
+            settings.user?.token ?? null,
+            providerConfig,
+          );
+          if (startRes.status === "ok" && startRes.data.running) {
+            setPiInfo(startRes.data);
+            piSessionSyncedRef.current = false;
+            result = await commands.piPrompt(
+              piSessionIdRef.current,
+              promptMessage,
+              piImages.length > 0 ? piImages : null,
+            );
+          }
+        } catch (e) {
+          console.error("[Pi] auto-spawn retry failed", e);
+        }
+      }
 
       if (result.status === "error") {
         if (timeoutId) clearTimeout(timeoutId);
@@ -2865,11 +3999,12 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         if (rawError.includes("already processing")) {
           errorMsg = "The AI was mid-response when your message arrived.";
           retryPrompt = userMessage;
-        } else if (rawError.includes("Broken pipe") || rawError.includes("not running") || rawError.includes("has died")) {
+        } else if (rawError.includes("Broken pipe") || rawError.includes("not running") || rawError.includes("has died") || rawError.includes("Pi not initialized")) {
           const provider = activePreset?.provider;
           errorMsg = provider === "native-ollama"
             ? "Ollama is not running. Start it with: `ollama serve`"
             : "AI agent crashed — restarting automatically...";
+          retryPrompt = userMessage;
         } else if (rawError.includes("not found")) {
           errorMsg = `Model "${activePreset?.model}" not found. Check your AI preset in settings.`;
         } else {
@@ -2926,7 +4061,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
       const controller = new AbortController();
       const searchTimeoutId = setTimeout(() => controller.abort(), 120000);
 
-      const response = await fetch(`${SCREENPIPE_API}/search?${params.toString()}`, {
+      const response = await localFetch(`/search?${params.toString()}`, {
         signal: controller.signal,
       });
       clearTimeout(searchTimeoutId);
@@ -2987,6 +4122,16 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
 
   async function sendMessage(userMessage: string, displayLabel?: string) {
     if ((!canChat && !autoSendBypassRef.current) || (!activePreset && !autoSendBypassRef.current)) return;
+
+    // If a previous prompt is still streaming, enqueue this one at the rust
+    // level instead of going through sendPiMessage (which aborts the previous
+    // turn — exactly what we DON'T want when the user is queueing follow-ups).
+    // The rust queue's drain loop will pull this prompt and write it to stdin
+    // as soon as the in-flight prompt's `agent_end` arrives. The pi-event-router
+    // will append the new turn's user + assistant messages to the chat-store.
+    if (isLoading || isStreaming) {
+      return enqueuePiMessage(userMessage, displayLabel);
+    }
 
     // All providers route through Pi agent
     return sendPiMessage(userMessage, displayLabel);
@@ -3052,7 +4197,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!input.trim() && pastedImages.length === 0) || isLoading) return;
+    if (!input.trim() && pastedImages.length === 0) return;
     sendMessage(input.trim());
   };
 
@@ -3097,29 +4242,40 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         {!isMac && !className && (
           <div className="absolute top-0 left-0 w-8 h-8 border-l-2 border-t-2 border-foreground/10 rounded-tl-lg" />
         )}
-        <Button
-          variant={showHistory ? "secondary" : "ghost"}
-          size="icon"
-          onMouseDown={(e) => e.stopPropagation()}
-          onClick={async (e) => {
-            e.stopPropagation();
-            if (!showHistory) {
-              await reloadStore();
-            }
-            setShowHistory(!showHistory);
-          }}
-          className="relative z-10 h-7 w-7"
-          title="Chat history"
-        >
-          <History size={14} />
-        </Button>
-        <div className="relative z-10 p-1.5 rounded-lg bg-foreground/5 border border-border/50">
-          <PipeAIIcon size={18} animated={false} className="text-foreground" />
-        </div>
-        <div className="flex-1">
-          <h2 className="font-semibold text-sm tracking-tight">Thadm AI</h2>
-          <p className="text-[10px] text-muted-foreground font-mono uppercase tracking-wider">Your Screen Memory</p>
-        </div>
+        {/* Inline history toggle. Shown in the floating overlay chat
+            (`/chat`) where there's no app sidebar. Hidden on the home
+            page where the same list is rendered in the AppSidebar. */}
+        {!hideInlineHistory && (
+          <Button
+            variant={showHistory ? "secondary" : "ghost"}
+            size="icon"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={async (e) => {
+              e.stopPropagation();
+              if (!showHistory) {
+                await reloadStore();
+              }
+              setShowHistory(!showHistory);
+            }}
+            className="relative z-10 h-7 w-7"
+            title="Chat history"
+          >
+            <History size={14} />
+          </Button>
+        )}
+        {/* Chat title + actions menu. Sits left-aligned (after the
+            history toggle) so the New / shortcut chips can stay on
+            the right. Suppressed for empty chats (no user message
+            yet) — there's no useful title to show and rename/delete
+            are meaningless for something that doesn't exist on disk. */}
+        <ChatTitleMenu
+          conversationId={conversationId}
+          messages={messages}
+          renameConversation={renameConversation}
+          deleteConversation={deleteConversation}
+          startNewConversation={startNewConversation}
+        />
+        <div className="flex-1" />
         <Button
           variant="default"
           size="sm"
@@ -3141,11 +4297,13 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         </kbd>
       </div>
 
-      {/* Main content area with optional history sidebar */}
+      {/* Main content area with optional history sidebar — only used in
+          the floating overlay window. Home page hides this entirely
+          (`hideInlineHistory`) and the same list is rendered in the
+          main AppSidebar instead. */}
       <div className="flex-1 flex overflow-hidden">
-        {/* History Sidebar */}
         <AnimatePresence>
-          {showHistory && (
+          {!hideInlineHistory && showHistory && (
             <motion.div
               initial={{ width: 0, opacity: 0 }}
               animate={{ width: 280, opacity: 1 }}
@@ -3267,7 +4425,12 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         <div
           ref={scrollContainerRef}
           onScroll={handleMessagesScroll}
-          className="relative flex-1 overflow-y-auto overflow-x-hidden"
+          // min-w-0 lets this flex child shrink when the BrowserSidebar
+          // opens. Without it, flex's default `min-width: auto` keeps the
+          // chat content at content-width and the sidebar overflows past
+          // the right edge of the window — the native webview faithfully
+          // follows the placeholder rect off-screen.
+          className="relative flex-1 min-w-0 overflow-y-auto overflow-x-hidden"
           onContextMenu={(e) => {
             if (messages.length === 0) return;
             e.preventDefault();
@@ -3305,7 +4468,16 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
           }}
         >
         <div className="max-w-4xl mx-auto w-full p-4 space-y-4">
-        {messages.length === 0 && disabledReason && (!hasPresets || !hasValidModel || needsLogin) && (
+        {/* Pipe-watch banner — shown when the user clicked through from
+            a running pipe execution. Replaces the prior synthetic
+            "Watching pipe: X" user-bubble sentinel. */}
+        {activePipeExecution && (
+          <PipeContextBanner
+            pipeName={activePipeExecution.name}
+            executionId={activePipeExecution.executionId}
+          />
+        )}
+        {messages.length === 0 && !isPreparingPrefill && disabledReason && (!hasPresets || !hasValidModel || needsLogin) && (
           <div className="relative flex flex-col items-center justify-center py-12 space-y-4">
             <div className="relative p-6 rounded-2xl border bg-muted/50 border-border/50">
               {needsLogin ? (
@@ -3346,7 +4518,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             )}
           </div>
         )}
-        {messages.length === 0 && hasPresets && hasValidModel && !needsLogin && (
+        {messages.length === 0 && !isPreparingPrefill && hasPresets && hasValidModel && !needsLogin && (
           <SummaryCards
             onSendMessage={sendMessage}
             autoSuggestions={autoSuggestions}
@@ -3381,6 +4553,8 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                 "relative flex gap-3 min-w-0",
                 message.role === "user" ? "flex-row-reverse" : "flex-row"
               )}
+              data-testid={`chat-message-${message.role}`}
+              data-message-id={message.id}
             >
               <div
                 className={cn(
@@ -3398,14 +4572,80 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               </div>
               <div className="group/message flex-1 flex flex-col min-w-0">
               <div
+                onMouseDown={(e) => {
+                  if (message.role !== "user" || isLoading || editingMessageId === message.id) return;
+                  // Stage caret position from the click coords (still on live
+                  // DOM), but defer entering edit mode to mouseup. Letting
+                  // the user drag-select text inside their own messages
+                  // requires NOT swallowing mousedown — otherwise the
+                  // textarea replaces the rendered text mid-drag and the
+                  // selection is lost.
+                  pendingCaretRef.current = caretOffsetFromClick(e, message.content);
+                  pendingEditDownXYRef.current = { x: e.clientX, y: e.clientY };
+                }}
+                onMouseUp={(e) => {
+                  if (message.role !== "user" || isLoading || editingMessageId === message.id) return;
+                  const down = pendingEditDownXYRef.current;
+                  pendingEditDownXYRef.current = null;
+                  // If the mouse moved more than ~3px between down and up,
+                  // treat it as a drag-select — don't enter edit mode.
+                  if (!down) return;
+                  const moved = Math.hypot(e.clientX - down.x, e.clientY - down.y);
+                  if (moved > 3) {
+                    pendingCaretRef.current = null;
+                    return;
+                  }
+                  // Real click — enter edit mode.
+                  setEditDraft(message.content);
+                  setEditingMessageId(message.id);
+                }}
                 className={cn(
                   "relative rounded-xl px-4 py-3 text-sm border overflow-hidden max-w-full",
                   message.role === "user"
                     ? "bg-foreground text-background border-foreground"
-                    : "bg-muted/30 border-border/50"
+                    : "bg-muted/30 border-border/50",
+                  message.role === "user" && !isLoading && editingMessageId !== message.id && "cursor-text"
                 )}
               >
-                <MessageContent message={message} onImageClick={(images, index) => setImageViewer({ images, index })} onRetry={(prompt) => sendMessage(prompt)} />
+                {editingMessageId === message.id ? (
+                  <textarea
+                    ref={(el) => {
+                      editTextareaRef.current = el;
+                      // Synchronous focus + caret placement BEFORE the browser
+                      // paints. Using the ref callback (instead of useEffect)
+                      // guarantees the cursor lands where the user clicked on
+                      // the very first frame — no flash-of-start-of-text.
+                      if (el && pendingCaretRef.current != null) {
+                        const pos = pendingCaretRef.current;
+                        pendingCaretRef.current = null;
+                        el.focus({ preventScroll: true });
+                        try { el.setSelectionRange(pos, pos); } catch { /* ignore */ }
+                      }
+                    }}
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    onBlur={() => {
+                      const trimmed = editDraft.trim();
+                      setEditingMessageId(null);
+                      if (!trimmed || trimmed === message.content) return;
+                      const idx = messages.findIndex((m) => m.id === message.id);
+                      if (idx === -1) return;
+                      setMessages((prev) => prev.slice(0, idx));
+                      sendMessage(trimmed);
+                    }}
+                    onKeyDown={(e) => {
+                      if (e.key === "Escape") { e.preventDefault(); setEditingMessageId(null); }
+                      if (e.key === "Enter" && !e.shiftKey) {
+                        e.preventDefault();
+                        (e.currentTarget as HTMLTextAreaElement).blur();
+                      }
+                    }}
+                    rows={Math.min(8, Math.max(1, editDraft.split("\n").length))}
+                    className="w-full resize-none bg-transparent text-background placeholder:text-background/40 focus:outline-none"
+                  />
+                ) : (
+                  <MessageContent message={message} onImageClick={(images, index) => setImageViewer({ images, index })} onRetry={(prompt) => sendMessage(prompt)} />
+                )}
               </div>
                 {/* Action buttons - appear on hover, outside the message box */}
                 <div className="flex items-center gap-0.5 self-end mt-1 opacity-0 group-hover/message:opacity-100 transition-all duration-200">
@@ -3445,25 +4685,6 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                       <RefreshCw className="h-3 w-3" />
                     </button>
                   )}
-                  {message.role === "assistant" && !message.content.includes("used all your free queries") && !message.content.startsWith("Error") && message.content !== "Processing..." && (
-                    <button
-                      onClick={() => {
-                        // Find the user message that triggered this response
-                        const msgIndex = messages.findIndex((m) => m.id === message.id);
-                        const userMsg = messages.slice(0, msgIndex).reverse().find((m) => m.role === "user");
-                        if (userMsg) {
-                          setScheduleDialogMessage({
-                            prompt: userMsg.content,
-                            response: message.content,
-                          });
-                        }
-                      }}
-                      className="p-1 rounded-md hover:bg-muted text-muted-foreground hover:text-foreground"
-                      title="Run on schedule"
-                    >
-                      <Clock className="h-3 w-3" />
-                    </button>
-                  )}
                   {message.role === "assistant" && (
                     <Popover
                       open={openMessageMenuId === message.id}
@@ -3481,6 +4702,30 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                         <div className="text-xs text-muted-foreground px-2 py-1 mb-1">
                           {new Date(message.timestamp).toLocaleString([], { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}
                         </div>
+                        {!message.content.includes("used all your free queries") &&
+                          !message.content.startsWith("Error") &&
+                          message.content !== "Processing..." && (
+                          <button
+                            onClick={() => {
+                              setOpenMessageMenuId(null);
+                              const msgIndex = messages.findIndex((m) => m.id === message.id);
+                              const userMsg = messages
+                                .slice(0, msgIndex)
+                                .reverse()
+                                .find((m) => m.role === "user");
+                              if (userMsg) {
+                                setScheduleDialogMessage({
+                                  prompt: userMsg.content,
+                                  response: message.content,
+                                });
+                              }
+                            }}
+                            className="w-full flex items-center gap-2 px-2 py-1.5 text-sm rounded-md hover:bg-muted text-left"
+                          >
+                            <Clock className="h-3.5 w-3.5 shrink-0" />
+                            Run on schedule
+                          </button>
+                        )}
                         <button
                           onClick={() => {
                             setOpenMessageMenuId(null);
@@ -3537,12 +4782,66 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                   phase={loaderPhase}
                   toolName={toolName}
                   thinkingSecs={thinkingSecs}
-                  tokenCount={Math.round(streamedCharCount / 4)}
                 />
               </motion.div>
             );
           })()}
         </AnimatePresence>
+
+        {/* Queued follow-ups — rendered between the streaming message and the
+            scroll anchor so they sit visually in the "what's next" gap. The
+            list comes from rust via `pi-queue-changed`; entries disappear as
+            the drain loop pulls each prompt and starts streaming it. */}
+        <AnimatePresence>
+          {queuedPrompts.length > 0 && (
+            <motion.div
+              key="queued-rail"
+              initial={{ opacity: 0, y: 8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -4 }}
+              transition={{ duration: 0.2 }}
+              className="px-4 py-2 space-y-1.5"
+            >
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground/60 px-1">
+                queued · waiting for current reply
+              </div>
+              {queuedPrompts.map((p, i) => (
+                <motion.div
+                  key={p.id}
+                  layout
+                  initial={{ opacity: 0, x: -6 }}
+                  animate={{ opacity: 0.85, x: 0 }}
+                  exit={{ opacity: 0, x: 6, scale: 0.96 }}
+                  transition={{ duration: 0.18 }}
+                  className="group/qcard flex items-center gap-2 px-3 py-2 rounded-md border border-dashed border-border/60 bg-muted/30 text-sm text-muted-foreground hover:border-border hover:bg-muted/50 transition-colors"
+                  title={p.preview.length > 80 ? p.preview : undefined}
+                >
+                  <span className="font-mono text-[10px] text-muted-foreground/50 shrink-0 w-4 text-right">
+                    {i + 1}
+                  </span>
+                  <Clock className="h-3 w-3 flex-shrink-0 opacity-50" />
+                  <span className="truncate flex-1">{p.preview}</span>
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      try {
+                        await commands.piCancelQueued(piSessionIdRef.current, p.id);
+                      } catch (e) {
+                        console.warn("[Pi] cancel queued failed:", e);
+                      }
+                    }}
+                    className="opacity-0 group-hover/qcard:opacity-100 transition-opacity p-0.5 hover:bg-muted rounded shrink-0"
+                    aria-label="cancel queued message"
+                    title="cancel"
+                  >
+                    <X className="h-3 w-3 text-muted-foreground" />
+                  </button>
+                </motion.div>
+              ))}
+            </motion.div>
+          )}
+        </AnimatePresence>
+
         <div ref={messagesEndRef} />
       </div> {/* End of max-w-4xl wrapper */}
 
@@ -3557,6 +4856,12 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
         </button>
       )}
       </div>
+
+      {/* Agent-controlled embedded browser. Slides in from the right when the
+          agent navigates (or when restoring a chat that has saved state).
+          The actual page is rendered by a Tauri child Webview positioned
+          on top of the placeholder div. */}
+      <BrowserSidebar conversationId={conversationId} />
       </div> {/* End of main content area with history sidebar */}
 
       {/* Input */}
@@ -3572,7 +4877,7 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                   <div className="relative group">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
                     <img
-                      src={`http://localhost:3030/frames/${prefillFrameId}`}
+                      src={`${getApiBaseUrl()}/frames/${prefillFrameId}`}
                       alt="Attached frame"
                       className="w-16 h-12 object-cover rounded border border-border/50"
                     />
@@ -3863,6 +5168,34 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                 })
               )}
 
+              {/* Connections — lets users mention their own integrations (gmail, slack, etc.) */}
+              {connections.length > 0 && (
+                <>
+                  <div className="px-2 py-1 text-[10px] font-medium uppercase tracking-wider text-muted-foreground bg-muted/30 border-b border-border/50 border-t">
+                    connections
+                  </div>
+                  {connections.map((c) => {
+                    const tag = `@${c.id}`;
+                    return (
+                      <button
+                        key={`conn-${c.id}`}
+                        type="button"
+                        onClick={() => {
+                          setInput((prev) => `${tag} ${prev.trim()}`.trim() + " ");
+                          setAppFilterOpen(false);
+                        }}
+                        className="w-full px-3 py-1.5 text-left text-xs font-mono hover:bg-muted/50 transition-colors flex items-center justify-between gap-2"
+                      >
+                        <span>{tag}</span>
+                        <span className="text-[10px] text-muted-foreground truncate">
+                          {c.name}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </>
+              )}
+
               {/* Speakers */}
               {recentSpeakers.length > 0 && (
                 <>
@@ -3950,11 +5283,15 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
                 ref={inputRef}
                 value={input}
                 onChange={handleInputChange}
+                onCompositionStart={() => setIsComposing(true)}
+                onCompositionEnd={() => setIsComposing(false)}
                 onKeyDown={handleKeyDown}
                 placeholder={
                   disabledReason
                     ? disabledReason
-                    : "Ask about your screen... (type @ for filters, paste images)"
+                    : isLoading || isStreaming
+                      ? "type to queue next message..."
+                      : "Ask about your screen... (type @ for filters, paste images)"
                 }
                 disabled={!canChat}
                 spellCheck={false}
@@ -4016,6 +5353,82 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
             </div>
             {/* Buttons row below textarea so scrollbar is above and full width is typeable */}
             <div className="flex items-center justify-end gap-0.5 shrink-0 px-2 pb-2 pt-1">
+              {(() => {
+                // Privacy filter: removes personal info (names, emails, phones,
+                // addresses, account numbers) from screenpipe API responses
+                // before the AI sees them. Pro-only; non-pro click opens upsell.
+                const isPro = settings.user?.cloud_subscribed === true;
+                const privacyOn = isPro && settings.piPrivacyFilter === true;
+                return (
+                  <TooltipProvider delayDuration={150}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Button
+                          type="button"
+                          size="icon"
+                          variant="ghost"
+                          onClick={() => {
+                            if (!isPro) {
+                              openUrl("https://screenpi.pe/onboarding");
+                              return;
+                            }
+                            updateSettings({ piPrivacyFilter: !privacyOn });
+                          }}
+                          disabled={isLoading}
+                          className={cn(
+                            "h-8 w-8 hover:bg-muted/50",
+                            privacyOn
+                              ? "text-foreground hover:text-foreground"
+                              : "text-muted-foreground hover:text-foreground"
+                          )}
+                          aria-label={
+                            privacyOn
+                              ? "Disable privacy filter"
+                              : "Enable privacy filter"
+                          }
+                        >
+                          {privacyOn ? (
+                            <ShieldCheck className="h-4 w-4" />
+                          ) : (
+                            <Shield className="h-4 w-4" />
+                          )}
+                        </Button>
+                      </TooltipTrigger>
+                      <TooltipContent
+                        side="top"
+                        align="center"
+                        className="max-w-[320px] p-3 space-y-2 text-xs leading-relaxed"
+                      >
+                        <div className="font-medium text-sm">
+                          {!isPro
+                            ? "Privacy filter — Pro"
+                            : privacyOn
+                              ? "Privacy filter: ON"
+                              : "Privacy filter: OFF"}
+                        </div>
+                        <div className="text-muted-foreground">
+                          {!isPro
+                            ? "Remove names, emails, phone numbers and other personal info from your screen data before the AI sees it. Adds ~1–2s per search. Click the shield to upgrade."
+                            : privacyOn
+                              ? "Names, emails, phone numbers and other personal info are removed from your screen data before it reaches the AI. Adds ~1–2s per search. Click the shield to turn off."
+                              : "Turn this on to strip personal info (names, emails, phones, addresses, account numbers) from your screen data before the AI sees it. Adds ~1–2s per search."}
+                        </div>
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            e.preventDefault();
+                            openUrl("https://docs.screenpi.pe/privacy-filter");
+                          }}
+                          className="text-[11px] underline text-muted-foreground hover:text-foreground transition-colors"
+                        >
+                          How it works →
+                        </button>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                );
+              })()}
               <Button
                 type="button"
                 size="icon"
@@ -4027,24 +5440,47 @@ export function StandaloneChat({ className }: { className?: string } = {}) {
               >
                 <Paperclip className="h-4 w-4" />
               </Button>
-              <Button
-                type={isStreaming ? "button" : "submit"}
-                size="icon"
-                disabled={(!input.trim() && !isStreaming && pastedImages.length === 0) || !canChat}
-                onClick={isStreaming ? handleStop : undefined}
-                className={cn(
-                  "h-8 w-8 transition-all duration-200",
-                  isStreaming
-                    ? "bg-foreground text-background hover:bg-foreground/80"
-                    : "bg-foreground text-background hover:bg-background hover:text-foreground"
-                )}
-              >
-                {isStreaming ? (
-                  <Square className="h-4 w-4" />
-                ) : (
-                  <Send className="h-4 w-4" />
-                )}
-              </Button>
+              {(() => {
+                // Three button modes:
+                //   1. streaming + input empty → stop (square)
+                //   2. streaming + input has text → queue (chevron-up, submits, enqueues)
+                //   3. not streaming → send (paper plane)
+                const hasInput = input.trim().length > 0 || pastedImages.length > 0;
+                const isQueueMode = (isLoading || isStreaming) && hasInput;
+                const isStopMode = (isLoading || isStreaming) && !hasInput;
+                return (
+                  <Button
+                    type={isStopMode ? "button" : "submit"}
+                    size="icon"
+                    disabled={(!hasInput && !isStopMode) || !canChat}
+                    onClick={isStopMode ? handleStop : undefined}
+                    className={cn(
+                      "h-8 w-8 transition-all duration-200 relative",
+                      "bg-foreground text-background hover:bg-foreground/80"
+                    )}
+                    title={
+                      isStopMode
+                        ? "stop"
+                        : isQueueMode
+                          ? `queue (${queuedPrompts.length + 1} pending)`
+                          : "send"
+                    }
+                  >
+                    {isStopMode ? (
+                      <Square className="h-4 w-4" />
+                    ) : isQueueMode ? (
+                      <ChevronUp className="h-4 w-4" />
+                    ) : (
+                      <Send className="h-4 w-4" />
+                    )}
+                    {isQueueMode && queuedPrompts.length > 0 && (
+                      <span className="absolute -top-1.5 -right-1.5 min-w-[16px] h-[16px] px-1 rounded-full bg-foreground text-background text-[9px] font-mono font-semibold flex items-center justify-center border border-background">
+                        {queuedPrompts.length + 1}
+                      </span>
+                    )}
+                  </Button>
+                );
+              })()}
             </div>
           </div>
         </form>

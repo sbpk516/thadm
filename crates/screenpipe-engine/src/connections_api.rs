@@ -19,6 +19,9 @@ use serde_json::{json, Map, Value};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
+use crate::routes::browser::BrowserBridge;
+use screenpipe_connect::connections::browser::{BrowserRegistry, BrowserSummary, EvalError};
+
 pub type SharedConnectionManager = Arc<Mutex<ConnectionManager>>;
 pub type SharedWhatsAppGateway = Arc<Mutex<WhatsAppGateway>>;
 
@@ -27,6 +30,8 @@ pub struct ConnectionsState {
     pub cm: SharedConnectionManager,
     pub wa: SharedWhatsAppGateway,
     pub secret_store: Option<Arc<SecretStore>>,
+    pub browser_bridge: Arc<BrowserBridge>,
+    pub browser_registry: Arc<BrowserRegistry>,
 }
 
 #[derive(Deserialize)]
@@ -47,7 +52,7 @@ pub struct WhatsAppPairRequest {
 /// GET /connections — list all integrations with connection status.
 async fn list_connections(State(state): State<ConnectionsState>) -> Json<Value> {
     let mgr = state.cm.lock().await;
-    let list = mgr.list();
+    let list = mgr.list().await;
 
     // Add WhatsApp to the list
     let wa = state.wa.lock().await;
@@ -104,25 +109,98 @@ async fn list_connections(State(state): State<ConnectionsState>) -> Json<Value> 
             "connected": wa_connected,
             "has_session": has_session,
         }));
+
+        // Browsers — every kind of browser the agent can drive (user's
+        // real browser via the extension, app-managed owned webview, etc.)
+        // is registered into the BrowserRegistry. Surface each one as its
+        // own entry so the AI sees the natural-language description and
+        // picks by id. Canonical control surface lives at
+        // GET /connections/browsers and POST /connections/browsers/:id/eval.
+        for b in state.browser_registry.list().await {
+            arr.push(json!({
+                "id": b.id(),
+                "name": b.name(),
+                "icon": b.id(),
+                "category": "browser",
+                "description": format!(
+                    "{}\n\nControl: GET /connections/browsers/{}/status, \
+                     POST /connections/browsers/{}/eval {{\"code\":\"...\",\"url\":\"...\"}}.",
+                    b.description(),
+                    b.id(),
+                    b.id(),
+                ),
+                "fields": [],
+                "connected": b.is_ready().await,
+            }));
+        }
     }
 
     Json(json!({ "data": data }))
 }
 
 /// GET /connections/:id — get saved credentials.
+///
+/// DEPRECATED: Exposes raw API keys to callers. Use /connections/:id/proxy/*path
+/// instead — the proxy injects auth server-side so secrets never enter the LLM context.
 async fn get_connection(
     State(state): State<ConnectionsState>,
     Path(id): Path<String>,
-) -> (StatusCode, Json<Value>) {
-    let mgr = state.cm.lock().await;
-    match mgr.get_credentials(&id) {
-        Ok(Some(creds)) => (StatusCode::OK, Json(json!({ "credentials": creds }))),
-        Ok(None) => (StatusCode::OK, Json(json!({ "credentials": {} }))),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({ "error": e.to_string() })),
-        ),
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Browsers live in the registry, not in the integration table — so a
+    // generic `GET /connections/user-browser` would otherwise fall into
+    // ConnectionManager::find() and 400 with "unknown integration". Return
+    // the registry entry's natural-language description instead, which
+    // already embeds the eval/status endpoints the agent needs to drive it.
+    for b in state.browser_registry.list().await {
+        if b.id() == id {
+            let body = json!({
+                "id": b.id(),
+                "name": b.name(),
+                "category": "browser",
+                "connected": b.is_ready().await,
+                "description": format!(
+                    "{}\n\nControl: GET /connections/browsers/{}/status, \
+                     POST /connections/browsers/{}/eval {{\"code\":\"...\",\"url\":\"...\"}}.",
+                    b.description(),
+                    b.id(),
+                    b.id(),
+                ),
+            });
+            return (StatusCode::OK, Json(body)).into_response();
+        }
     }
+
+    let mgr = state.cm.lock().await;
+    let has_proxy = mgr.find_proxy_config(&id).is_some();
+
+    let (status, body) = match mgr.get_credentials(&id).await {
+        Ok(Some(creds)) => (StatusCode::OK, json!({ "credentials": creds })),
+        Ok(None) => (StatusCode::OK, json!({ "credentials": {} })),
+        Err(e) => (StatusCode::BAD_REQUEST, json!({ "error": e.to_string() })),
+    };
+
+    let mut response = (status, Json(body)).into_response();
+
+    if has_proxy {
+        tracing::debug!(
+            "raw credential access for '{}' — consider using /connections/{}/proxy/ instead",
+            id,
+            id
+        );
+        response.headers_mut().insert(
+            "X-Deprecation-Warning",
+            format!(
+                "Use /connections/{}/proxy/ instead — raw credential access will be removed in a future version",
+                id
+            )
+            .parse()
+            .unwrap(),
+        );
+    }
+
+    response
 }
 
 /// PUT /connections/:id — save credentials.
@@ -132,7 +210,7 @@ async fn connect_integration(
     Json(body): Json<ConnectRequest>,
 ) -> (StatusCode, Json<Value>) {
     let mgr = state.cm.lock().await;
-    match mgr.connect(&id, body.credentials) {
+    match mgr.connect(&id, body.credentials).await {
         Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -147,7 +225,7 @@ async fn disconnect_integration(
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     let mgr = state.cm.lock().await;
-    match mgr.disconnect(&id) {
+    match mgr.disconnect(&id).await {
         Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -185,7 +263,7 @@ async fn list_instances(
     Path(id): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     let mgr = state.cm.lock().await;
-    match mgr.get_all_instances(&id) {
+    match mgr.get_all_instances(&id).await {
         Ok(instances) => {
             let items: Vec<Value> = instances
                 .into_iter()
@@ -213,7 +291,10 @@ async fn connect_instance(
     Json(body): Json<ConnectRequest>,
 ) -> (StatusCode, Json<Value>) {
     let mgr = state.cm.lock().await;
-    match mgr.connect_instance(&id, Some(&instance), body.credentials) {
+    match mgr
+        .connect_instance(&id, Some(&instance), body.credentials)
+        .await
+    {
         Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -228,7 +309,7 @@ async fn disconnect_instance_route(
     Path((id, instance)): Path<(String, String)>,
 ) -> (StatusCode, Json<Value>) {
     let mgr = state.cm.lock().await;
-    match mgr.disconnect_instance(&id, Some(&instance)) {
+    match mgr.disconnect_instance(&id, Some(&instance)).await {
         Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))),
         Err(e) => (
             StatusCode::BAD_REQUEST,
@@ -525,26 +606,12 @@ async fn gmail_send_inner(
 }
 
 /// Retrieve a valid Gmail OAuth token or return an error.
-///
-/// When a SecretStore is available, attempts to load the token from the
-/// encrypted store first (via `secret_oauth`), falling back to the legacy
-/// file-based path.
 async fn gmail_token(
     client: &reqwest::Client,
     instance: Option<&str>,
     secret_store: &Option<Arc<SecretStore>>,
 ) -> anyhow::Result<String> {
-    // Use SecretStore with full refresh support
-    if let Some(store) = secret_store {
-        if let Some(token) =
-            crate::secret_oauth::get_valid_token(client, store, "gmail", instance).await
-        {
-            return Ok(token);
-        }
-    }
-
-    // Fall back to legacy file-based token retrieval
-    oauth_store::get_valid_token_instance(client, "gmail", instance)
+    oauth_store::get_valid_token_instance(secret_store.as_deref(), client, "gmail", instance)
         .await
         .ok_or_else(|| {
             anyhow::anyhow!(
@@ -555,24 +622,13 @@ async fn gmail_token(
 
 /// GET /connections/gmail/instances — list all connected Gmail accounts.
 async fn gmail_list_instances(State(state): State<ConnectionsState>) -> (StatusCode, Json<Value>) {
-    let instances = oauth_store::list_oauth_instances("gmail");
+    let instances = oauth_store::list_oauth_instances(state.secret_store.as_deref(), "gmail").await;
     let mut accounts = Vec::new();
     for inst in instances {
-        // Try SecretStore first, then fall back to file
-        let email = if let Some(store) = &state.secret_store {
-            crate::secret_oauth::load_oauth_json(store, "gmail", inst.as_deref())
+        let email =
+            oauth_store::load_oauth_json(state.secret_store.as_deref(), "gmail", inst.as_deref())
                 .await
-                .and_then(|v| v["email"].as_str().map(String::from))
-        } else {
-            None
-        };
-        let email = email.or_else(|| {
-            let path = oauth_store::oauth_token_path_instance("gmail", inst.as_deref());
-            std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|s| serde_json::from_str::<Value>(&s).ok())
-                .and_then(|v| v["email"].as_str().map(String::from))
-        });
+                .and_then(|v| v["email"].as_str().map(String::from));
         accounts.push(json!({
             "instance": inst,
             "email": email,
@@ -701,32 +757,23 @@ pub struct GoogleCalendarInstanceQuery {
 }
 
 /// Retrieve a valid Google Calendar OAuth token or return an error.
-///
-/// When a SecretStore is available, attempts to load the token from the
-/// encrypted store first (via `secret_oauth`), falling back to the legacy
-/// file-based path.
 async fn gcal_token(
     client: &reqwest::Client,
     instance: Option<&str>,
     secret_store: &Option<Arc<SecretStore>>,
 ) -> anyhow::Result<String> {
-    // Use SecretStore with full refresh support
-    if let Some(store) = secret_store {
-        if let Some(token) =
-            crate::secret_oauth::get_valid_token(client, store, "google-calendar", instance).await
-        {
-            return Ok(token);
-        }
-    }
-
-    // Fall back to legacy file-based token retrieval
-    oauth_store::get_valid_token_instance(client, "google-calendar", instance)
-        .await
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Google Calendar not connected — use 'Connect Google Calendar' in Settings > Connections"
-            )
-        })
+    oauth_store::get_valid_token_instance(
+        secret_store.as_deref(),
+        client,
+        "google-calendar",
+        instance,
+    )
+    .await
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "Google Calendar not connected — use 'Connect Google Calendar' in Settings > Connections"
+        )
+    })
 }
 
 /// GET /connections/google-calendar/status — check connection + email.
@@ -737,15 +784,12 @@ async fn gcal_status(
     let client = reqwest::Client::new();
     let instance = q.instance.as_deref();
 
-    // Check SecretStore first, then fall back to file-based check
-    let connected = if let Some(store) = &state.secret_store {
-        crate::secret_oauth::load_oauth_json(store, "google-calendar", instance)
-            .await
-            .is_some()
-            || oauth_store::is_oauth_instance_connected("google-calendar", instance)
-    } else {
-        oauth_store::is_oauth_instance_connected("google-calendar", instance)
-    };
+    let connected = oauth_store::is_oauth_instance_connected(
+        state.secret_store.as_deref(),
+        "google-calendar",
+        instance,
+    )
+    .await;
     if !connected {
         return (
             StatusCode::OK,
@@ -868,16 +912,13 @@ async fn gcal_disconnect(
     State(state): State<ConnectionsState>,
     Query(q): Query<GoogleCalendarInstanceQuery>,
 ) -> (StatusCode, Json<Value>) {
-    // Also remove from SecretStore if available
-    if let Some(store) = &state.secret_store {
-        let key = match q.instance.as_deref() {
-            Some(inst) => format!("oauth:google-calendar:{}", inst),
-            None => "oauth:google-calendar".to_string(),
-        };
-        let _ = store.delete(&key).await;
-    }
-
-    match oauth_store::delete_oauth_token_instance("google-calendar", q.instance.as_deref()) {
+    match oauth_store::delete_oauth_token_instance(
+        state.secret_store.as_deref(),
+        "google-calendar",
+        q.instance.as_deref(),
+    )
+    .await
+    {
         Ok(()) => (StatusCode::OK, Json(json!({ "success": true }))),
         Err(e) => (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -895,6 +936,9 @@ pub struct OAuthCallbackQuery {
     pub code: Option<String>,
     pub state: Option<String>,
     pub error: Option<String>,
+    // QuickBooks Online returns realmId (company ID) as a callback param alongside the code.
+    #[serde(rename = "realmId")]
+    pub realm_id: Option<String>,
 }
 
 /// GET /connections/oauth/callback — receives the provider redirect after user approves.
@@ -928,8 +972,14 @@ async fn oauth_callback(Query(params): Query<OAuthCallbackQuery>) -> (StatusCode
     };
 
     match sender {
-        Some(tx) => {
-            let _ = tx.send(code);
+        Some(pending) => {
+            // For providers that return extra callback params (e.g. QuickBooks realmId),
+            // encode them alongside the code as JSON so the Tauri command can extract both.
+            let payload = match params.realm_id {
+                Some(ref rid) => serde_json::json!({"code": code, "realmId": rid}).to_string(),
+                None => code,
+            };
+            let _ = pending.sender.send(payload);
             let html =
                 "<html><body style=\"font-family:system-ui;text-align:center;padding:60px\">\
                 <h2>Connected!</h2>\
@@ -950,10 +1000,505 @@ async fn oauth_callback(Query(params): Query<OAuthCallbackQuery>) -> (StatusCode
     }
 }
 
+// ---------------------------------------------------------------------------
+// Credential proxy — forward requests to third-party APIs with auth injected
+// ---------------------------------------------------------------------------
+
+/// Resolved authentication — extracted from credentials before the request.
+enum ResolvedAuth {
+    Header(String, String),
+    Basic(String, String),
+    None,
+}
+
+/// Fields in the OAuth token JSON that must never be allowed to fill a URL
+/// placeholder (tokens and lifecycle metadata). Everything else — `realmId`,
+/// `email`, `workspace_name`, etc. — is fair game.
+const OAUTH_URL_SKIP_FIELDS: &[&str] = &[
+    "access_token",
+    "refresh_token",
+    "id_token",
+    "token_type",
+    "expires_in",
+    "expires_at",
+    "scope",
+];
+
+/// Resolve base_url, replacing `{field}` placeholders with credential values
+/// and, as a fallback, non-secret fields from the OAuth token JSON (for
+/// providers like QuickBooks whose `{realmId}` comes from the callback, not
+/// from the credential store).
+///
+/// Returns an error if any placeholder remains unresolved.
+fn resolve_base_url(
+    template: &str,
+    creds: Option<&Map<String, Value>>,
+    oauth_extras: Option<&Value>,
+) -> Result<String, String> {
+    let mut url = template.to_string();
+    if url.contains('{') {
+        if let Some(c) = creds {
+            for (key, value) in c.iter() {
+                if let Some(s) = value.as_str() {
+                    url = url.replace(&format!("{{{}}}", key), s);
+                }
+            }
+        }
+        if url.contains('{') {
+            if let Some(obj) = oauth_extras.and_then(|v| v.as_object()) {
+                for (key, value) in obj.iter() {
+                    if OAUTH_URL_SKIP_FIELDS.contains(&key.as_str()) {
+                        continue;
+                    }
+                    if let Some(s) = value.as_str() {
+                        url = url.replace(&format!("{{{}}}", key), s);
+                    }
+                }
+            }
+        }
+        // Check for unresolved placeholders
+        if let Some(start) = url.find('{') {
+            let end = url[start..].find('}').unwrap_or(0) + start + 1;
+            let field = &url[start..end];
+            return Err(format!(
+                "unresolved placeholder {} in base_url — credential field missing",
+                field
+            ));
+        }
+    }
+    Ok(url)
+}
+
+/// Resolve auth from proxy config + stored credentials/OAuth token.
+fn resolve_auth(
+    proxy_auth: &screenpipe_connect::connections::ProxyAuth,
+    creds: Option<&Map<String, Value>>,
+    oauth_token: Option<&str>,
+    oauth_extras: Option<&Value>,
+) -> ResolvedAuth {
+    use screenpipe_connect::connections::ProxyAuth;
+    match proxy_auth {
+        ProxyAuth::Bearer { credential_key } => {
+            // OAuth token takes precedence over stored credential
+            if let Some(token) = oauth_token {
+                ResolvedAuth::Header("Authorization".into(), format!("Bearer {}", token))
+            } else if let Some(c) = creds {
+                c.get(*credential_key)
+                    .and_then(|v| v.as_str())
+                    .map(|k| ResolvedAuth::Header("Authorization".into(), format!("Bearer {}", k)))
+                    .unwrap_or(ResolvedAuth::None)
+            } else {
+                ResolvedAuth::None
+            }
+        }
+        ProxyAuth::Header {
+            name,
+            credential_key,
+        } => {
+            // Header-based auth can come from either stored connection creds
+            // or OAuth metadata persisted alongside the token response.
+            let from_creds = creds.and_then(|c| c.get(*credential_key).and_then(|v| v.as_str()));
+            let from_oauth = oauth_extras.and_then(|v| v[*credential_key].as_str());
+            from_creds
+                .or(from_oauth)
+                .map(|k| ResolvedAuth::Header(name.to_string(), k.to_string()))
+                .unwrap_or(ResolvedAuth::None)
+        }
+        ProxyAuth::BasicAuth {
+            username_key,
+            password_key,
+        } => {
+            if let Some(c) = creds {
+                let user = c
+                    .get(*username_key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let pass = c
+                    .get(*password_key)
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                if user.is_empty() && pass.is_empty() {
+                    ResolvedAuth::None
+                } else {
+                    ResolvedAuth::Basic(user, pass)
+                }
+            } else {
+                ResolvedAuth::None
+            }
+        }
+        ProxyAuth::None => ResolvedAuth::None,
+    }
+}
+
+/// Proxy handler: forward requests to third-party APIs with credentials injected.
+/// Route: ANY /connections/:id/proxy/*path
+///
+/// Security:
+/// - Credentials never enter the LLM context window
+/// - Only safe HTTP methods allowed (GET, POST, PUT, PATCH) — DELETE blocked by default
+/// - Unresolved URL placeholders are rejected (prevents requests to wrong hosts)
+/// - All proxy requests are logged for audit
+async fn connection_proxy(
+    State(state): State<ConnectionsState>,
+    axum::extract::Path((id, api_path)): axum::extract::Path<(String, String)>,
+    axum::extract::RawQuery(raw_query): axum::extract::RawQuery,
+    method: axum::http::Method,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+
+    // Block destructive methods — pipes should not delete external resources
+    if method == axum::http::Method::DELETE {
+        tracing::warn!(
+            "proxy: blocked DELETE request to {}/{} — destructive methods not allowed",
+            id,
+            api_path
+        );
+        return (
+            StatusCode::METHOD_NOT_ALLOWED,
+            Json(json!({ "error": "DELETE method not allowed through proxy — use the API directly if you need to delete resources" })),
+        )
+            .into_response();
+    }
+
+    let mgr = state.cm.lock().await;
+
+    // Find the integration and its proxy config
+    let proxy_cfg = match mgr.find_proxy_config(&id) {
+        Some(cfg) => cfg,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("no proxy config for connection '{}'", id) })),
+            )
+                .into_response();
+        }
+    };
+
+    // Load credentials (from connections.json) and the raw OAuth token JSON in parallel.
+    // OAuth JSON is passed separately to resolve_base_url so callback-only fields like
+    // QuickBooks' {realmId} can fill URL placeholders without polluting the credentials map.
+    let creds = mgr.get_credentials(&id).await.ok().flatten();
+    let oauth_json =
+        screenpipe_connect::oauth::load_oauth_json(state.secret_store.as_deref(), &id, None).await;
+    // Use get_valid_token_instance (not read_oauth_token_instance) so expired
+    // access tokens are transparently refreshed via the stored refresh_token.
+    // Before this fix the proxy would surface "no credentials found" and 401
+    // for any connection with an expired token, even though the refresh was
+    // a single round-trip away.
+    let http_client = reqwest::Client::new();
+    let oauth_token = screenpipe_connect::oauth::get_valid_token_instance(
+        state.secret_store.as_deref(),
+        &http_client,
+        &id,
+        None,
+    );
+
+    // Resolve auth
+    let auth = resolve_auth(
+        &proxy_cfg.auth,
+        creds.as_ref(),
+        oauth_token.await.as_deref(),
+        oauth_json.as_ref(),
+    );
+
+    // Check that auth was actually resolved (don't send unauthenticated requests)
+    if matches!(auth, ResolvedAuth::None)
+        && !matches!(
+            proxy_cfg.auth,
+            screenpipe_connect::connections::ProxyAuth::None
+        )
+    {
+        tracing::warn!(
+            "proxy: no credentials found for connection '{}' — cannot authenticate",
+            id
+        );
+        return (
+            StatusCode::UNAUTHORIZED,
+            Json(json!({ "error": format!("connection '{}' has no stored credentials — connect it first in Settings", id) })),
+        )
+            .into_response();
+    }
+
+    // Resolve dynamic base_url
+    let base_url = match resolve_base_url(proxy_cfg.base_url, creds.as_ref(), oauth_json.as_ref()) {
+        Ok(url) => url,
+        Err(e) => {
+            tracing::warn!("proxy: failed to resolve base_url for '{}': {}", id, e);
+            return (StatusCode::BAD_REQUEST, Json(json!({ "error": e }))).into_response();
+        }
+    };
+
+    drop(mgr); // release lock before making external request
+
+    // Build the target URL. Query params from the caller (e.g.
+    // `?valueInputOption=USER_ENTERED` for Google Sheets appends) must be
+    // forwarded verbatim — without this, callers silently hit defaults and
+    // bad requests like 400s on `values:append`.
+    let target_url = match raw_query.as_deref() {
+        Some(q) if !q.is_empty() => {
+            format!("{}/{}?{}", base_url, api_path.trim_start_matches('/'), q)
+        }
+        _ => format!("{}/{}", base_url, api_path.trim_start_matches('/')),
+    };
+
+    // Audit log
+    tracing::info!(
+        "proxy: {} {} → {} (connection: {})",
+        method,
+        api_path,
+        target_url,
+        id
+    );
+
+    // Forward the request
+    let client = reqwest::Client::new();
+    let mut req = client.request(
+        reqwest::Method::from_bytes(method.as_str().as_bytes()).unwrap_or(reqwest::Method::GET),
+        &target_url,
+    );
+
+    // Forward content-type
+    if let Some(ct) = headers.get("content-type") {
+        if let Ok(ct_str) = ct.to_str() {
+            req = req.header("content-type", ct_str);
+        }
+    }
+
+    // Inject auth
+    match auth {
+        ResolvedAuth::Header(name, value) => {
+            req = req.header(&name, &value);
+        }
+        ResolvedAuth::Basic(user, pass) => {
+            req = req.basic_auth(&user, Some(&pass));
+        }
+        ResolvedAuth::None => {}
+    }
+
+    // Inject extra headers from proxy config
+    for (name, value) in proxy_cfg.extra_headers {
+        req = req.header(*name, *value);
+    }
+
+    // Forward body
+    if !body.is_empty() {
+        req = req.body(body.to_vec());
+    }
+
+    // 30-second timeout to prevent hung connections
+    let req = req.timeout(std::time::Duration::from_secs(30));
+
+    match req.send().await {
+        Ok(resp) => {
+            let upstream_status = resp.status().as_u16();
+            let status = StatusCode::from_u16(upstream_status).unwrap_or(StatusCode::BAD_GATEWAY);
+            let resp_headers = resp.headers().clone();
+            match resp.bytes().await {
+                Ok(resp_body) => {
+                    if !status.is_success() {
+                        tracing::warn!(
+                            "proxy: {} {} → {} returned {}",
+                            method,
+                            api_path,
+                            id,
+                            upstream_status
+                        );
+                    }
+                    let mut response = (status, resp_body).into_response();
+                    if let Some(ct) = resp_headers.get("content-type") {
+                        response.headers_mut().insert("content-type", ct.clone());
+                    }
+                    response
+                }
+                Err(e) => (
+                    StatusCode::BAD_GATEWAY,
+                    Json(json!({ "error": format!("failed to read response: {}", e) })),
+                )
+                    .into_response(),
+            }
+        }
+        Err(e) => {
+            tracing::error!("proxy: request to {} failed: {}", target_url, e);
+            (
+                StatusCode::BAD_GATEWAY,
+                Json(json!({ "error": format!("proxy request failed: {}", e) })),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// GET /connections/:id/config — return non-secret connection config.
+/// Gives the LLM the database_id, workspace, etc. without exposing API keys.
+async fn connection_config(
+    State(state): State<ConnectionsState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    let mgr = state.cm.lock().await;
+    match mgr.get_credentials(&id).await {
+        Ok(Some(creds)) => {
+            // Filter out secret fields
+            let def = mgr.find_def(&id);
+            let secret_keys: std::collections::HashSet<&str> = def
+                .map(|d| {
+                    d.fields
+                        .iter()
+                        .filter(|f| f.secret)
+                        .map(|f| f.key)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let safe: Map<String, Value> = creds
+                .into_iter()
+                .filter(|(k, _)| !secret_keys.contains(k.as_str()))
+                .collect();
+            (StatusCode::OK, Json(json!({ "config": safe })))
+        }
+        Ok(None) => (StatusCode::OK, Json(json!({ "config": {} }))),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({ "error": e.to_string() })),
+        ),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Browser extension bridge wrappers — re-extract the bridge from ConnectionsState
+// so the underlying handlers in routes::browser remain state-agnostic.
+// ---------------------------------------------------------------------------
+
+async fn browser_ws(
+    ws: axum::extract::ws::WebSocketUpgrade,
+    State(state): State<ConnectionsState>,
+) -> axum::response::Response {
+    crate::routes::browser::browser_ws_handler(ws, State(state.browser_bridge)).await
+}
+
+async fn browser_eval(
+    State(state): State<ConnectionsState>,
+    body: Json<crate::routes::browser::EvalRequestBody>,
+) -> impl axum::response::IntoResponse {
+    crate::routes::browser::browser_eval_handler(State(state.browser_bridge), body).await
+}
+
+async fn browser_status(
+    State(state): State<ConnectionsState>,
+) -> impl axum::response::IntoResponse {
+    crate::routes::browser::browser_status_handler(State(state.browser_bridge)).await
+}
+
+// ---------------------------------------------------------------------------
+// Browser registry — uniform API for every kind of browser the agent can
+// drive. The agent reads `GET /connections/browsers`, picks one by id, and
+// calls `POST /connections/browsers/:id/eval`. Same shape regardless of
+// whether the underlying browser is the user's real Chrome (via the
+// extension) or an app-managed owned webview.
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct BrowserEvalBody {
+    code: String,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    timeout_secs: Option<u64>,
+}
+
+/// GET /connections/browsers — list every registered browser with its
+/// natural-language description and ready flag. The LLM uses the
+/// description field to decide which browser to call.
+async fn list_browsers(State(state): State<ConnectionsState>) -> Json<Value> {
+    let browsers = state.browser_registry.list().await;
+    let mut summaries = Vec::with_capacity(browsers.len());
+    for b in &browsers {
+        summaries.push(BrowserSummary::from_browser(b).await);
+    }
+    // Stable ordering — browsers should appear in the same order across
+    // calls so the agent's prompt doesn't shuffle.
+    summaries.sort_by(|a, b| a.id.cmp(&b.id));
+    Json(json!({ "data": summaries }))
+}
+
+/// GET /connections/browsers/:id/status — single-browser readiness probe.
+async fn browser_get_status(
+    State(state): State<ConnectionsState>,
+    Path(id): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match state.browser_registry.get(&id).await {
+        Some(b) => (
+            StatusCode::OK,
+            Json(json!({
+                "id": b.id(),
+                "name": b.name(),
+                "description": b.description(),
+                "ready": b.is_ready().await,
+            })),
+        ),
+        None => (
+            StatusCode::NOT_FOUND,
+            Json(json!({ "error": format!("no browser registered with id '{id}'") })),
+        ),
+    }
+}
+
+/// POST /connections/browsers/:id/eval — run JS in the named browser.
+async fn browser_run_eval(
+    State(state): State<ConnectionsState>,
+    Path(id): Path<String>,
+    Json(body): Json<BrowserEvalBody>,
+) -> (StatusCode, Json<Value>) {
+    let browser = match state.browser_registry.get(&id).await {
+        Some(b) => b,
+        None => {
+            return (
+                StatusCode::NOT_FOUND,
+                Json(json!({ "error": format!("no browser registered with id '{id}'") })),
+            );
+        }
+    };
+
+    let timeout = std::time::Duration::from_secs(body.timeout_secs.unwrap_or(30).min(120));
+    match browser.eval(&body.code, body.url.as_deref(), timeout).await {
+        Ok(r) => {
+            let status = if r.ok {
+                StatusCode::OK
+            } else {
+                StatusCode::UNPROCESSABLE_ENTITY
+            };
+            (
+                status,
+                Json(json!({
+                    "success": r.ok,
+                    "result": r.result,
+                    "error": r.error,
+                })),
+            )
+        }
+        Err(EvalError::NotConnected) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(json!({ "success": false, "error": EvalError::NotConnected.to_string() })),
+        ),
+        Err(e @ EvalError::SendFailed(_)) | Err(e @ EvalError::Disconnected) => (
+            StatusCode::BAD_GATEWAY,
+            Json(json!({ "success": false, "error": e.to_string() })),
+        ),
+        Err(e @ EvalError::Timeout(_)) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({ "success": false, "error": e.to_string() })),
+        ),
+    }
+}
+
 pub fn router<S>(
     cm: SharedConnectionManager,
     wa: SharedWhatsAppGateway,
     secret_store: Option<Arc<SecretStore>>,
+    browser_bridge: Arc<BrowserBridge>,
+    browser_registry: Arc<BrowserRegistry>,
 ) -> Router<S>
 where
     S: Clone + Send + Sync + 'static,
@@ -962,9 +1507,21 @@ where
         cm,
         wa,
         secret_store,
+        browser_bridge,
+        browser_registry,
     };
     Router::new()
         .route("/", get(list_connections))
+        // Browser registry — canonical multi-instance API.
+        // (Must be before /:id to avoid conflict with generic integration routes.)
+        .route("/browsers", get(list_browsers))
+        .route("/browsers/:id/status", get(browser_get_status))
+        .route("/browsers/:id/eval", post(browser_run_eval))
+        // Legacy single-instance browser routes — deployed extensions
+        // (Chrome v0.2.x and v0.3.0) hardcode these. Keep until usage drops.
+        .route("/browser/ws", get(browser_ws))
+        .route("/browser/eval", post(browser_eval))
+        .route("/browser/status", get(browser_status))
         // OAuth callback (must be before /:id to avoid conflict)
         .route("/oauth/callback", get(oauth_callback))
         // Calendar routes (must be before /:id to avoid conflict)
@@ -986,6 +1543,9 @@ where
         .route("/whatsapp/pair", post(whatsapp_pair))
         .route("/whatsapp/status", get(whatsapp_status))
         .route("/whatsapp/disconnect", post(whatsapp_disconnect))
+        // Credential proxy — pipes call this instead of external APIs directly
+        .route("/:id/proxy/*path", axum::routing::any(connection_proxy))
+        .route("/:id/config", get(connection_config))
         // Multi-instance routes (must be before /:id to avoid conflict)
         .route("/:id/instances", get(list_instances))
         .route(
@@ -1001,4 +1561,232 @@ where
         )
         .route("/:id/test", post(test_connection))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use screenpipe_connect::connections::{ProxyAuth, ProxyConfig};
+    use serde_json::json;
+
+    // -- resolve_base_url ---------------------------------------------------
+
+    #[test]
+    fn test_resolve_base_url_static() {
+        let result = resolve_base_url("https://api.notion.com", None, None);
+        assert_eq!(result.unwrap(), "https://api.notion.com");
+    }
+
+    #[test]
+    fn test_resolve_base_url_with_placeholder() {
+        let mut creds = Map::new();
+        creds.insert("domain".into(), json!("mycompany.atlassian.net"));
+        let result = resolve_base_url("https://{domain}/rest/api/3", Some(&creds), None);
+        assert_eq!(
+            result.unwrap(),
+            "https://mycompany.atlassian.net/rest/api/3"
+        );
+    }
+
+    #[test]
+    fn test_resolve_base_url_multiple_placeholders() {
+        let mut creds = Map::new();
+        creds.insert("subdomain".into(), json!("acme"));
+        creds.insert("region".into(), json!("us1"));
+        let result = resolve_base_url("https://{subdomain}.{region}.api.com", Some(&creds), None);
+        assert_eq!(result.unwrap(), "https://acme.us1.api.com");
+    }
+
+    #[test]
+    fn test_resolve_base_url_unresolved_placeholder_fails() {
+        let creds = Map::new(); // empty — no "domain" field
+        let result = resolve_base_url("https://{domain}.zendesk.com/api/v2", Some(&creds), None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("{domain}"));
+    }
+
+    #[test]
+    fn test_resolve_base_url_no_creds_with_placeholder_fails() {
+        let result = resolve_base_url("https://{domain}.example.com", None, None);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_resolve_base_url_from_oauth_extras() {
+        // QuickBooks-style: {realmId} lives in the OAuth token JSON, not in creds.
+        let oauth = json!({
+            "access_token": "xxx",
+            "refresh_token": "yyy",
+            "realmId": "9341451956283849",
+        });
+        let result = resolve_base_url(
+            "https://quickbooks.api.intuit.com/v3/company/{realmId}",
+            None,
+            Some(&oauth),
+        );
+        assert_eq!(
+            result.unwrap(),
+            "https://quickbooks.api.intuit.com/v3/company/9341451956283849"
+        );
+    }
+
+    #[test]
+    fn test_resolve_base_url_creds_win_over_oauth_extras() {
+        // If both sources define the same key, creds wins (applied first).
+        let mut creds = Map::new();
+        creds.insert("region".into(), json!("eu"));
+        let oauth = json!({ "region": "us" });
+        let result = resolve_base_url(
+            "https://api.{region}.example.com",
+            Some(&creds),
+            Some(&oauth),
+        );
+        assert_eq!(result.unwrap(), "https://api.eu.example.com");
+    }
+
+    #[test]
+    fn test_resolve_base_url_rejects_token_fields_from_oauth() {
+        // Tokens must never be allowed to fill a URL placeholder even if a
+        // malicious/misconfigured integration tried to use {access_token}.
+        let oauth = json!({ "access_token": "secret-token-should-not-leak" });
+        let result = resolve_base_url("https://api.example.com/{access_token}", None, Some(&oauth));
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("{access_token}"));
+    }
+
+    // -- resolve_auth -------------------------------------------------------
+
+    #[test]
+    fn test_resolve_auth_bearer_from_creds() {
+        let auth_cfg = ProxyAuth::Bearer {
+            credential_key: "api_key",
+        };
+        let mut creds = Map::new();
+        creds.insert("api_key".into(), json!("sk-test-123"));
+        match resolve_auth(&auth_cfg, Some(&creds), None, None) {
+            ResolvedAuth::Header(name, value) => {
+                assert_eq!(name, "Authorization");
+                assert_eq!(value, "Bearer sk-test-123");
+            }
+            _ => panic!("expected Header auth"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_auth_bearer_oauth_takes_precedence() {
+        let auth_cfg = ProxyAuth::Bearer {
+            credential_key: "api_key",
+        };
+        let mut creds = Map::new();
+        creds.insert("api_key".into(), json!("should-not-use-this"));
+        match resolve_auth(&auth_cfg, Some(&creds), Some("oauth-token-xyz"), None) {
+            ResolvedAuth::Header(name, value) => {
+                assert_eq!(name, "Authorization");
+                assert_eq!(value, "Bearer oauth-token-xyz");
+            }
+            _ => panic!("expected Header auth from OAuth"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_auth_bearer_no_creds_returns_none() {
+        let auth_cfg = ProxyAuth::Bearer {
+            credential_key: "api_key",
+        };
+        assert!(matches!(
+            resolve_auth(&auth_cfg, None, None, None),
+            ResolvedAuth::None
+        ));
+    }
+
+    #[test]
+    fn test_resolve_auth_custom_header() {
+        let auth_cfg = ProxyAuth::Header {
+            name: "X-API-Key",
+            credential_key: "api_key",
+        };
+        let mut creds = Map::new();
+        creds.insert("api_key".into(), json!("my-key"));
+        match resolve_auth(&auth_cfg, Some(&creds), None, None) {
+            ResolvedAuth::Header(name, value) => {
+                assert_eq!(name, "X-API-Key");
+                assert_eq!(value, "my-key");
+            }
+            _ => panic!("expected Header auth"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_auth_basic() {
+        let auth_cfg = ProxyAuth::BasicAuth {
+            username_key: "email",
+            password_key: "api_token",
+        };
+        let mut creds = Map::new();
+        creds.insert("email".into(), json!("user@example.com"));
+        creds.insert("api_token".into(), json!("secret123"));
+        match resolve_auth(&auth_cfg, Some(&creds), None, None) {
+            ResolvedAuth::Basic(user, pass) => {
+                assert_eq!(user, "user@example.com");
+                assert_eq!(pass, "secret123");
+            }
+            _ => panic!("expected Basic auth"),
+        }
+    }
+
+    #[test]
+    fn test_resolve_auth_basic_empty_creds_returns_none() {
+        let auth_cfg = ProxyAuth::BasicAuth {
+            username_key: "email",
+            password_key: "api_token",
+        };
+        let creds = Map::new(); // no email or api_token
+        assert!(matches!(
+            resolve_auth(&auth_cfg, Some(&creds), None, None),
+            ResolvedAuth::None
+        ));
+    }
+
+    #[test]
+    fn test_resolve_auth_none() {
+        let auth_cfg = ProxyAuth::None;
+        assert!(matches!(
+            resolve_auth(&auth_cfg, None, None, None),
+            ResolvedAuth::None
+        ));
+    }
+
+    // -- proxy config validation --------------------------------------------
+
+    #[test]
+    fn test_all_proxy_configs_have_valid_base_urls() {
+        use screenpipe_connect::connections::all_integrations;
+        for integration in all_integrations() {
+            if let Some(cfg) = integration.proxy_config() {
+                let def = integration.def();
+                // Static URLs should be valid
+                if !cfg.base_url.contains('{') {
+                    assert!(
+                        cfg.base_url.starts_with("https://"),
+                        "integration '{}' has non-HTTPS base_url: {}",
+                        def.id,
+                        cfg.base_url
+                    );
+                }
+                // Dynamic URLs should have at least one placeholder
+                if cfg.base_url.contains('{') {
+                    assert!(
+                        cfg.base_url.contains('}'),
+                        "integration '{}' has unclosed placeholder in base_url: {}",
+                        def.id,
+                        cfg.base_url
+                    );
+                }
+            }
+        }
+    }
 }

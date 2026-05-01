@@ -22,6 +22,7 @@ import { Card } from "../ui/card";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
+import { localFetch } from "@/lib/api";
 import { listen } from "@tauri-apps/api/event";
 import { PricingToggle } from "./pricing-toggle";
 import { ReferralCard } from "./referral-card";
@@ -190,7 +191,7 @@ export function AccountSection() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => openUrl("https://screenpi.pe/user-dashboard")}
+                onClick={() => openUrl("https://screenpi.pe/account")}
               >
                 <UserCog className="w-4 h-4 mr-1.5" />
                 manage
@@ -298,8 +299,8 @@ export function AccountSection() {
                     onClick={async () => {
                       setPipeSyncing(true);
                       try {
-                        await fetch("http://localhost:3030/sync/pipes/pull", { method: "POST" });
-                        await fetch("http://localhost:3030/sync/pipes/push", { method: "POST" });
+                        await localFetch("/sync/pipes/pull", { method: "POST" });
+                        await localFetch("/sync/pipes/push", { method: "POST" });
                         toast({ title: "tasks synced" });
                       } catch (e: any) {
                         toast({ title: "sync failed", description: e.message, variant: "destructive" });

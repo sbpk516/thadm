@@ -27,10 +27,12 @@ import {
   Pencil,
   ChevronDown,
   ChevronUp,
+  AlertCircle,
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { MemoizedReactMarkdown } from "@/components/markdown";
 import remarkGfm from "remark-gfm";
+import { localFetch } from "@/lib/api";
 
 interface MemoryRecord {
   id: number;
@@ -161,7 +163,7 @@ export function MemoriesSection() {
     try {
       await Promise.all(
         Array.from(selectedIds).map((id) =>
-          fetch(`http://localhost:3030/memories/${id}`, { method: "DELETE" })
+          localFetch(`/memories/${id}`, { method: "DELETE" })
         )
       );
       setMemories((prev) => prev.filter((m) => !selectedIds.has(m.id)));
@@ -195,7 +197,7 @@ export function MemoriesSection() {
 
   // fetch all tags once on mount
   useEffect(() => {
-    fetch("http://localhost:3030/memories/tags")
+    localFetch("/memories/tags")
       .then((r) => (r.ok ? r.json() : []))
       .then((tags: string[]) => {
         const filtered = tags.filter(
@@ -227,8 +229,8 @@ export function MemoriesSection() {
         });
         if (debouncedQuery) params.set("q", debouncedQuery);
         if (activeTag) params.set("tags", activeTag);
-        const res = await fetch(
-          `http://localhost:3030/memories?${params}`,
+        const res = await localFetch(
+          `/memories?${params}`,
           { signal: controller.signal },
         );
         clearTimeout(timeout);
@@ -266,6 +268,28 @@ export function MemoriesSection() {
     fetchPage(0, false);
   }, [sortField, sortDir]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Separate state for the newest memory timestamp — used only for the stale warning.
+  // Kept outside fetchPage so the background poll can update it without resetting the list.
+  const [newestCreatedAt, setNewestCreatedAt] = useState<string | null>(null);
+  const [bgTotal, setBgTotal] = useState<number | null>(null);
+
+  // Silent background check every 30s — fetches only 1 record to detect new memories.
+  // Updates the stale-warning state without touching the displayed list or showing a spinner.
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const res = await localFetch("/memories?limit=1&order_by=created_at&order_dir=desc");
+        if (!res.ok) return;
+        const data: MemoryListResponse = await res.json();
+        setBgTotal(data.pagination.total);
+        if (data.data[0]) setNewestCreatedAt(data.data[0].created_at);
+      } catch {}
+    };
+    check();
+    const id = setInterval(check, 30_000);
+    return () => clearInterval(id);
+  }, []);
+
   // infinite scroll via IntersectionObserver
   useEffect(() => {
     const sentinel = sentinelRef.current;
@@ -291,7 +315,7 @@ export function MemoriesSection() {
     setDeletingId(id);
     setConfirmDeleteId(null);
     try {
-      const res = await fetch(`http://localhost:3030/memories/${id}`, {
+      const res = await localFetch(`/memories/${id}`, {
         method: "DELETE",
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -335,7 +359,7 @@ export function MemoriesSection() {
       const body: Record<string, unknown> = {};
       if (contentChanged) body.content = trimmed;
       if (tagsChanged) body.tags = editTags;
-      const res = await fetch(`http://localhost:3030/memories/${id}`, {
+      const res = await localFetch(`/memories/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
@@ -390,7 +414,7 @@ export function MemoriesSection() {
     if (!trimmed) return;
     setSavingNew(true);
     try {
-      const res = await fetch("http://localhost:3030/memories", {
+      const res = await localFetch("/memories", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -418,11 +442,37 @@ export function MemoriesSection() {
     }
   };
 
+  // Stale warning: use the background-polled newest timestamp so it auto-clears
+  // without disrupting the displayed list.
+  const staleDays =
+    newestCreatedAt && (bgTotal ?? total) > 0
+      ? Math.floor((Date.now() - new Date(newestCreatedAt).getTime()) / 86400000)
+      : 0;
+  const isStale = staleDays >= 1;
+
   return (
     <div className="space-y-4 h-full flex flex-col">
       <p className="text-muted-foreground text-sm mb-4">
         facts and preferences the AI has learned from your activity
       </p>
+
+      {/* stale memories warning */}
+      {isStale && (
+        <div className="flex items-start gap-2 rounded-md border border-border bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
+          <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+          <span>
+            memories haven&apos;t updated in {staleDays} day{staleDays !== 1 ? "s" : ""}.
+            check that a memory-writing pipe is installed and enabled —{" "}
+            <a
+              href="?section=pipes&tab=discover&q=memory"
+              className="underline hover:opacity-80 transition-opacity"
+            >
+              browse memory pipes
+            </a>
+            .
+          </span>
+        </div>
+      )}
 
       {/* search bar + add button */}
       <div className="flex items-center gap-2">

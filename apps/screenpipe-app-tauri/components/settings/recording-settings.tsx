@@ -86,6 +86,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import { ToastAction } from "@/components/ui/toast";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Progress } from "@/components/ui/progress";
 import { Card, CardContent } from "@/components/ui/card";
@@ -96,7 +97,7 @@ import * as Sentry from "@sentry/react";
 import { defaultOptions } from "tauri-plugin-sentry-api";
 import { useLoginDialog } from "../login-dialog";
 import { BatterySaverSection } from "./battery-saver-section";
-import { ScheduleSettings } from "./schedule-settings";
+// ScheduleSettings moved to privacy-section
 import { ValidatedInput } from "../ui/validated-input";
 import {
   validateField,
@@ -290,7 +291,7 @@ function TranscriptionDictionary({
           <Languages className="h-4 w-4 text-muted-foreground shrink-0" />
           <div className="flex-1 min-w-0">
             <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-              custom vocabulary
+              Custom Vocabulary
               <HelpTooltip text="Add custom words (names, brands, jargon) to improve transcription accuracy. You can also add replacements to auto-correct common mistranscriptions." />
               {vocabularyWords.length > 0 && (
                 <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
@@ -500,6 +501,18 @@ export function RecordingSettings() {
   const [availableAudioDevices, setAvailableAudioDevices] = useState<
     AudioDeviceInfo[]
   >([]);
+
+  // Gate for the experimental CoreAudio Process Tap toggle — we only show
+  // the switch on macOS 14.4+ where the API exists. Probed once via a
+  // Tauri command that proxies to
+  // `screenpipe_audio::core::process_tap::is_process_tap_available()`.
+  const [coreaudioTapAvailable, setCoreaudioTapAvailable] = useState<boolean | null>(null);
+  useEffect(() => {
+    invoke<boolean>("check_coreaudio_process_tap_available")
+      .then(setCoreaudioTapAvailable)
+      .catch(() => setCoreaudioTapAvailable(false));
+  }, []);
+
   const { toast } = useToast();
   const [isUpdating, setIsUpdating] = useState(false);
   const { health } = useHealthCheck();
@@ -823,14 +836,14 @@ export function RecordingSettings() {
         }
       }
 
-      await commands.stopScreenpipe();
+      await commands.stopCapture();
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await commands.startCapture();
       await new Promise((resolve) => setTimeout(resolve, 1000));
-      await commands.spawnScreenpipe(null);
-      await new Promise((resolve) => setTimeout(resolve, 2000));
 
       toast({
         title: "Settings updated successfully",
-        description: "Thadm has been restarted with new settings",
+        description: "Recording restarted with new settings",
       });
     } catch (error) {
       console.error("Failed to update settings:", error);
@@ -1095,15 +1108,6 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         </CardContent>
       </Card>
 
-      {/* Recording Schedule */}
-      <ScheduleSettings
-        enabled={settings.scheduleEnabled ?? false}
-        rules={(settings.scheduleRules as any[]) ?? []}
-        onChange={(enabled, rules) => {
-          handleSettingsChange({ scheduleEnabled: enabled, scheduleRules: rules } as any);
-        }}
-      />
-
       {/* Audio */}
       <LockedSetting settingKey="audio_recording">
       <div className="space-y-2 pt-2">
@@ -1116,7 +1120,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
               <div className="flex items-center space-x-2.5">
                 <Mic className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Audio recording</h3>
+                  <h3 className="text-sm font-medium text-foreground">Audio Recording</h3>
                   <p className="text-xs text-muted-foreground">Capture audio from microphone and system</p>
                 </div>
               </div>
@@ -1492,7 +1496,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   <Zap className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Batch transcription
+                      Batch Transcription
                       <HelpTooltip text="Accumulates longer audio chunks (30s-5min) using silence-gap detection before sending to Whisper. Gives the model more context for better transcription quality and speaker diarization." />
                     </h3>
                     <p className="text-xs text-muted-foreground">Longer audio chunks for better transcription quality</p>
@@ -1549,7 +1553,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   <Music className="h-4 w-4 text-muted-foreground shrink-0" />
                   <div>
                     <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
-                      Filter music
+                      Filter Music
                       <HelpTooltip text="Detect and filter out music-dominant audio (e.g. Spotify, YouTube) before transcription using spectral analysis. Reduces garbage transcriptions from background music." />
                     </h3>
                     <p className="text-xs text-muted-foreground">Remove background music from transcriptions</p>
@@ -1575,8 +1579,8 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
               <div className="flex items-center space-x-2.5">
                 <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
                 <div>
-                  <h3 className="text-sm font-medium text-foreground">Follow system default</h3>
-                  <p className="text-xs text-muted-foreground">Auto-switch when you change default device</p>
+                  <h3 className="text-sm font-medium text-foreground">Auto-select audio devices</h3>
+                  <p className="text-xs text-muted-foreground">Records all default devices. Turn off to exclude bluetooth headphones or pick specific devices.</p>
                 </div>
               </div>
               <Switch
@@ -1755,6 +1759,32 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
         />
         )}
 
+        {/* CoreAudio System Audio (macOS 14.4+ only; default on) */}
+        {!settings.disableAudio && coreaudioTapAvailable && (
+        <Card className="border-border bg-card">
+          <CardContent className="px-3 py-2.5">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center space-x-2.5">
+                <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">
+                    CoreAudio system audio capture
+                  </h3>
+                  <p className="text-xs text-muted-foreground">
+                    Captures system audio via the CoreAudio Process Tap API (macOS 14.4+). Survives SCK display-enumeration failures after sleep/wake. <strong>Off by default</strong> — the Process Tap can't see audio from voice-processing apps (Zoom / Google Meet / Microsoft Teams), so turning it on will silently drop all meeting audio. Leave off unless you specifically need the sleep/wake resilience. Falls back to ScreenCaptureKit automatically if unavailable. Restart recording after changing.
+                  </p>
+                </div>
+              </div>
+              <Switch
+                id="experimentalCoreaudioSystemAudio"
+                checked={Boolean(settings.experimentalCoreaudioSystemAudio ?? false)}
+                onCheckedChange={(checked) => handleSettingsChange({ experimentalCoreaudioSystemAudio: checked }, true)}
+              />
+            </div>
+          </CardContent>
+        </Card>
+        )}
+
       </div>
       </LockedSetting>
 
@@ -1792,6 +1822,39 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                   </div>
                 </div>
                 <Switch id="useAllMonitors" checked={settings.useAllMonitors} onCheckedChange={(checked) => handleSettingsChange({ useAllMonitors: checked }, true)} />
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Recording quality — single knob for crispness + disk cost */}
+        {!settings.disableVision && (
+          <Card className="border-border bg-card">
+            <CardContent className="px-3 py-2.5">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center space-x-2.5 min-w-0">
+                  <Monitor className="h-4 w-4 text-muted-foreground shrink-0" />
+                  <div className="min-w-0">
+                    <h3 className="text-sm font-medium text-foreground">Recording quality</h3>
+                    <p className="text-xs text-muted-foreground">
+                      Pick "high" or "max" if your text looks blurry on a 4K / ultrawide. Higher = crisper + larger files.
+                    </p>
+                  </div>
+                </div>
+                <Select
+                  value={settings.videoQuality || "balanced"}
+                  onValueChange={(value) => handleSettingsChange({ videoQuality: value }, true)}
+                >
+                  <SelectTrigger className="w-[180px] h-8 text-xs">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="low">low — 1280px, smallest</SelectItem>
+                    <SelectItem value="balanced">balanced — 1920px (default)</SelectItem>
+                    <SelectItem value="high">high — 3840px, ultrawide-safe</SelectItem>
+                    <SelectItem value="max">max — native, no downscale</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </CardContent>
           </Card>
