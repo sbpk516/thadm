@@ -328,6 +328,13 @@ const DEFAULT_CLOUD_PRESET: AIPreset = {
 	prompt: "",
 };
 
+// THADM: thadm shim for upstream's makeDefaultPresets(isPro). Upstream returns
+// screenpipe-cloud presets gated on the user's pro tier; thadm is local-first
+// and ignores the flag, always seeding the native-ollama preset.
+export function makeDefaultPresets(_isPro: boolean): AIPreset[] {
+	return [DEFAULT_CLOUD_PRESET];
+}
+
 // Legacy presets removed — cloud preset is the only default now
 let DEFAULT_SETTINGS: Settings = {
 			aiPresets: makeDefaultPresets(false) as any,
@@ -529,7 +536,12 @@ function createSettingsStore() {
 			const presets = settings.aiPresets ?? [];
 			const isAnonymousPlaceholder =
 				presets.length === 1 &&
-				(presets[0] as any)?.id === SCREENPIPE_PRESET_ID &&
+				// THADM: upstream's SCREENPIPE_PRESET_ID constant doesn't exist
+				// in the thadm tree; this branch is gated by
+				// `settings.user?.token` (always null in thadm, no cloud login)
+				// so the body never runs. Use the literal default id so the
+				// file type-checks cleanly.
+				(presets[0] as any)?.id === "default" &&
 				(presets[0] as any)?.provider === "screenpipe-cloud";
 			if (isPro && isAnonymousPlaceholder) {
 				settings.aiPresets = makeDefaultPresets(true) as any;
