@@ -1000,6 +1000,58 @@ jobs:
             fi
           done
 
+      - name: Staple .app and rebuild updater tarball (macOS)
+        if: matrix.os_type == 'macos'
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_KEY_PASSWORD }}
+        run: |
+          # Tauri's auto-updater ships the .app inside .app.tar.gz. The DMG
+          # notarize/staple above only attaches the ticket to the DMG file —
+          # not to the .app bundle. The .tar.gz produced by `tauri build`
+          # therefore contains an UNstapled .app, so on first launch after
+          # an auto-update Gatekeeper falls back to an online notarization
+          # check and intermittently shows "app is damaged" until the
+          # network check resolves.
+          #
+          # Fix: staple the .app directly (the DMG submission above also
+          # notarized the .app's signature on Apple's servers), then
+          # rebuild and re-sign the updater tarball.
+          TARGET="${{ matrix.target }}"
+          BUNDLE_DIR="apps/screenpipe-app-tauri/src-tauri/target/${TARGET}/release/bundle"
+          APP_DIR="${BUNDLE_DIR}/macos"
+
+          APP_PATH=$(find "${APP_DIR}" -maxdepth 1 -name "*.app" -type d 2>/dev/null | head -1)
+          if [ -z "$APP_PATH" ]; then
+            echo "⚠️  No .app bundle in ${APP_DIR} — skipping (no updater tarball to rebuild)"
+            exit 0
+          fi
+          APP_NAME=$(basename "$APP_PATH")
+
+          echo "=== Stapling ${APP_NAME} ==="
+          xcrun stapler staple "$APP_PATH"
+          xcrun stapler validate "$APP_PATH"
+          echo "✅ ${APP_NAME} stapled"
+
+          TARBALL=$(find "${APP_DIR}" -maxdepth 1 -name "*.app.tar.gz" 2>/dev/null | head -1)
+          if [ -z "$TARBALL" ]; then
+            echo "⚠️  No .app.tar.gz in ${APP_DIR} — skipping rebuild (auto-update updater not produced for this target)"
+            exit 0
+          fi
+          TARBALL_NAME=$(basename "$TARBALL")
+
+          echo "=== Rebuilding ${TARBALL_NAME} from stapled .app ==="
+          ( cd "${APP_DIR}" && rm -f "${TARBALL_NAME}" "${TARBALL_NAME}.sig" && tar -czf "${TARBALL_NAME}" "${APP_NAME}" )
+
+          echo "=== Re-signing ${TARBALL_NAME} with Tauri signer ==="
+          ( cd apps/screenpipe-app-tauri && bunx tauri signer sign "../../${TARBALL}" )
+
+          if [ ! -f "${TARBALL}.sig" ]; then
+            echo "❌ Expected ${TARBALL}.sig was not produced"
+            exit 1
+          fi
+          echo "✅ Updater tarball rebuilt with stapled .app and re-signed"
+
       - name: Upload to GitHub Release (macOS)
         if: matrix.os_type == 'macos'
         env:
