@@ -93,7 +93,9 @@ extern "C" fn native_notif_action_callback(json_ptr: *const std::os::raw::c_char
     // URL-opening actions. Two distinct semantics, explicit types so senders
     // can't conflate them:
     //   "link"      → external URL, opened in the user's default browser
-    //   "deeplink"  → screenpipe:// in-app route, dispatched to DeeplinkHandler
+    //   "deeplink"  → thadm:// in-app route, dispatched to DeeplinkHandler
+    //                 (screenpipe:// also accepted for back-compat with
+    //                 notifications generated before the rebrand)
     //
     // Both are handled in Rust rather than via JS emit so clicks work even
     // when the overlay window (which hosts the JS listener in
@@ -112,10 +114,10 @@ extern "C" fn native_notif_action_callback(json_ptr: *const std::os::raw::c_char
             return;
         };
 
-        // Guard against senders putting a browser URL into "deeplink" or a
-        // screenpipe:// URL into "link". We route on actual scheme, not on
-        // the declared type, so a typo doesn't break the click.
-        let is_in_app = url.starts_with("screenpipe://");
+        // Guard against senders putting a browser URL into "deeplink" or an
+        // in-app URL into "link". We route on actual scheme, not on the
+        // declared type, so a typo doesn't break the click.
+        let is_in_app = url.starts_with("thadm://") || url.starts_with("screenpipe://");
         let app_clone = app.clone();
         std::thread::spawn(move || {
             if is_in_app {
