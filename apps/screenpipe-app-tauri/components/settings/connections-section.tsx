@@ -20,7 +20,6 @@ import { openUrl } from "@tauri-apps/plugin-opener";
 import { message } from "@tauri-apps/plugin-dialog";
 import { localFetch } from "@/lib/api";
 import { writeFile, readTextFile, mkdir } from "@tauri-apps/plugin-fs";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
 import { platform } from "@tauri-apps/plugin-os";
 import { join, homeDir, tempDir, dirname } from "@tauri-apps/api/path";
 import { AppleIntelligenceCard } from "./apple-intelligence-card";
@@ -39,32 +38,6 @@ import posthog from "posthog-js";
 // ---------------------------------------------------------------------------
 // Utility functions (unchanged)
 // ---------------------------------------------------------------------------
-
-const GITHUB_RELEASES_API = "https://api.github.com/repos/screenpipe/screenpipe/releases";
-
-interface GitHubAsset { name: string; browser_download_url: string; }
-interface GitHubRelease { tag_name: string; assets: GitHubAsset[]; }
-interface McpVersionInfo { available: string | null; installed: string | null; }
-
-async function getLatestMcpRelease(): Promise<{ url: string; version: string }> {
-  const maxPages = 5;
-  for (let page = 1; page <= maxPages; page++) {
-    const response = await tauriFetch(
-      `${GITHUB_RELEASES_API}?per_page=50&page=${page}`,
-      { method: "GET", headers: { "Accept": "application/vnd.github.v3+json" } }
-    );
-    if (!response.ok) throw new Error("Failed to fetch releases");
-    const releases: GitHubRelease[] = await response.json();
-    if (releases.length === 0) break;
-    const mcpRelease = releases.find(r => r.tag_name.startsWith("mcp-v"));
-    if (mcpRelease) {
-      const mcpbAsset = mcpRelease.assets.find(a => a.name.endsWith(".mcpb"));
-      if (!mcpbAsset) throw new Error("No .mcpb file found in release");
-      return { url: mcpbAsset.browser_download_url, version: mcpRelease.tag_name.replace("mcp-v", "") };
-    }
-  }
-  throw new Error("No MCP release found");
-}
 
 async function findClaudeExeOnWindows(): Promise<string | null> {
   try {
