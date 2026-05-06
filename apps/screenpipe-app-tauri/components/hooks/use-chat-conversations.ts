@@ -96,9 +96,19 @@ export function useChatConversations(opts: UseChatConversationsOpts) {
     settings,
   } = opts;
 
-  const [showHistory, setShowHistoryRaw] = useState(() => {
-    try { return localStorage.getItem("thadm:chat-history-open") === "true"; } catch { return false; }
-  });
+  // SSR-safe init: localStorage is undefined during server render, so reading
+  // it inside useState's initializer would always return false on the server
+  // and (often) true on the client → hydration mismatch that tears down the
+  // entire chat tree, briefly leaving the panel blank. Always start `false`
+  // and restore the persisted value after mount.
+  const [showHistory, setShowHistoryRaw] = useState(false);
+  useEffect(() => {
+    try {
+      if (localStorage.getItem("thadm:chat-history-open") === "true") {
+        setShowHistoryRaw(true);
+      }
+    } catch {}
+  }, []);
   const setShowHistory = useCallback((v: boolean | ((prev: boolean) => boolean)) => {
     setShowHistoryRaw((prev) => {
       const next = typeof v === "function" ? v(prev) : v;

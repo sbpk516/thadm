@@ -66,8 +66,11 @@ export default function RootLayout({
       // When the native window regains focus, ensure the webview body is focused
       // so keyboard events work. Small delay to let Tauri finish its focus cycle.
       setTimeout(() => {
-        if (document.activeElement === document.body || !document.activeElement) {
-          document.body.focus();
+        // document.body can be transiently null during hydration tear-down or
+        // page reload — guard before touching it.
+        const body = document.body;
+        if (body && (document.activeElement === body || !document.activeElement)) {
+          body.focus();
         }
         callNativeFocusRecovery();
       }, 50);
@@ -79,9 +82,10 @@ export default function RootLayout({
     const handlePointerRecovery = () => {
       // If there are any fixed z-50 overlays that shouldn't be there,
       // force focus back to body to recover keyboard input
-      if (document.activeElement === document.body || !document.activeElement) {
-        document.body.tabIndex = -1;
-        document.body.focus();
+      const body = document.body;
+      if (body && (document.activeElement === body || !document.activeElement)) {
+        body.tabIndex = -1;
+        body.focus();
       }
     };
     // Re-check focus on any click — if click reaches window, focus should work
