@@ -1,12 +1,17 @@
 {
   "name": "thadm-mcp",
-  "version": "0.15.0",
+  "version": "0.15.1",
   "description": "MCP server for thadm - search your screen recordings and audio transcriptions",
   "main": "dist/index.js",
   "bin": {
     "thadm-mcp": "dist/index.js",
     "thadm-mcp-http": "dist/http-server.js"
   },
+  "files": [
+    "dist",
+    "manifest.json",
+    "README.md"
+  ],
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
