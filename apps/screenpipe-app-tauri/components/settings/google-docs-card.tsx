@@ -9,7 +9,6 @@ import { Button } from "@/components/ui/button";
 import { Loader2, RefreshCw, LogOut, ExternalLink, FileText, Lock } from "lucide-react";
 import { commands } from "@/lib/utils/tauri";
 import { openUrl } from "@tauri-apps/plugin-opener";
-import { useSettings } from "@/lib/hooks/use-settings";
 import posthog from "posthog-js";
 import { localFetch } from "@/lib/api";
 
@@ -21,8 +20,8 @@ interface DriveFile {
 }
 
 export function GoogleDocsCard() {
-  const { settings } = useSettings();
-  const isPro = !!settings.user?.cloud_subscribed;
+  // THADM: disabled pro gating — Google Docs OAuth is local-first and free
+  const isPro = true;
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);

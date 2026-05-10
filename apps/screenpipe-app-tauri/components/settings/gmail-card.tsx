@@ -8,7 +8,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Loader2, Lock, LogOut, Mail, Plus } from "lucide-react";
 import { commands } from "@/lib/utils/tauri";
-import { useSettings } from "@/lib/hooks/use-settings";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import posthog from "posthog-js";
 
@@ -18,8 +17,8 @@ interface GmailAccount {
 }
 
 export function GmailCard() {
-  const { settings } = useSettings();
-  const isPro = !!settings.user?.cloud_subscribed;
+  // THADM: disabled pro gating — Gmail OAuth is local-first and free
+  const isPro = true;
   const [accounts, setAccounts] = useState<GmailAccount[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
