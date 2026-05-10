@@ -97,7 +97,11 @@ export function useSqlAutocomplete(type: "app" | "window" | "url") {
         cache[type] = { data: result, timestamp: Date.now() };
       }
     } catch (error) {
-      console.error("failed to fetch items:", error);
+      // Non-fatal: SQL autocomplete races with auth init on first mount, then
+      // recovers on next render. Log as warning so Next.js dev mode doesn't
+      // surface it as a red unhandled-error overlay.
+      const msg = (error as Error)?.message ?? String(error);
+      console.warn("sql autocomplete fetch failed (will retry):", msg);
     } finally {
       setIsLoading(false);
     }

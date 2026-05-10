@@ -47,6 +47,7 @@ mod commands;
 mod disk_usage;
 mod embedded_server;
 mod enterprise_policy;
+mod enterprise_sync;
 mod hardware;
 mod ics_calendar;
 mod livetext;
@@ -54,6 +55,11 @@ mod livetext;
 mod livetext_ffi;
 mod oauth;
 mod owned_browser;
+// Cross-platform shape: macOS reads Arc/Chrome/Brave/Edge cookies and
+// injects via WKHTTPCookieStore; other platforms compile to a stub
+// `cookies_for_host` that returns empty until Windows (DPAPI + AES-256-
+// GCM + WebView2) and Linux (libsecret + webkit2gtk) readers land.
+mod owned_browser_cookies;
 mod permission_events;
 mod permissions;
 mod pi;
@@ -446,13 +452,11 @@ async fn main() {
     let telemetry_disabled = store_bool("analyticsEnabled")
         .map(|enabled| !enabled)
         .unwrap_or(false);
-    let offline_mode = store_bool("offlineMode").unwrap_or(false);
-    // PostHog is disabled by either telemetry toggle or offline mode
-    // Sentry stays enabled in offline mode (crash reports still sent)
-    let _posthog_disabled = telemetry_disabled || offline_mode;
+    let _posthog_disabled = telemetry_disabled;
 
     let app_version = env!("CARGO_PKG_VERSION");
     // THADM: disabled sentry — privacy invariant, no crash data leaves the machine
+    let _ = app_version; // sentry disabled — suppress unused warning
     let sentry_guard: Option<sentry::ClientInitGuard> = None;
 
     // Install a panic hook that logs to stderr + Sentry BEFORE the default hook runs.
@@ -460,12 +464,16 @@ async fn main() {
     // hit `panic_cannot_unwind` → `abort()`, and the default hook's output may be lost.
     // By logging here we capture the actual panic message for diagnosis.
     //
-    // Truncate the crash log at startup so it only contains panics from THIS launch.
-    // The hook appends (not truncates) so that both the original panic and the
-    // subsequent panic_cannot_unwind are preserved in the same file.
+    // Rotate the crash log on startup (don't truncate). Relaunch after a crash
+    // is the common case — truncating loses the message we most need to diagnose.
+    // Previous panic moves to last-panic.log.prev; new file starts empty.
     {
         let log_dir = screenpipe_core::paths::default_screenpipe_data_dir();
-        let _ = std::fs::File::create(log_dir.join("last-panic.log")); // truncate
+        let cur = log_dir.join("last-panic.log");
+        let prev = log_dir.join("last-panic.log.prev");
+        if cur.exists() {
+            let _ = std::fs::rename(&cur, &prev);
+        }
     }
     let default_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
@@ -866,6 +874,7 @@ async fn main() {
             commands::is_enterprise_build_cmd,
             commands::get_local_api_config,
             commands::regenerate_api_auth_key,
+            commands::set_api_auth_key,
             commands::get_enterprise_license_key,
             enterprise_policy::set_enterprise_policy,
             commands::save_enterprise_license_key,
@@ -1178,24 +1187,18 @@ async fn main() {
                 env::set_var("TESSDATA_PREFIX", tessdata_path);
             }
 
-            // Ensure mlx.metallib is discoverable by MLX (parakeet-mlx).
-            // Tauri bundles it in Contents/Resources/ but MLX looks next to the binary
-            // (Contents/MacOS/). Create a symlink so both paths work.
-            #[cfg(target_os = "macos")]
-            {
-                if let Ok(exe) = std::env::current_exe() {
-                    let macos_dir = exe.parent().unwrap_or(std::path::Path::new("."));
-                    let target = macos_dir.join("mlx.metallib");
-                    if !target.exists() {
-                        // Try Contents/Resources/mlx.metallib (Tauri resource)
-                        let resource = macos_dir.parent()
-                            .map(|contents| contents.join("Resources/mlx.metallib"));
-                        if let Some(src) = resource.filter(|p| p.exists()) {
-                            let _ = std::os::unix::fs::symlink(&src, &target);
-                        }
-                    }
-                }
-            }
+            // mlx.metallib is now placed at Contents/MacOS/mlx.metallib at
+            // build time (see "Inject mlx.metallib into Contents/MacOS/" step
+            // in .github/workflows/release-app.yml), then signed as part of
+            // the normal codesign pass.
+            //
+            // Previously this block created a symlink at Contents/MacOS/mlx.metallib
+            // pointing at Contents/Resources/mlx.metallib on first launch. Apple
+            // seals every entry inside Contents/ at signing time — adding even a
+            // symlink at runtime invalidates the cdhash, which on macOS 26.4+
+            // triggers the "screenpipe is damaged" Gatekeeper popup and can
+            // leave the app running while the embedded server (port 3030) is
+            // killed by the system. See incident: feedback-bot 2026-05-07.
 
             // Autostart setup
             let autostart_manager = app.autolaunch();
@@ -1214,10 +1217,22 @@ async fn main() {
             // Note: StoreBuilder handles file creation internally — pre-creating
             // store.bin here caused TOCTOU race conditions ("File exists" os error 17).
             // Use unwrap_or_default to prevent crashes from corrupted stores
-            let store = store::init_store(&app.handle()).unwrap_or_else(|e| {
+            let mut store = store::init_store(&app.handle()).unwrap_or_else(|e| {
                 error!("Failed to init settings store, using defaults: {}", e);
                 store::SettingsStore::default()
             });
+
+            // E2E seed: when SCREENPIPE_E2E_SEED contains "no-recording", flip
+            // disable_vision + disable_audio so the e2e harness can drive the
+            // app without granting Screen Recording / Microphone TCC. The
+            // server (DB + HTTP) still boots; only SCK + audio capture skip.
+            // See get_e2e_seed_flags above for parsing.
+            if get_e2e_seed_flags().iter().any(|f| f == "no-recording") {
+                store.recording.disable_audio = true;
+                store.recording.disable_vision = true;
+                info!("E2E seed: recording disabled (vision + audio)");
+            }
+
             app.manage(store.clone());
 
             // Set Chinese HuggingFace mirror early — before any model downloads
@@ -1259,8 +1274,6 @@ async fn main() {
                         map.insert("languages".into(), serde_json::json!(store.recording.languages));
                         map.insert("use_pii_removal".into(), serde_json::json!(store.recording.use_pii_removal));
                         map.insert("disable_vision".into(), serde_json::json!(store.recording.disable_vision));
-                        map.insert("enable_input_capture".into(), serde_json::json!(true));
-                        map.insert("enable_accessibility".into(), serde_json::json!(true));
                         map.insert("auto_start_enabled".into(), serde_json::json!(store.auto_start_enabled));
                         map.insert("platform".into(), serde_json::json!(store.platform));
                         map.insert("embedded_llm_enabled".into(), serde_json::json!(store.embedded_llm.enabled));
@@ -1575,8 +1588,15 @@ async fn main() {
                             // Permissions check
                             let permissions_check = permissions::do_permissions_check(false);
                             let disable_audio = store_clone.recording.disable_audio;
+                            let disable_vision = store_clone.recording.disable_vision;
 
-                            if !permissions_check.screen_recording.permitted() {
+                            // Only block server start on missing screen-recording
+                            // perms when vision is actually requested. With
+                            // `disable_vision = true` (set by E2E seed
+                            // `no-recording`, or by user choice in the future)
+                            // the SCK code path is never exercised, so we can
+                            // boot the server + HTTP API + DB without TCC.
+                            if !disable_vision && !permissions_check.screen_recording.permitted() {
                                 warn!("Screen recording permission not granted: {:?}. Server will not start.", permissions_check.screen_recording);
                                 is_starting_clone.store(false, std::sync::atomic::Ordering::SeqCst);
                                 return;
@@ -1682,9 +1702,7 @@ async fn main() {
                 });
             }
 
-            // Check analytics settings from store
-            // Offline mode disables PostHog analytics but keeps Sentry
-            let is_analytics_enabled = store.recording.analytics_enabled && !offline_mode;
+            let is_analytics_enabled = store.recording.analytics_enabled;
 
             let is_autostart_enabled = store
                 .auto_start_enabled;
@@ -1831,6 +1849,11 @@ async fn main() {
                 tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
                 ics_calendar::start_ics_calendar_poller(ics_app_handle).await;
             });
+
+            // Enterprise telemetry sync (no-op stub on consumer builds).
+            // Runs forever in background; only takes effect on enterprise-
+            // telemetry builds with SCREENPIPE_ENTERPRISE_LICENSE_KEY env set.
+            let _enterprise_shutdown_tx = enterprise_sync::spawn(&app_handle);
 
             // Auto-start cloud sync if it was enabled
             let app_handle_clone = app_handle.clone();

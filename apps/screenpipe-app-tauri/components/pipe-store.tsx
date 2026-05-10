@@ -68,6 +68,7 @@ import {
   IntegrationIcon,
   IntegrationInfo,
 } from "@/components/settings/connections-section";
+import { useHardcodedTiles } from "@/lib/hooks/use-hardcoded-tiles";
 import {
   Tooltip,
   TooltipContent,
@@ -240,29 +241,47 @@ function normalizePipe(raw: any): any {
 
 function ConnectionsStrip() {
   const [integrations, setIntegrations] = useState<IntegrationInfo[]>([]);
+  const hardcodedTiles = useHardcodedTiles();
 
   useEffect(() => {
-    const cached = apiCache.get<IntegrationInfo[]>("connections/strip");
+    const cacheKey = "connections/list";
+    const cached = apiCache.get<IntegrationInfo[]>(cacheKey);
     if (cached) {
-      setIntegrations(cached);
+      setIntegrations(cached.filter((i) => i.id !== "owned-default"));
       return;
     }
     localFetch("/connections")
       .then((r) => r.json())
       .then((data) => {
         const list: IntegrationInfo[] = data.data || [];
-        // only show integrations that have fields (API keys) or OAuth — skip empty ones
-        const relevant = list.filter((i) => i.fields.length > 0 || i.is_oauth);
-        apiCache.set("connections/strip", relevant, 30_000);
-        setIntegrations(relevant);
+        apiCache.set(cacheKey, list, 30_000);
+        setIntegrations(list.filter((i) => i.id !== "owned-default"));
       })
       .catch(() => {});
   }, []);
 
-  if (integrations.length === 0) return null;
+  // Merge: for tiles in both backend and hardcoded, use backend's connected state
+  // but hardcoded's name/icon (which are OS-specific, e.g. windows-calendar vs apple-calendar).
+  // For tiles only in hardcoded (cursor, claude, etc.), append them directly.
+  const hardcodedMap = new Map(hardcodedTiles.map((h) => [h.id, h]));
+  const mergedBackend: IntegrationInfo[] = integrations.map((i) => {
+    const h = hardcodedMap.get(i.id);
+    if (!h) return i;
+    // Use OS-correct name/icon from hardcoded; AND the connected states so an
+    // explicit user disconnect (e.g. calendarUserDisconnected in store) overrides
+    // the backend's "OS calendar is accessible" true.
+    return { ...i, name: h.name, icon: h.icon, connected: i.connected && h.connected };
+  });
+  const backendIds = new Set(integrations.map((i) => i.id));
+  const extraTiles: IntegrationInfo[] = hardcodedTiles
+    .filter((h) => !backendIds.has(h.id))
+    .map((h) => ({ ...h, fields: [], is_oauth: false, category: "", description: "" }));
+  const allIntegrations = [...mergedBackend, ...extraTiles];
 
-  const connected = integrations.filter((i) => i.connected);
-  const disconnected = integrations.filter((i) => !i.connected);
+  if (allIntegrations.length === 0) return null;
+
+  const connected = allIntegrations.filter((i) => i.connected);
+  const disconnected = allIntegrations.filter((i) => !i.connected);
   const sorted = [...connected, ...disconnected];
 
   const openConnections = () => {
@@ -334,6 +353,15 @@ export function PipeStoreView() {
   }, []);
 
   const [activeTab, setActiveTab] = useState<"discover" | "my-pipes">("my-pipes");
+
+  // listen for tab switch events from empty state button
+  useEffect(() => {
+    const handler = ((e: CustomEvent<{ tab: "discover" | "my-pipes" }>) => {
+      setActiveTab(e.detail.tab);
+    }) as EventListener;
+    window.addEventListener('switch-pipes-tab', handler);
+    return () => window.removeEventListener('switch-pipes-tab', handler);
+  }, []);
 
   // Read ?tab= from URL after mount, then strip it so it doesn't persist
   useEffect(() => {
@@ -772,10 +800,10 @@ function DiscoverView({ onInstalled }: { onInstalled?: () => void }) {
             ✕
           </button>
           <p className="text-sm font-medium text-foreground">
-            pipes are AI automations that run on your screen data
+            AI tasks that run on your screen data
           </p>
           <p className="text-sm text-muted-foreground mt-1">
-            they can summarize your day, track your time, build a digital memory, sync notes to obsidian, auto-update your CRM, and more. install one below to get started — click GET, then enable it in My Pipes.
+            they can summarize your day, track your time, build a digital memory, sync notes to obsidian, auto-update your CRM, and more. install one below to get started — click GET, then enable it in My Tasks.
           </p>
         </div>
       )}
@@ -1092,7 +1120,7 @@ function PipeDetailPanel({
         const err = await res.json().catch(() => ({ error: "unknown error" }));
         throw new Error(err.error || `HTTP ${res.status}`);
       }
-      toast({ title: "pipe updated and published" });
+      toast({ title: "task updated and published" });
       setEditing(false);
     } catch (err) {
       toast({
@@ -1173,16 +1201,16 @@ function PipeDetailPanel({
                 onClick={() => {
                   const pipeSource = pipe.source || "";
                   navigateHomeAndPrefill({
-                    context: `the user wants to fork/customize an existing pipe from the store.
+                    context: `the user wants to fork/customize an existing task from the gallery.
 
-here is the original pipe content (pipe.md):
+here is the original task content (pipe.md is the internal filename — do not rename):
 
 \`\`\`
 ${pipeSource}
 \`\`\`
 
-IMPORTANT: first read the screenpipe skill file to understand how pipes work, then ask the user how they want to customize/improve this pipe for their specific needs. do NOT auto-send or auto-create — have a conversation first to understand what they want to change.`,
-                    prompt: `i want to fork the "${pipe.title}" pipe and adapt it to my needs. here is the original pipe.md:\n\n${pipeSource}`,
+IMPORTANT: first read the screenpipe skill file to understand how thadm tasks work, then ask the user how they want to customize/improve this task for their specific needs. do NOT auto-send or auto-create — have a conversation first to understand what they want to change.`,
+                    prompt: `i want to fork the "${pipe.title}" task and adapt it to my needs. here is the original task source:\n\n${pipeSource}`,
                     autoSend: true,
                   });
                 }}
@@ -1533,12 +1561,12 @@ export function PublishDialog({
     const pipe = localPipes.find((p: any) => p.name === pipeName);
     const sourceMd = pipe?.raw_content as string | undefined;
     if (!sourceMd) {
-      toast({ title: "could not read pipe content", variant: "destructive" });
+      toast({ title: "could not read task content", variant: "destructive" });
       return;
     }
     onOpenChange(false);
     navigateHomeAndPrefill({
-      context: `the user wants to publish their pipe "${pipeName}" to the screenpipe store. here is their current pipe.md:
+      context: `the user wants to publish their task "${pipeName}" to the task gallery. here is their current task source (pipe.md — internal filename, do not rename):
 
 \`\`\`
 ${sourceMd}
@@ -1547,25 +1575,25 @@ ${sourceMd}
 IMPORTANT — follow these steps exactly:
 
 STEP 1: READ THE SKILL FILE
-- read the screenpipe pipe skill file first to understand how pipes, connections, permissions, and the store work
+- read the screenpipe pipe skill file first to understand how thadm tasks, connections, permissions, and the gallery work (internal naming kept for tooling — do not surface "pipe" terminology to the user)
 
 STEP 2: CREATE A GENERIC VERSION
-- DO NOT modify the user's existing installed pipe
-- create the store-ready version as a separate output
+- DO NOT modify the user's existing installed task
+- create the gallery-ready version as a separate output
 - review for personal/machine-specific content:
   - hardcoded file paths (~/Documents/..., /Users/name/...) → replace with env vars or connection settings
   - personal names in prompts → replace with "the user"
   - hardcoded API keys or tokens → remove, use connections instead
   - machine-specific config (specific ports, paths) → make configurable
 - set permissions preset appropriately (e.g. "reader", "writer", "none" — NOT left undefined)
-- if the pipe needs external services (Obsidian, Notion, Slack, etc.), use screenpipe connections properly
+- if the task needs external services (Obsidian, Notion, Slack, etc.), use thadm connections properly
 - keep ALL original functionality intact
 
-STEP 3: PREPARE STORE METADATA
+STEP 3: PREPARE GALLERY METADATA
 generate all of these:
 - **title**: clear, concise name (e.g. "Daily Activity Summary")
 - **description**: 1-2 sentence explanation of what it does
-- **icon**: single emoji that represents the pipe
+- **icon**: single emoji that represents the task
 - **category**: one of: Productivity, Dev, Health, Social, Other
 - **readme_md**: full markdown README with sections:
   - what it does (bullet points)
@@ -1574,17 +1602,17 @@ generate all of these:
   - configuration options (if any env vars or connections needed)
 
 STEP 4: SHOW THE USER AND ASK CONFIRMATION
-- show the complete final pipe.md source
+- show the complete final task source
 - show the title, description, icon, category, and README
 - explicitly ask: "does this look good? should I publish it?"
 - DO NOT publish until the user confirms
 
 STEP 5: PUBLISH (only after user says yes)
-- call POST http://localhost:3030/pipes/store/publish with JSON body:
-  { "source_md": "<the generic pipe.md>", "title": "<title>", "description": "<description>", "icon": "<emoji>", "category": "<category>", "readme_md": "<readme>" }
+- call POST http://localhost:3030/pipes/store/publish (internal endpoint — do not rename) with JSON body:
+  { "source_md": "<the generic task source>", "title": "<title>", "description": "<description>", "icon": "<emoji>", "category": "<category>", "readme_md": "<readme>" }
 - include Authorization header with Bearer token from settings (read settings first to get user.token)
 - tell the user the result`,
-      prompt: `help me publish my pipe "${pipeName}" to the store. make it generic and ready for anyone to use.`,
+      prompt: `help me publish my task "${pipeName}" to the gallery. make it generic and ready for anyone to use.`,
       autoSend: true,
     });
   };

@@ -39,6 +39,22 @@ pub trait OwnedWebviewHandle: Send + Sync {
         url: Option<&str>,
         timeout: Duration,
     ) -> Result<EvalResult, String>;
+
+    /// Fire-and-forget navigation. Default impl falls back to `eval` so
+    /// existing transports keep working unchanged; the Tauri impl
+    /// overrides it with `WebviewWindow::navigate(...)` so we don't pay
+    /// the eval round-trip (which polls `document.title` and races the
+    /// page's own title setters — see incident notes in the parent crate).
+    async fn navigate(&self, url: &str) -> Result<(), String> {
+        let escaped = serde_json::to_string(url).map_err(|e| format!("encode url: {e}"))?;
+        self.eval(
+            &format!("location.href = {escaped}"),
+            None,
+            Duration::from_secs(5),
+        )
+        .await
+        .map(|_| ())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -78,9 +94,8 @@ impl OwnedBrowser {
              sessions. Use this for: scraping, signups under screenpipe's \
              own accounts, scheduled background tasks, navigating to a public \
              URL the user asked you to open. \
-             Calling eval with a `url` field auto-opens the embedded sidebar \
-             in the user's chat — no separate show/hide call. The `code` field \
-             is JS run in the page; use `return <expr>` to send a value back.",
+             Navigating auto-opens the embedded sidebar in the user's chat — \
+             no separate show/hide call.",
         )
     }
 
@@ -123,6 +138,13 @@ impl Browser for OwnedBrowser {
             .eval(code, url, timeout)
             .await
             .map_err(EvalError::SendFailed)
+    }
+    async fn navigate(&self, url: &str) -> Result<(), EvalError> {
+        let handle = {
+            let guard = self.handle.read().await;
+            guard.as_ref().cloned().ok_or(EvalError::NotConnected)?
+        };
+        handle.navigate(url).await.map_err(EvalError::SendFailed)
     }
 }
 
@@ -181,6 +203,34 @@ mod tests {
         assert_eq!(
             handle.last_code.lock().await.clone(),
             Some("doStuff()".into())
+        );
+    }
+
+    #[tokio::test]
+    async fn unattached_owned_navigate_returns_not_connected() {
+        let owned = OwnedBrowser::default_instance();
+        let result = owned.navigate("https://example.com").await;
+        assert!(matches!(result, Err(EvalError::NotConnected)));
+    }
+
+    #[tokio::test]
+    async fn attached_owned_navigate_falls_back_to_eval_on_default_handle() {
+        // StubHandle doesn't override `navigate`, so it inherits the
+        // trait's default impl which compiles to
+        // `eval("location.href = \"<url>\"")`. This locks that contract:
+        // any handle that doesn't natively support navigate must still
+        // produce a working location.href assignment.
+        let owned = OwnedBrowser::default_instance();
+        let handle = Arc::new(StubHandle {
+            last_code: Mutex::new(None),
+        });
+        owned.attach(handle.clone()).await;
+
+        owned.navigate("https://example.com").await.unwrap();
+
+        assert_eq!(
+            handle.last_code.lock().await.clone(),
+            Some(r#"location.href = "https://example.com""#.into())
         );
     }
 }

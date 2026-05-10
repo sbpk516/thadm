@@ -1491,15 +1491,11 @@ audioChunkDuration: number;
  * Empty string or "default" means not configured.
  * Kept as String (not Option) to match existing store.bin schema.
  */
-deepgramApiKey: string; 
-/**
- * VAD sensitivity level: "low", "medium", "high".
- */
-vadSensitivity: string; 
+deepgramApiKey: string;
 /**
  * Filter music-dominant audio before transcription using spectral analysis.
  */
-filterMusic: boolean; 
+filterMusic: boolean;
 /**
  * Maximum batch duration in seconds for batch transcription.
  * None = use engine-aware defaults (Deepgram=5000s, OpenAI=3000s, Whisper=600s).
@@ -1558,23 +1554,71 @@ ignoreIncognitoWindows: boolean;
  */
 pauseOnDrmContent?: boolean; 
 /**
+ * Skip clipboard capture in the UI recorder. Off by default; recommended
+ * when piping ~/.screenpipe data into a remote LLM or sharing it,
+ * since passwords / API keys / private keys often pass through the
+ * clipboard.
+ */
+disableClipboardCapture?: boolean; 
+/**
  * Continue recording audio when the screen is locked.
  * Default: false (audio pauses when screen is locked to save resources).
  */
-recordWhileLocked?: boolean; 
-/**
- * Automatically append text typed during a meeting to the meeting's note
- * when the meeting ends. Groups typed text by app/window context.
- */
-appendTypedTextToMeetingNotes?: boolean; 
+recordWhileLocked?: boolean;
 /**
  * Languages for transcription (ISO 639-1 codes).
  */
-languages: string[]; 
+languages: string[];
 /**
  * Redact personally identifiable information from transcriptions.
  */
 usePiiRemoval: boolean; 
+/**
+ * Enable the async PII reconciliation worker. When `true`, a
+ * background task runs after capture and OVERWRITES PII in the
+ * source columns of `ocr_text`, `audio_transcriptions`,
+ * `frames.accessibility_text`, and `ui_events.text_content`. Raw
+ * secrets are gone after the worker processes the row — that's
+ * the contract of the user-facing "AI PII removal" toggle.
+ * Off by default; capture path is unaffected either way. See
+ * `screenpipe-redact` for the full design.
+ */
+asyncPiiRedaction?: boolean; 
+/**
+ * Enable image-PII redaction on captured screen frames. When
+ * `true`, the `screenpipe_redact::image::worker` runs alongside
+ * the text reconciliation worker, scans the `frames` table, runs
+ * the RF-DETR-Nano detector, and blacks out detected PII regions
+ * in each JPG (atomic overwrite of the source file). Off by
+ * default — orthogonal to `async_pii_redaction` (text path),
+ * independently togglable. Requires the `screenpipe-redact`
+ * crate to be built with one of the `onnx-*` cargo features and
+ * the `rfdetr_v8.onnx` model present at `~/.screenpipe/models/`.
+ */
+asyncImagePiiRedaction?: boolean; 
+/**
+ * Where the AI PII redaction actually runs. One switch flips
+ * BOTH modalities (text + image) because the user-facing
+ * "AI PII removal" toggle is one knob.
+ * 
+ * - `"local"` (default): on-device ONNX models. Privacy by
+ * construction — pixels and text never leave the box. Slower,
+ * especially on weak hardware (~1-3 s per text row, ~60-180 ms
+ * per frame).
+ * - `"tinfoil"`: send to the screenpipe Tinfoil enclave (H200,
+ * confidential compute). Much faster (~30-100 ms per row /
+ * frame). Data leaves the device but is end-to-end encrypted
+ * into an attested confidential-compute enclave that even
+ * Tinfoil ops can't read into. Requires network +
+ * `SCREENPIPE_PRIVACY_FILTER_API_KEY` (or the cloud auth key).
+ * 
+ * Note on attestation: the proper attested-transport client
+ * (Tinfoil's secure-client SDK) is Go/Python/JS-only at time of
+ * writing. The Rust adapter currently uses plain HTTPS — which
+ * gives confidentiality vs. the network but NOT vs. a malicious
+ * Tinfoil operator. Tracked separately; structured for swap-in.
+ */
+piiBackend?: string; 
 /**
  * Screenpipe cloud user ID. Empty string means not logged in.
  * Kept as String (not Option) to match existing store.bin schema.
@@ -1631,24 +1675,12 @@ analyticsEnabled: boolean;
 /**
  * Persistent analytics ID (UUID, stable across sessions).
  */
-analyticsId: string; 
-/**
- * Legacy: input capture is always enabled. Kept for serde compat with
- * existing store.bin files; deserialized but ignored.
- * @deprecated input capture is always enabled; will be removed
- */
-enableInputCapture?: boolean; 
-/**
- * Legacy: accessibility capture is always enabled. Kept for serde compat
- * with existing store.bin files; deserialized but ignored.
- * @deprecated accessibility capture is always enabled; will be removed
- */
-enableAccessibility?: boolean; 
+analyticsId: string;
 /**
  * Enable AI workflow event detection (cloud feature, requires subscription).
  * When enabled, classifies desktop activity and triggers event-based pipes.
  */
-enableWorkflowEvents?: boolean; 
+enableWorkflowEvents?: boolean;
 /**
  * Detected hardware tier ("high", "mid", "low").
  * Set once on first launch; `None` for existing installs (treated as High).
@@ -1734,7 +1766,13 @@ showRestartNotifications?: boolean;
 /**
  * When true, apply macOS vibrancy effect to the sidebar for a translucent look.
  */
-translucentSidebar?: boolean; 
+translucentSidebar?: boolean;
+/**
+ * When true (default), hide model "thinking" reasoning blocks in the chat
+ * transcript. The model still emits them server-side; we just don't
+ * render the collapsible block in the UI.
+ */
+hideThinkingBlocks?: boolean;
 /**
  * UI theme: "light", "dark", or "system".
  */

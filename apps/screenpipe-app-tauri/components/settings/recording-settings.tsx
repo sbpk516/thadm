@@ -692,10 +692,7 @@ export function RecordingSettings() {
           throw new Error(`Failed to fetch audio devices: ${audioResult.error}`);
         }
         const audioDevices = audioResult.data;
-        console.log("audioDevices", audioDevices);
         setAvailableAudioDevices(audioDevices);
-
-        console.log("settings", settings);
 
         // Update monitors — match by stable ID, with backward compat for old numeric IDs
         // and fuzzy fallback when only position changed (name+resolution still match)
@@ -767,7 +764,8 @@ export function RecordingSettings() {
           false
         );
       } catch (error) {
-        console.error("Failed to load devices:", error);
+        const msg = (error as Error)?.stack ?? (error as Error)?.message ?? String(error);
+        console.error("Failed to load devices:", msg);
       }
     };
 
@@ -812,8 +810,6 @@ export function RecordingSettings() {
     });
 
     try {
-      console.log("Applying settings:", settings);
-
       if (!settings.analyticsEnabled) {
         posthog.capture("telemetry", {
           enabled: false,
@@ -1771,7 +1767,7 @@ Your screen is a pipe. Everything you see, hear, and type flows through it. Scre
                     CoreAudio system audio capture
                   </h3>
                   <p className="text-xs text-muted-foreground">
-                    Captures system audio via the CoreAudio Process Tap API (macOS 14.4+). Survives SCK display-enumeration failures after sleep/wake. <strong>Off by default</strong> — the Process Tap can't see audio from voice-processing apps (Zoom / Google Meet / Microsoft Teams), so turning it on will silently drop all meeting audio. Leave off unless you specifically need the sleep/wake resilience. Falls back to ScreenCaptureKit automatically if unavailable. Restart recording after changing.
+                    macOS 14.4+ alternative that survives sleep/wake. <strong>Drops Zoom/Meet/Teams audio</strong> — leave off unless you need the resilience. Restart recording after changing.
                   </p>
                 </div>
               </div>

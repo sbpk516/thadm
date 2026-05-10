@@ -498,7 +498,7 @@ export function AIProviderConfig({
                 ...formData,
                 provider: "openai-chatgpt",
                 url: "https://api.openai.com/v1",
-                model: "gpt-5.4",
+                model: "gpt-5.5",
               });
             }}
           >
@@ -757,7 +757,7 @@ export function AIProviderConfig({
                 id="model"
                 type="text"
                 list="chatgpt-models"
-                placeholder="gpt-5.4"
+                placeholder="gpt-5.5"
                 value={formData.model || ""}
                 onChange={(e) =>
                   setFormData({ ...formData, model: e.target.value })
@@ -1322,7 +1322,7 @@ export const AIPresetsSelector = ({
               <Button
                 variant="outline"
                 size="sm"
-                className="shrink-0 h-7 text-xs border-amber-500/30 hover:bg-amber-500/10"
+                className="shrink-0 h-7 text-xs border-border hover:bg-muted"
                 onClick={async () => {
                   await commands.showWindow({ Home: { page: "account" } });
                 }}
@@ -1389,7 +1389,7 @@ export const AIPresetsSelector = ({
               </PopoverTrigger>
               <TooltipContent>
                 {selectedPresetRequiresLogin ? (
-                  <p className="text-amber-500">
+                  <p className="text-muted-foreground">
                     Login required to use this preset
                   </p>
                 ) : (

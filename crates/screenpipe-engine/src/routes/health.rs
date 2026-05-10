@@ -295,12 +295,46 @@ async fn health_check_inner(state: &Arc<AppState>) -> HealthCheckResponse {
             if now_ts.saturating_sub(prev) >= 60 {
                 LAST_VISION_STALL_LOG.store(now_ts, Ordering::Relaxed);
                 let (rs, ri, ws, wi) = state.db.pool_stats();
+                // last_db_write_ts only advances when a UNIQUE frame is
+                // actually inserted; dedup-skipped captures don't update it.
+                // So a long delta here typically means the screen is static
+                // (idle user, slide deck, video call, IDE waiting) — NOT a
+                // stuck pipeline. Phrase it that way to stop the false-alarm
+                // panic.
+                //
+                // Also surface lifetime counters so when the cause IS a real
+                // pipeline stall, the log alone is enough to pin which stage
+                // failed — without us having to email the user back asking
+                // for `sqlite3` row counts.
+                //
+                // The triage rule: `attempts - persisted - dedup_skips` is the
+                // silent-loss count over the whole session. If that number
+                // climbs while a stall warning is firing, frames are being
+                // captured but lost between attempt and write. If it stays
+                // flat, the stall is just dedup on a static screen.
+                //
+                //   attempts climbing, persisted climbing, dedup ≈ 0
+                //     → healthy active screen
+                //   attempts climbing, persisted ≈ flat, dedup climbing
+                //     → static screen / idle user (false alarm)
+                //   attempts climbing, persisted ≈ flat, dedup flat
+                //     → real silent loss between attempt and writer
+                //   attempts flat too
+                //     → capture itself paused (TCC revoke, display sleep)
+                let silent_loss = vision_snap
+                    .capture_attempts
+                    .saturating_sub(vision_snap.frames_db_written)
+                    .saturating_sub(vision_snap.dedup_skips);
                 warn!(
-                    "health_check: vision DB writes stalled — capture heartbeat {}s ago but last DB write {}s ago ({}) | pool: read={}/{} idle, write={}/{} idle",
-                    now_ts.saturating_sub(vision_snap.last_capture_attempt_ts),
+                    "health_check: no unique vision frame in {}s (capture heartbeat {}s ago — usually means a static screen / idle user, not a pipeline stall) | lifetime: attempts={}, persisted={}, dedup={}, silent_loss={} | pool: read={}/{} idle, write={}/{} idle | suspected: {}",
                     now_ts.saturating_sub(vision_snap.last_db_write_ts),
-                    suspected_stall_cause(ri, wi),
+                    now_ts.saturating_sub(vision_snap.last_capture_attempt_ts),
+                    vision_snap.capture_attempts,
+                    vision_snap.frames_db_written,
+                    vision_snap.dedup_skips,
+                    silent_loss,
                     ri, rs, wi, ws,
+                    suspected_stall_cause(ri, wi),
                 );
             }
         }

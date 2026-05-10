@@ -47,8 +47,20 @@ static GLOBAL_APP_HANDLE: std::sync::OnceLock<tauri::AppHandle> = std::sync::Onc
 /// Callback invoked from Swift when user clicks a notification action.
 /// Handles "manage" directly in Rust (opens home window to notifications settings).
 /// Other actions are forwarded as Tauri events to JS.
+///
+/// A Rust panic crossing this Cocoa→Rust trampoline aborts the whole app via
+/// `panic_cannot_unwind` (extern "C" can't unwind through ObjC frames). Catch
+/// any panic and log it instead — losing one notification click is much better
+/// than killing the user's session.
 #[cfg(target_os = "macos")]
 extern "C" fn native_notif_action_callback(json_ptr: *const std::os::raw::c_char) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        native_notif_action_callback_inner(json_ptr);
+    }));
+}
+
+#[cfg(target_os = "macos")]
+fn native_notif_action_callback_inner(json_ptr: *const std::os::raw::c_char) {
     if json_ptr.is_null() {
         return;
     }
@@ -148,8 +160,18 @@ extern "C" fn native_notif_action_callback(json_ptr: *const std::os::raw::c_char
 }
 
 /// Callback invoked from Swift when user clicks a shortcut reminder action.
+///
+/// Same panic_cannot_unwind hazard as native_notif_action_callback — wrap the
+/// body in catch_unwind so a runtime hiccup doesn't abort the app.
 #[cfg(target_os = "macos")]
 extern "C" fn native_shortcut_action_callback(action_ptr: *const std::os::raw::c_char) {
+    let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        native_shortcut_action_callback_inner(action_ptr);
+    }));
+}
+
+#[cfg(target_os = "macos")]
+fn native_shortcut_action_callback_inner(action_ptr: *const std::os::raw::c_char) {
     if action_ptr.is_null() {
         return;
     }
@@ -303,6 +325,17 @@ pub async fn get_local_api_config(app_handle: tauri::AppHandle) -> serde_json::V
 pub async fn regenerate_api_auth_key() -> Result<String, String> {
     let data_dir = screenpipe_core::paths::default_screenpipe_data_dir();
     screenpipe_engine::auth_key::regenerate_api_auth_key(&data_dir)
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Persist a user-supplied API auth key to the secret store.
+/// The running server keeps its in-memory key until restart.
+#[tauri::command]
+#[specta::specta]
+pub async fn set_api_auth_key(key: String) -> Result<(), String> {
+    let data_dir = screenpipe_core::paths::default_screenpipe_data_dir();
+    screenpipe_engine::auth_key::set_api_auth_key(&data_dir, &key)
         .await
         .map_err(|e| e.to_string())
 }

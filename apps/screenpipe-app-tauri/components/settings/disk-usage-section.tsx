@@ -194,7 +194,7 @@ export function DiskUsageSection() {
                 <p className="text-[11px] text-destructive mt-1">⚠️ Logs are large. Delete old ones at ~/.thadm/*.log</p>
               )}
               <div className="flex items-center justify-between text-xs">
-                <span className="text-muted-foreground">Pipes</span>
+                <span className="text-muted-foreground">Tasks</span>
                 <span className="font-medium">{diskUsage?.other?.pipes_size || "0 KB"}</span>
               </div>
               {diskUsage?.other?.other_size && diskUsage.other.other_size !== "0 B" && (

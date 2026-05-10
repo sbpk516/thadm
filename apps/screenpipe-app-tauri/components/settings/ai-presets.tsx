@@ -260,6 +260,9 @@ const AISection = ({
   const diagnosticsAbortRef = useRef<AbortController | null>(null);
   const [chatgptLoggedIn, setChatgptLoggedIn] = useState(false);
   const [chatgptLoading, setChatgptLoading] = useState(false);
+  const [chatgptChecking, setChatgptChecking] = useState(
+    () => settingsPreset?.provider === "openai-chatgpt"
+  );
 
   // Filter presets the same way the UI does so hidden presets don't block creation
   const visiblePresets = useMemo(
@@ -315,11 +318,21 @@ const AISection = ({
   // Check ChatGPT OAuth status when provider is selected
   useEffect(() => {
     if (settingsPreset?.provider === "openai-chatgpt") {
+      setChatgptChecking(true);
+      const timeout = setTimeout(() => setChatgptChecking(false), 5000);
       commands.chatgptOauthStatus().then((res) => {
+        clearTimeout(timeout);
         if (res.status === "ok") {
           setChatgptLoggedIn(res.data.logged_in);
         }
+        setChatgptChecking(false);
+      }).catch(() => {
+        clearTimeout(timeout);
+        setChatgptChecking(false);
       });
+      return () => clearTimeout(timeout);
+    } else {
+      setChatgptChecking(false);
     }
   }, [settingsPreset?.provider]);
 
@@ -495,6 +508,25 @@ const AISection = ({
   }, [updateSettingsPreset]);
 
   const handleAiProviderChange = useCallback((newValue: AIPreset["provider"]) => {
+    // No-op if same provider — avoids resetting UI state (e.g. chatgptChecking) unnecessarily
+    if (newValue === settingsPreset?.provider) return;
+
+    // Clear stale diagnostic results so previous provider's errors don't bleed through
+    setTestStatus("idle");
+    setTestResults(INITIAL_DIAGNOSTICS);
+    setDiagnosticsOpen(false);
+    // Reset ChatGPT auth UI — the status-check effect re-runs when provider dep changes
+    setChatgptLoggedIn(false);
+    // chatgptChecking is managed by the status-check effect, not here
+
+    const defaultNames: Record<string, string> = {
+      "openai-chatgpt": "chatgpt",
+      "openai": "openai",
+      "anthropic": "claude",
+      "native-ollama": "ollama",
+      "screenpipe-cloud": "screenpipe-cloud",
+    };
+
     let newUrl = "";
     let newModel = settingsPreset?.model;
 
@@ -510,11 +542,7 @@ const AISection = ({
         break;
       case "openai-chatgpt":
         newUrl = "https://api.openai.com/v1";
-        newModel = "gpt-5.4";
-        break;
-      case "anthropic":
-        newUrl = "";
-        newModel = "claude-sonnet-4-6";
+        newModel = "gpt-5.5";
         break;
       case "anthropic":
         newUrl = "https://api.anthropic.com";
@@ -526,15 +554,19 @@ const AISection = ({
         break;
     }
 
-    updateSettingsPreset({
-      provider: newValue,
-      url: newUrl,
-      model: newModel,
-    });
-  }, [settingsPreset?.url, settingsPreset?.model, updateSettingsPreset]);
+    const updates: Partial<AIPreset> = { provider: newValue, url: newUrl, model: newModel };
+    // Auto-fill name only when creating a new preset (no existing id)
+    if (!settingsPreset?.id && defaultNames[newValue]) {
+      updates.id = defaultNames[newValue];
+    }
+
+    updateSettingsPreset(updates);
+  }, [settingsPreset?.id, settingsPreset?.url, settingsPreset?.model, updateSettingsPreset]);
 
   const [models, setModels] = useState<AIModel[]>([]);
   const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [isModelPickerOpen, setIsModelPickerOpen] = useState(false);
+  const [modelSearch, setModelSearch] = useState("");
 
   const runDiagnostics = useCallback(async () => {
     if (settingsPreset?.provider === "screenpipe-cloud") return;
@@ -959,16 +991,6 @@ const AISection = ({
           break;
         }
 
-        case "anthropic": {
-          // Hardcoded model list — Anthropic API models
-          setModels([
-            { id: "claude-opus-4-6", name: "Claude Opus 4.6", provider: "anthropic" },
-            { id: "claude-sonnet-4-6", name: "Claude Sonnet 4.5", provider: "anthropic" },
-            { id: "claude-haiku-4-5-20251001", name: "Claude Haiku 4.5", provider: "anthropic" },
-          ]);
-          break;
-        }
-
         case "openai-chatgpt": {
           // Try /v1/models with OAuth token; fall back to known models if it fails.
           let loaded = false;
@@ -1279,39 +1301,67 @@ const AISection = ({
               ChatGPT Account
             </Label>
             <div className="flex items-center gap-3">
-              <Button
-                type="button"
-                variant={chatgptLoggedIn ? "outline" : "default"}
-                disabled={chatgptLoading}
-                onClick={async () => {
-                  if (chatgptLoggedIn) {
-                    setChatgptLoading(true);
-                    await commands.chatgptOauthLogout();
-                    setChatgptLoggedIn(false);
-                    setChatgptLoading(false);
-                  } else {
-                    setChatgptLoading(true);
-                    try {
-                      const res = await commands.chatgptOauthLogin();
-                      if (res.status === "ok" && res.data) {
-                        setChatgptLoggedIn(true);
-                      }
-                    } catch (e) {
-                      console.error("chatgpt oauth failed:", e);
-                    }
-                    setChatgptLoading(false);
-                  }
-                }}
-              >
-                {chatgptLoading ? (
+              {chatgptChecking ? (
+                <Button type="button" variant="outline" disabled>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                ) : chatgptLoggedIn ? (
-                  <CheckCircle2 className="h-4 w-4 mr-2" />
-                ) : null}
-                {chatgptLoggedIn ? "Sign out" : "Sign in with ChatGPT"}
-              </Button>
-              {chatgptLoggedIn && (
-                <span className="text-sm text-muted-foreground">Signed in</span>
+                  Checking connection...
+                </Button>
+              ) : (
+                <Button
+                  type="button"
+                  variant={chatgptLoggedIn ? "outline" : "default"}
+                  disabled={chatgptLoading}
+                  onClick={async () => {
+                    if (chatgptLoggedIn) {
+                      setChatgptLoading(true);
+                      await commands.chatgptOauthLogout();
+                      setChatgptLoggedIn(false);
+                      setChatgptLoading(false);
+                    } else {
+                      setChatgptLoading(true);
+                      try {
+                        const res = await commands.chatgptOauthLogin();
+                        if (res.status === "ok" && res.data) {
+                          setChatgptLoggedIn(true);
+                          toast({
+                            title: "ChatGPT connected",
+                            description: "Click \"Create preset\" below to save and start using it.",
+                          });
+                        } else if (res.status === "error") {
+                          const msg = String(res.error || "unknown error");
+                          console.error("chatgpt oauth failed:", msg);
+                          toast({
+                            title: "ChatGPT sign-in failed",
+                            description: msg.includes("invalid_state")
+                              ? "Auth session expired — please try signing in again."
+                              : msg.includes("not logged in") || msg.includes("timed out")
+                              ? "Sign-in timed out or was cancelled. Please try again."
+                              : msg.slice(0, 120),
+                            variant: "destructive",
+                          });
+                        }
+                      } catch (e) {
+                        console.error("chatgpt oauth failed:", e);
+                        toast({
+                          title: "ChatGPT sign-in failed",
+                          description: "An unexpected error occurred. Please try again.",
+                          variant: "destructive",
+                        });
+                      }
+                      setChatgptLoading(false);
+                    }
+                  }}
+                >
+                  {chatgptLoading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : chatgptLoggedIn ? (
+                    <CheckCircle2 className="h-4 w-4 mr-2" />
+                  ) : null}
+                  {chatgptLoggedIn ? "Sign out" : "Sign in with ChatGPT"}
+                </Button>
+              )}
+              {chatgptLoggedIn && !chatgptChecking && (
+                <span className="text-sm text-muted-foreground">Connected</span>
               )}
             </div>
           </div>
@@ -1324,7 +1374,18 @@ const AISection = ({
             AI Model
             <span className="text-destructive">*</span>
           </Label>
-          <Popover modal={true}>
+          <Popover
+            modal={true}
+            open={isModelPickerOpen}
+            onOpenChange={(open) => {
+              setIsModelPickerOpen(open);
+              if (open) {
+                setModelSearch(settingsPreset?.model || "");
+              } else {
+                setModelSearch("");
+              }
+            }}
+          >
             <PopoverTrigger asChild>
               <Button
                 variant="outline"
@@ -1347,26 +1408,32 @@ const AISection = ({
             </PopoverTrigger>
             <PopoverContent className="w-full p-0">
               <Command>
-                <CommandInput 
+                <CommandInput
+                  value={modelSearch}
                   placeholder="Select or type model name" 
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
-                      const input = (e.target as HTMLInputElement).value;
-                      if (input && models.every(m => m.id !== input)) {
+                      const input = modelSearch.trim();
+                      if (!input) return;
+                      const exactModel = models.find((m) => m.id === input);
+                      if (exactModel) {
+                        updateSettingsPreset({ model: exactModel.id });
+                        setIsModelPickerOpen(false);
+                        return;
+                      }
+                      if (models.every(m => m.id !== input)) {
                         updateSettingsPreset({ model: input });
+                        setIsModelPickerOpen(false);
                       }
                     }
                   }}
                   onValueChange={(value) => {
-                    // Allow typing a custom model name
-                    if (value && models.every(m => m.id !== value)) {
-                      updateSettingsPreset({ model: value });
-                    }
+                    setModelSearch(value);
                   }}
                 />
                 <CommandList>
                   <CommandEmpty>
-                    Press enter to use &quot;{settingsPreset?.model}&quot;
+                    Press enter to use &quot;{modelSearch || settingsPreset?.model}&quot;
                   </CommandEmpty>
                   {isLoadingModels ? (
                     <CommandGroup>
@@ -1383,7 +1450,10 @@ const AISection = ({
                             <CommandItem
                               key={model.id}
                               value={model.id}
-                              onSelect={() => updateSettingsPreset({ model: model.id })}
+                              onSelect={() => {
+                                updateSettingsPreset({ model: model.id });
+                                setIsModelPickerOpen(false);
+                              }}
                             >
                               <div className="flex flex-col gap-0.5 w-full">
                                 <div className="flex items-center justify-between">
@@ -1425,6 +1495,7 @@ const AISection = ({
                                 return;
                               }
                               updateSettingsPreset({ model: model.id });
+                              setIsModelPickerOpen(false);
                             }}
                           >
                             <div className="flex flex-col gap-0.5 w-full">
@@ -1697,20 +1768,37 @@ const AISection = ({
         >
           Cancel
         </Button>
-        <Button 
-          onClick={updateStoreSettings} 
-          disabled={isLoading || !isFormValid}
-          className="flex items-center gap-2"
-        >
-          {isLoading ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
-          ) : isFormValid ? (
-            <CheckCircle2 className="w-4 h-4" />
-          ) : (
-            <AlertCircle className="w-4 h-4" />
-          )}
-          {preset ? "Update preset" : "Create preset"}
-        </Button>
+        <TooltipProvider>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <Button
+                  onClick={updateStoreSettings}
+                  disabled={isLoading || !isFormValid}
+                  className="flex items-center gap-2"
+                >
+                  {isLoading ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : isFormValid ? (
+                    <CheckCircle2 className="w-4 h-4" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4" />
+                  )}
+                  {preset ? "Update preset" : "Create preset"}
+                </Button>
+              </span>
+            </TooltipTrigger>
+            {!isFormValid && !isLoading && (
+              <TooltipContent>
+                {!settingsPreset?.id
+                  ? "Enter a preset name to continue"
+                  : !settingsPreset?.model
+                  ? "Select a model to continue"
+                  : "Fix validation errors to continue"}
+              </TooltipContent>
+            )}
+          </Tooltip>
+        </TooltipProvider>
       </div>
     </div>
   );

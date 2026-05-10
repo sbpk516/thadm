@@ -31,8 +31,8 @@ use crate::{
     text_similarity::is_similar_transcription, AudioChunksResponse, AudioDevice, AudioEntry,
     AudioResult, AudioResultRaw, ContentType, DeviceType, Element, ElementRow, ElementSource,
     FrameData, FrameRow, FrameRowLight, FrameWindowData, InsertUiEvent, MeetingRecord,
-    MemoryRecord, OCREntry, OCRResult, OCRResultRaw, OcrEngine, OcrTextBlock, Order, SearchMatch,
-    SearchMatchGroup, SearchResult, Speaker, TagContentType, TextBounds, TextPosition,
+    MemoryRecord, MemorySyncRow, OCREntry, OCRResult, OCRResultRaw, OcrEngine, OcrTextBlock, Order,
+    SearchMatch, SearchMatchGroup, SearchResult, Speaker, TagContentType, TextBounds, TextPosition,
     TimeSeriesChunk, UiContent, UiEventRecord, UiEventRow, VideoMetadata,
 };
 
@@ -109,6 +109,16 @@ impl ImmediateTx {
         self.committed = true; // prevent double-rollback in drop
         Ok(())
     }
+}
+
+/// True when `e` is a UNIQUE-constraint violation from SQLite. Used by
+/// callers that want to treat benign duplicates as a no-op instead of
+/// letting the ImmediateTx drop uncommitted (which logs a warning).
+fn is_unique_violation(e: &sqlx::Error) -> bool {
+    if let sqlx::Error::Database(db_err) = e {
+        return db_err.is_unique_violation();
+    }
+    false
 }
 
 impl Drop for ImmediateTx {
@@ -359,6 +369,11 @@ impl DatabaseManager {
         // so we check pragma_table_info and add missing columns in Rust.
         Self::ensure_event_driven_columns(pool).await?;
 
+        // Same self-heal pattern for the cross-device memories sync columns
+        // (added in 20260506120000_add_memories_sync_columns.sql). Older DBs
+        // upgraded across that migration boundary may have skipped it.
+        Self::ensure_memories_sync_columns(pool).await?;
+
         Ok(())
     }
 
@@ -454,6 +469,10 @@ impl DatabaseManager {
             ("content_hash", "INTEGER DEFAULT NULL"),
             ("simhash", "INTEGER DEFAULT NULL"),
             ("elements_ref_frame_id", "INTEGER DEFAULT NULL"),
+            // Absolute path of the document open in the focused window, when
+            // platform exposes it (macOS via AXDocument). NULL for non-file
+            // contexts (browsers, OS chrome, terminals).
+            ("document_path", "TEXT DEFAULT NULL"),
         ];
 
         for (col_name, col_type) in missing_columns {
@@ -485,6 +504,34 @@ impl DatabaseManager {
             );
         }
 
+        Ok(())
+    }
+
+    /// Self-heal the `memories.sync_uuid` and `memories.sync_modified_by`
+    /// columns + uuid index. Mirror of [`ensure_event_driven_columns`] for
+    /// the cross-device memories sync feature, so DBs that upgraded across
+    /// the migration boundary without applying it converge on next launch.
+    async fn ensure_memories_sync_columns(pool: &SqlitePool) -> Result<(), sqlx::Error> {
+        let cols: &[(&str, &str)] = &[("sync_uuid", "TEXT"), ("sync_modified_by", "TEXT")];
+        for (col_name, col_type) in cols {
+            let row: (i64,) = sqlx::query_as(
+                "SELECT COUNT(*) FROM pragma_table_info('memories') WHERE name = ?1",
+            )
+            .bind(col_name)
+            .fetch_one(pool)
+            .await?;
+            if row.0 == 0 {
+                tracing::info!("Adding missing column memories.{}", col_name);
+                let sql = format!("ALTER TABLE memories ADD COLUMN {} {}", col_name, col_type);
+                sqlx::query(&sql).execute(pool).await?;
+            }
+        }
+        sqlx::query(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_memories_sync_uuid \
+             ON memories(sync_uuid) WHERE sync_uuid IS NOT NULL",
+        )
+        .execute(pool)
+        .await?;
         Ok(())
     }
 
@@ -1224,19 +1271,34 @@ impl DatabaseManager {
         let mut tx = self.begin_immediate_with_retry().await?;
 
         // Insert the full transcription
-        let affected = sqlx::query(
+        let result = sqlx::query(
             "UPDATE audio_transcriptions SET transcription = ?1, text_length = ?2 WHERE audio_chunk_id = ?3",
         )
         .bind(trimmed)
         .bind(text_length)
         .bind(audio_chunk_id)
         .execute(&mut **tx.conn())
-        .await?
-        .rows_affected();
+        .await;
 
-        // Commit the transaction for the full transcription
-        tx.commit().await?;
-        Ok(affected as i64)
+        match result {
+            Ok(r) => {
+                tx.commit().await?;
+                Ok(r.rows_affected() as i64)
+            }
+            // UNIQUE(audio_chunk_id, transcription) is enforced by
+            // idx_audio_transcription_chunk_text. When overlap cleanup re-runs
+            // the UPDATE with text identical to an existing row for this chunk
+            // (multi-row chunks from VAD overlap), the composite collides
+            // benignly — caller in transcription_result.rs already treats this
+            // as a no-op. Commit an empty tx so Drop doesn't fire the noisy
+            // "ImmediateTx dropped without commit" warning. Originally fixed
+            // in 1d4f75669; reverted by perf refactor e35be21f9; restored here.
+            Err(e) if is_unique_violation(&e) => {
+                tx.commit().await?;
+                Ok(0)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Replace all transcription rows for an audio chunk with a single new transcription.
@@ -1862,6 +1924,7 @@ impl DatabaseManager {
             app_name,
             window_name,
             browser_url,
+            None, // document_path — legacy callers don't carry it
             focused,
             capture_trigger,
             accessibility_text,
@@ -2084,7 +2147,7 @@ impl DatabaseManager {
         frame_id: i64,
         tree_json: &str,
     ) {
-        // AccessibilityTreeNode: { role, text, depth, bounds?, automation props... }
+        // AccessibilityTreeNode: { role, text, depth, bounds?, on_screen?, automation props... }
         #[derive(serde::Deserialize, serde::Serialize)]
         struct AxNode {
             role: String,
@@ -2092,6 +2155,12 @@ impl DatabaseManager {
             depth: u8,
             #[serde(skip_serializing_if = "Option::is_none")]
             bounds: Option<AxBounds>,
+            /// True when the element is visually present on the captured
+            /// frame (its rect intersects the focused window's rect).
+            /// Persisted to `elements.on_screen` so search can filter
+            /// out off-screen accessibility text — see issue #2436.
+            #[serde(default, skip_serializing_if = "Option::is_none")]
+            on_screen: Option<bool>,
             #[serde(skip_serializing_if = "Option::is_none")]
             automation_id: Option<String>,
             #[serde(skip_serializing_if = "Option::is_none")]
@@ -2242,8 +2311,13 @@ impl DatabaseManager {
                 }
             };
 
+            // SQLite stores BOOLEAN as INTEGER. Map None→NULL, Some(true)→1,
+            // Some(false)→0 so the partial index from
+            // 20260502000000_add_elements_on_screen.sql skips legacy rows.
+            let on_screen_int: Option<i64> = node.on_screen.map(|b| if b { 1 } else { 0 });
+
             let result = sqlx::query_scalar::<_, i64>(
-                "INSERT INTO elements (frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order, properties) VALUES (?1, 'accessibility', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11) RETURNING id",
+                "INSERT INTO elements (frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order, properties, on_screen) VALUES (?1, 'accessibility', ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12) RETURNING id",
             )
             .bind(frame_id)
             .bind(&node.role)
@@ -2256,6 +2330,7 @@ impl DatabaseManager {
             .bind(height)
             .bind(sort_order)
             .bind(&properties)
+            .bind(on_screen_int)
             .fetch_one(&mut **tx)
             .await;
 
@@ -2279,6 +2354,13 @@ impl DatabaseManager {
     /// Insert a snapshot frame AND optional OCR text positions in a single transaction.
     /// This avoids opening two separate transactions per capture which doubles pool pressure.
     #[allow(clippy::too_many_arguments)]
+    /// Insert a snapshot frame plus optional OCR text/json.
+    ///
+    /// `document_path` is the absolute filesystem path of the document open in
+    /// the focused window, when the platform exposes one (macOS via
+    /// AXDocument). Distinct from `browser_url` — the latter is for http(s),
+    /// the former for file://.
+    #[allow(clippy::too_many_arguments)]
     pub async fn insert_snapshot_frame_with_ocr(
         &self,
         device_name: &str,
@@ -2287,6 +2369,7 @@ impl DatabaseManager {
         app_name: Option<&str>,
         window_name: Option<&str>,
         browser_url: Option<&str>,
+        document_path: Option<&str>,
         focused: bool,
         capture_trigger: Option<&str>,
         accessibility_text: Option<&str>,
@@ -2342,6 +2425,7 @@ impl DatabaseManager {
                 app_name: app_name.map(String::from),
                 window_name: window_name.map(String::from),
                 browser_url: browser_url.map(String::from),
+                document_path: document_path.map(String::from),
                 focused,
                 capture_trigger: capture_trigger.map(String::from),
                 accessibility_text: accessibility_text.map(String::from),
@@ -2675,6 +2759,7 @@ impl DatabaseManager {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn search(
         &self,
         query: &str,
@@ -2694,6 +2779,11 @@ impl DatabaseManager {
         speaker_name: Option<&str>,
         device_name: Option<&str>,
         machine_id: Option<&str>,
+        // Issue #2436: when set, accessibility hits are restricted to
+        // elements visually present (true) or off-screen (false) on the
+        // captured frame. Falls through to the legacy frames_fts path
+        // when None, preserving current behavior for unaware callers.
+        on_screen: Option<bool>,
     ) -> Result<Vec<SearchResult>, sqlx::Error> {
         let mut results = Vec::new();
 
@@ -2742,15 +2832,38 @@ impl DatabaseManager {
                                 device_name,
                                 machine_id,
                             ),
-                            self.search_accessibility(
-                                query,
-                                app_name,
-                                window_name,
-                                start_time,
-                                end_time,
-                                fetch_limit,
-                                0,
-                            )
+                            // Issue #2436: branch the accessibility plan
+                            // on the on_screen filter — see the dispatch
+                            // in ContentType::Accessibility above.
+                            async {
+                                match on_screen {
+                                    Some(v) => {
+                                        self.search_accessibility_visible(
+                                            query,
+                                            v,
+                                            app_name,
+                                            window_name,
+                                            start_time,
+                                            end_time,
+                                            fetch_limit,
+                                            0,
+                                        )
+                                        .await
+                                    }
+                                    None => {
+                                        self.search_accessibility(
+                                            query,
+                                            app_name,
+                                            window_name,
+                                            start_time,
+                                            end_time,
+                                            fetch_limit,
+                                            0,
+                                        )
+                                        .await
+                                    }
+                                }
+                            }
                         )?;
                         (ocr, Some(audio), ui)
                     } else {
@@ -2772,15 +2885,35 @@ impl DatabaseManager {
                                 device_name,
                                 machine_id,
                             ),
-                            self.search_accessibility(
-                                query,
-                                app_name,
-                                window_name,
-                                start_time,
-                                end_time,
-                                fetch_limit,
-                                0,
-                            )
+                            async {
+                                match on_screen {
+                                    Some(v) => {
+                                        self.search_accessibility_visible(
+                                            query,
+                                            v,
+                                            app_name,
+                                            window_name,
+                                            start_time,
+                                            end_time,
+                                            fetch_limit,
+                                            0,
+                                        )
+                                        .await
+                                    }
+                                    None => {
+                                        self.search_accessibility(
+                                            query,
+                                            app_name,
+                                            window_name,
+                                            start_time,
+                                            end_time,
+                                            fetch_limit,
+                                            0,
+                                        )
+                                        .await
+                                    }
+                                }
+                            }
                         )?;
                         (ocr, None, ui)
                     };
@@ -2833,17 +2966,37 @@ impl DatabaseManager {
                 }
             }
             ContentType::Accessibility => {
-                let ui_results = self
-                    .search_accessibility(
-                        query,
-                        app_name,
-                        window_name,
-                        start_time,
-                        end_time,
-                        limit,
-                        offset,
-                    )
-                    .await?;
+                // Issue #2436: when on_screen is set, the agent wants
+                // pixel-actually-visible matches only — switch to the
+                // per-element index path. Otherwise stick with the
+                // existing per-frame plan (faster, broader recall).
+                let ui_results = match on_screen {
+                    Some(visible) => {
+                        self.search_accessibility_visible(
+                            query,
+                            visible,
+                            app_name,
+                            window_name,
+                            start_time,
+                            end_time,
+                            limit,
+                            offset,
+                        )
+                        .await?
+                    }
+                    None => {
+                        self.search_accessibility(
+                            query,
+                            app_name,
+                            window_name,
+                            start_time,
+                            end_time,
+                            limit,
+                            offset,
+                        )
+                        .await?
+                    }
+                };
                 results.extend(ui_results.into_iter().map(SearchResult::UI));
             }
             ContentType::Input => {
@@ -3405,6 +3558,7 @@ impl DatabaseManager {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[allow(clippy::too_many_arguments)]
     pub async fn count_search_results(
         &self,
         query: &str,
@@ -3420,10 +3574,71 @@ impl DatabaseManager {
         browser_url: Option<&str>,
         focused: Option<bool>,
         speaker_name: Option<&str>,
+        // Mirror of `db::search`'s on_screen — must agree or pagination
+        // breaks (`total` no longer matches the visible page). Issue #2436.
+        on_screen: Option<bool>,
     ) -> Result<usize, sqlx::Error> {
         // if focused or browser_url is present, we run only on OCR
         if focused.is_some() || browser_url.is_some() {
             content_type = ContentType::OCR;
+        }
+
+        // on_screen filter is meaningful only for accessibility-bearing
+        // content. Short-circuit it through the per-element count path so
+        // the total matches what `search()` actually returns. For
+        // ContentType::All with on_screen set, we count visible
+        // accessibility frames + audio (no OCR, since OCR matches don't
+        // have an on-screen concept distinct from the screenshot itself).
+        if let Some(visible) = on_screen {
+            match content_type {
+                ContentType::Accessibility => {
+                    return self
+                        .count_accessibility_visible(
+                            query,
+                            visible,
+                            app_name,
+                            window_name,
+                            start_time,
+                            end_time,
+                        )
+                        .await;
+                }
+                ContentType::All => {
+                    let ax_fut = self.count_accessibility_visible(
+                        query,
+                        visible,
+                        app_name,
+                        window_name,
+                        start_time,
+                        end_time,
+                    );
+                    if app_name.is_none() && window_name.is_none() {
+                        let audio_future = Box::pin(self.count_search_results(
+                            query,
+                            ContentType::Audio,
+                            start_time,
+                            end_time,
+                            None,
+                            None,
+                            min_length,
+                            max_length,
+                            speaker_ids,
+                            None,
+                            None,
+                            None,
+                            speaker_name,
+                            None,
+                        ));
+                        let (ax, audio) = tokio::try_join!(ax_fut, audio_future)?;
+                        return Ok(ax + audio);
+                    } else {
+                        return ax_fut.await;
+                    }
+                }
+                // OCR / Audio / Input / Memory: on_screen doesn't apply,
+                // fall through to the legacy count.
+                _ => {}
+            }
         }
 
         if content_type == ContentType::All {
@@ -3443,6 +3658,7 @@ impl DatabaseManager {
                 browser_url,
                 focused,
                 None,
+                None,
             ));
 
             if app_name.is_none() && window_name.is_none() {
@@ -3460,6 +3676,7 @@ impl DatabaseManager {
                     None,
                     None,
                     speaker_name,
+                    None,
                 ));
 
                 let (frames_count, audio_count) = tokio::try_join!(frames_future, audio_future)?;
@@ -4244,6 +4461,147 @@ impl DatabaseManager {
             .await
     }
 
+    /// Search accessibility text restricted to elements visually present on
+    /// the captured frame (or explicitly off-screen). Sister of
+    /// `search_accessibility` — same return shape, different plan.
+    ///
+    /// Why a separate method: the default `search_accessibility` matches via
+    /// `frames_fts.full_text`, which concatenates every text element on the
+    /// frame. That index can't tell which specific element matched, so it
+    /// can't enforce the on-screen constraint without false positives. This
+    /// method matches via `elements_fts` (per-element FTS) joined with the
+    /// `elements.on_screen` flag, then collapses to one row per frame to
+    /// preserve the existing API contract.
+    ///
+    /// Filter semantics: `on_screen = true` matches only elements with the
+    /// `1` flag; `false` matches `0`; the function isn't called for `None`
+    /// (caller should fall through to `search_accessibility`). NULL rows
+    /// (legacy data captured before the on-screen detector landed) are
+    /// excluded by the equality comparison — this is intentional. Issue #2436.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn search_accessibility_visible(
+        &self,
+        query: &str,
+        on_screen: bool,
+        app_name: Option<&str>,
+        window_name: Option<&str>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+        limit: u32,
+        offset: u32,
+    ) -> Result<Vec<UiContent>, sqlx::Error> {
+        let has_query = !query.trim().is_empty();
+        // Empty query is supported — drops the FTS join entirely so the
+        // filter is purely "show me on-screen accessibility elements in
+        // this time range / app." The window_name filter is LIKE-based
+        // because window titles aren't a stable enum.
+        let sql = format!(
+            r#"
+            SELECT
+                f.id,
+                COALESCE(f.full_text, f.accessibility_text, '') AS text_output,
+                f.timestamp,
+                COALESCE(f.app_name, '') as app_name,
+                COALESCE(f.window_name, '') as window_name,
+                NULL as initial_traversal_at,
+                COALESCE(vc.file_path, '') as file_path,
+                COALESCE(f.offset_index, 0) as offset_index,
+                f.name as frame_name,
+                f.browser_url
+            FROM elements e
+            {fts_join}
+            JOIN frames f ON f.id = e.frame_id
+            LEFT JOIN video_chunks vc ON f.video_chunk_id = vc.id
+            WHERE e.source = 'accessibility'
+              AND e.on_screen = ?1
+              {fts_match}
+              AND (?2 IS NULL OR f.timestamp >= ?2)
+              AND (?3 IS NULL OR f.timestamp <= ?3)
+              AND (?4 IS NULL OR f.app_name = ?4)
+              AND (?5 IS NULL OR f.window_name LIKE '%' || ?5 || '%')
+            GROUP BY f.id
+            ORDER BY f.timestamp DESC
+            LIMIT ?6 OFFSET ?7
+            "#,
+            fts_join = if has_query {
+                "JOIN elements_fts ef ON ef.rowid = e.id"
+            } else {
+                ""
+            },
+            fts_match = if has_query {
+                "AND ef.text MATCH ?8"
+            } else {
+                ""
+            },
+        );
+
+        let on_screen_int: i64 = if on_screen { 1 } else { 0 };
+        let mut q = sqlx::query_as(&sql)
+            .bind(on_screen_int)
+            .bind(start_time)
+            .bind(end_time)
+            .bind(app_name)
+            .bind(window_name)
+            .bind(limit)
+            .bind(offset);
+        if has_query {
+            q = q.bind(crate::text_normalizer::sanitize_fts5_query(query));
+        }
+        q.fetch_all(&self.pool).await
+    }
+
+    /// Count of distinct frames returned by `search_accessibility_visible`,
+    /// used by the search route to report `total` for pagination.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn count_accessibility_visible(
+        &self,
+        query: &str,
+        on_screen: bool,
+        app_name: Option<&str>,
+        window_name: Option<&str>,
+        start_time: Option<DateTime<Utc>>,
+        end_time: Option<DateTime<Utc>>,
+    ) -> Result<usize, sqlx::Error> {
+        let has_query = !query.trim().is_empty();
+        let sql = format!(
+            r#"
+            SELECT COUNT(DISTINCT f.id) FROM elements e
+            {fts_join}
+            JOIN frames f ON f.id = e.frame_id
+            WHERE e.source = 'accessibility'
+              AND e.on_screen = ?1
+              {fts_match}
+              AND (?2 IS NULL OR f.timestamp >= ?2)
+              AND (?3 IS NULL OR f.timestamp <= ?3)
+              AND (?4 IS NULL OR f.app_name = ?4)
+              AND (?5 IS NULL OR f.window_name LIKE '%' || ?5 || '%')
+            "#,
+            fts_join = if has_query {
+                "JOIN elements_fts ef ON ef.rowid = e.id"
+            } else {
+                ""
+            },
+            fts_match = if has_query {
+                "AND ef.text MATCH ?6"
+            } else {
+                ""
+            },
+        );
+
+        let on_screen_int: i64 = if on_screen { 1 } else { 0 };
+        let mut q = sqlx::query_scalar::<_, i64>(&sql)
+            .bind(on_screen_int)
+            .bind(start_time)
+            .bind(end_time)
+            .bind(app_name)
+            .bind(window_name);
+        if has_query {
+            q = q.bind(crate::text_normalizer::sanitize_fts5_query(query));
+        }
+        let n: i64 = q.fetch_one(&self.pool).await?;
+        Ok(n.max(0) as usize)
+    }
+
     /// Search UI events (user input actions)
     #[allow(clippy::too_many_arguments)]
     pub async fn search_ui_events(
@@ -4627,10 +4985,16 @@ impl DatabaseManager {
         // 1. Collect video file paths for chunks that become fully orphaned.
         // Only include files that have been uploaded to cloud (cloud_blob_id IS NOT NULL)
         // or files not managed by archive (no cloud tracking needed for non-archive deletes).
+        // NOTE: filter out NULL video_chunk_id in the NOT IN subquery — SQL `x NOT IN
+        // (NULL, ...)` evaluates to UNKNOWN for every row, silently zeroing out the
+        // result set. frames.video_chunk_id is nullable (snapshot-only frames have no
+        // mp4 chunk), so without this filter the entire deletion returned 0 files.
         let video_files: Vec<String> = sqlx::query_scalar(
             r#"SELECT file_path FROM video_chunks
-               WHERE id IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp BETWEEN ?1 AND ?2)
-               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp NOT BETWEEN ?1 AND ?2)
+               WHERE id IN (SELECT DISTINCT video_chunk_id FROM frames
+                            WHERE timestamp BETWEEN ?1 AND ?2 AND video_chunk_id IS NOT NULL)
+               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames
+                              WHERE timestamp NOT BETWEEN ?1 AND ?2 AND video_chunk_id IS NOT NULL)
                AND (cloud_blob_id IS NOT NULL OR file_path LIKE 'cloud://%')"#,
         )
         .bind(&start_str)
@@ -4650,11 +5014,14 @@ impl DatabaseManager {
         .fetch_all(&mut **tx.conn())
         .await?;
 
-        // 2. Collect audio file paths for chunks that become fully orphaned
+        // 2. Collect audio file paths for chunks that become fully orphaned.
+        // Same NULL-in-NOT-IN pitfall as above — filter NULL audio_chunk_id explicitly.
         let audio_files: Vec<String> = sqlx::query_scalar(
             r#"SELECT file_path FROM audio_chunks
-               WHERE id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp BETWEEN ?1 AND ?2)
-               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp NOT BETWEEN ?1 AND ?2)
+               WHERE id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions
+                            WHERE timestamp BETWEEN ?1 AND ?2 AND audio_chunk_id IS NOT NULL)
+               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions
+                              WHERE timestamp NOT BETWEEN ?1 AND ?2 AND audio_chunk_id IS NOT NULL)
                AND file_path NOT LIKE 'cloud://%'"#,
         )
         .bind(&start_str)
@@ -4819,11 +5186,20 @@ impl DatabaseManager {
         let start_str = start.to_rfc3339();
         let end_str = end.to_rfc3339();
 
-        // 1. Collect ALL video file paths for chunks that become fully orphaned
+        // 1. Collect ALL video file paths for chunks that become fully orphaned.
+        // SQL `x NOT IN (..., NULL)` evaluates to UNKNOWN for every row, which
+        // makes the whole WHERE clause silently filter out *everything*.
+        // frames.video_chunk_id is nullable (snapshot-only frames carry no
+        // mp4 chunk reference), so the inner subquery must exclude NULLs
+        // explicitly — otherwise the user clicks "delete last 15 minutes"
+        // and the API responds with 0 files deleted while the mp4s stay on
+        // disk.
         let video_files: Vec<String> = sqlx::query_scalar(
             r#"SELECT file_path FROM video_chunks
-               WHERE id IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp BETWEEN ?1 AND ?2)
-               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp NOT BETWEEN ?1 AND ?2)
+               WHERE id IN (SELECT DISTINCT video_chunk_id FROM frames
+                            WHERE timestamp BETWEEN ?1 AND ?2 AND video_chunk_id IS NOT NULL)
+               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames
+                              WHERE timestamp NOT BETWEEN ?1 AND ?2 AND video_chunk_id IS NOT NULL)
                AND file_path NOT LIKE 'cloud://%'"#,
         )
         .bind(&start_str)
@@ -4842,11 +5218,15 @@ impl DatabaseManager {
         .fetch_all(&mut **tx.conn())
         .await?;
 
-        // 3. Collect ALL audio file paths for chunks that become fully orphaned
+        // 3. Collect ALL audio file paths for chunks that become fully orphaned.
+        // Same NULL-in-NOT-IN guard as above (audio_transcriptions.audio_chunk_id
+        // can be NULL for orphaned realtime transcript fragments).
         let audio_files: Vec<String> = sqlx::query_scalar(
             r#"SELECT file_path FROM audio_chunks
-               WHERE id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp BETWEEN ?1 AND ?2)
-               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp NOT BETWEEN ?1 AND ?2)
+               WHERE id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions
+                            WHERE timestamp BETWEEN ?1 AND ?2 AND audio_chunk_id IS NOT NULL)
+               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions
+                              WHERE timestamp NOT BETWEEN ?1 AND ?2 AND audio_chunk_id IS NOT NULL)
                AND file_path NOT LIKE 'cloud://%'"#,
         )
         .bind(&start_str)
@@ -5016,13 +5396,19 @@ impl DatabaseManager {
         // Collect video chunks fully covered by the range and not already
         // evicted. We only consider chunks whose ALL frames fall inside the
         // window — straddling chunks are skipped so old playback still works.
+        // NOT IN (subquery) silently filters out everything if the subquery
+        // contains NULL — frames.video_chunk_id is nullable. Same trap applies
+        // to audio_transcriptions.audio_chunk_id. Filter NULLs in the inner
+        // SELECT.
         let video_files: Vec<String> = sqlx::query_scalar(
             r#"SELECT file_path FROM video_chunks
                WHERE evicted_at IS NULL
                AND file_path != ''
                AND file_path NOT LIKE 'cloud://%'
-               AND id IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp BETWEEN ?1 AND ?2)
-               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+               AND id IN (SELECT DISTINCT video_chunk_id FROM frames
+                          WHERE timestamp BETWEEN ?1 AND ?2 AND video_chunk_id IS NOT NULL)
+               AND id NOT IN (SELECT DISTINCT video_chunk_id FROM frames
+                              WHERE timestamp NOT BETWEEN ?1 AND ?2 AND video_chunk_id IS NOT NULL)"#,
         )
         .bind(&start_str)
         .bind(&end_str)
@@ -5034,8 +5420,10 @@ impl DatabaseManager {
                WHERE evicted_at IS NULL
                AND file_path != ''
                AND file_path NOT LIKE 'cloud://%'
-               AND id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp BETWEEN ?1 AND ?2)
-               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions WHERE timestamp NOT BETWEEN ?1 AND ?2)"#,
+               AND id IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions
+                          WHERE timestamp BETWEEN ?1 AND ?2 AND audio_chunk_id IS NOT NULL)
+               AND id NOT IN (SELECT DISTINCT audio_chunk_id FROM audio_transcriptions
+                              WHERE timestamp NOT BETWEEN ?1 AND ?2 AND audio_chunk_id IS NOT NULL)"#,
         )
         .bind(&start_str)
         .bind(&end_str)
@@ -6078,6 +6466,12 @@ LIMIT ? OFFSET ?
         start_time: Option<DateTime<Utc>>,
         end_time: Option<DateTime<Utc>>,
         app_name: Option<&str>,
+        // Optional on-screen filter (issue #2436). Some(true) keeps only
+        // elements visually present in the captured screenshot;
+        // Some(false) keeps only off-screen elements (rare — useful for
+        // debugging or "what was scrolled off?" queries); None preserves
+        // current behavior and matches all rows including legacy NULL.
+        on_screen: Option<bool>,
         limit: u32,
         offset: u32,
     ) -> Result<(Vec<Element>, i64), sqlx::Error> {
@@ -6105,6 +6499,12 @@ LIMIT ? OFFSET ?
         if app_name.is_some() {
             conditions.push("f.app_name = ?".to_string());
         }
+        if on_screen.is_some() {
+            // `e.on_screen = ?` is intentional — does NOT match NULL rows.
+            // Legacy elements have NULL because the a11y walker didn't
+            // report it before; pre-fix they cannot be classified.
+            conditions.push("e.on_screen = ?".to_string());
+        }
 
         let where_clause = if conditions.is_empty() {
             String::new()
@@ -6121,7 +6521,7 @@ LIMIT ? OFFSET ?
         let sql = format!(
             r#"SELECT e.id, e.frame_id, e.source, e.role, e.text, e.parent_id,
                       e.depth, e.left_bound, e.top_bound, e.width_bound, e.height_bound,
-                      e.confidence, e.sort_order
+                      e.confidence, e.sort_order, e.on_screen
                FROM elements e
                JOIN frames f ON f.id = e.frame_id
                {}
@@ -6173,6 +6573,14 @@ LIMIT ? OFFSET ?
             data_query = data_query.bind(app.to_string());
             count_query = count_query.bind(app.to_string());
         }
+        if let Some(os) = on_screen {
+            // SQLite stores BOOLEAN as INTEGER. Bind as i64 explicitly so
+            // the comparison hits the partial index from
+            // 20260502000000_add_elements_on_screen.sql.
+            let v: i64 = if os { 1 } else { 0 };
+            data_query = data_query.bind(v);
+            count_query = count_query.bind(v);
+        }
 
         data_query = data_query.bind(limit as i64).bind(offset as i64);
 
@@ -6205,9 +6613,9 @@ LIMIT ? OFFSET ?
         .unwrap_or(frame_id);
 
         let sql = if source.is_some() {
-            "SELECT id, frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order FROM elements WHERE frame_id = ?1 AND source = ?2 ORDER BY sort_order"
+            "SELECT id, frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order, on_screen FROM elements WHERE frame_id = ?1 AND source = ?2 ORDER BY sort_order"
         } else {
-            "SELECT id, frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order FROM elements WHERE frame_id = ?1 ORDER BY sort_order"
+            "SELECT id, frame_id, source, role, text, parent_id, depth, left_bound, top_bound, width_bound, height_bound, confidence, sort_order, on_screen FROM elements WHERE frame_id = ?1 ORDER BY sort_order"
         };
 
         let mut query = sqlx::query_as::<_, ElementRow>(sql).bind(effective_frame_id);
@@ -6901,6 +7309,7 @@ LIMIT ? OFFSET ?
             Some(app_name),
             Some(window_name),
             browser_url,
+            None, // document_path — legacy a11y-only test helper
             false,
             None,
             Some(text_content),
@@ -7134,7 +7543,59 @@ LIMIT ? OFFSET ?
         Ok(Some(format!("## typed during meeting\n\n{}", display)))
     }
 
-    /// End a meeting and optionally append typed text to its note.
+    /// Collect distinct absolute file paths the user had open in editors during
+    /// a meeting's time interval (from `frames.document_path`, populated on
+    /// macOS via AXDocument). Returns a markdown bullet list, deduplicated and
+    /// sorted alphabetically — or None when nothing qualifies.
+    ///
+    /// Edge cases handled:
+    /// * `document_path IS NULL` for browsers / OS chrome / terminals →
+    ///   filtered out by the WHERE clause.
+    /// * Same file appears in many frames (typical for the focused doc) →
+    ///   `DISTINCT` dedupes.
+    /// * Empty result → `Ok(None)` so caller skips emitting the section.
+    /// * 200-row cap (so a stray diff with thousands of distinct files
+    ///   doesn't explode the meeting note).
+    pub async fn get_meeting_edited_files(&self, id: i64) -> Result<Option<String>, SqlxError> {
+        let row: Option<(String, Option<String>)> =
+            sqlx::query_as("SELECT meeting_start, meeting_end FROM meetings WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
+
+        let (start, end) = match row {
+            Some((s, Some(e))) => (s, e),
+            _ => return Ok(None),
+        };
+
+        let rows: Vec<(String,)> = sqlx::query_as(
+            r#"SELECT DISTINCT document_path
+               FROM frames
+               WHERE timestamp >= ?1 AND timestamp <= ?2
+                 AND document_path IS NOT NULL
+                 AND document_path != ''
+               ORDER BY document_path ASC
+               LIMIT 200"#,
+        )
+        .bind(&start)
+        .bind(&end)
+        .fetch_all(&self.pool)
+        .await?;
+
+        if rows.is_empty() {
+            return Ok(None);
+        }
+
+        let bullets: Vec<String> = rows.iter().map(|(p,)| format!("- {}", p)).collect();
+        Ok(Some(format!(
+            "## files edited during meeting\n\n{}",
+            bullets.join("\n")
+        )))
+    }
+
+    /// End a meeting and optionally append auto-collected context (typed
+    /// text + edited files) to its note. Both blocks come from the same
+    /// `[meeting_start, meeting_end]` time window.
     pub async fn end_meeting_with_typed_text(
         &self,
         id: i64,
@@ -7148,22 +7609,38 @@ LIMIT ? OFFSET ?
             return Ok(());
         }
 
-        // Collect typed text
+        // Build the auto-injected suffix from the available signals. Each
+        // signal is independently optional — a meeting where the user only
+        // edited files but typed nothing still gets the files block, and
+        // vice-versa. Order matters for readability: typed text first
+        // (the user's actual prose), files second (context).
+        let mut sections: Vec<String> = Vec::new();
         if let Ok(Some(typed_text)) = self.get_meeting_typed_text(id).await {
-            // Append to existing note
-            let existing_note: Option<(Option<String>,)> =
-                sqlx::query_as("SELECT note FROM meetings WHERE id = ?1")
-                    .bind(id)
-                    .fetch_optional(&self.pool)
-                    .await?;
+            sections.push(typed_text);
+        }
+        if let Ok(Some(files)) = self.get_meeting_edited_files(id).await {
+            sections.push(files);
+        }
+        if sections.is_empty() {
+            return Ok(());
+        }
+        let suffix = sections.join("\n\n");
 
-            let new_note = match existing_note {
-                Some((Some(existing),)) if !existing.is_empty() => {
-                    format!("{}\n\n{}", existing, typed_text)
-                }
-                _ => typed_text,
-            };
+        // Append to existing note
+        let existing_note: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT note FROM meetings WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
 
+        let new_note = match existing_note {
+            Some((Some(existing),)) if !existing.is_empty() => {
+                format!("{}\n\n{}", existing, suffix)
+            }
+            _ => suffix,
+        };
+
+        {
             let mut tx = self.begin_immediate_with_retry().await?;
             sqlx::query("UPDATE meetings SET note = ?1 WHERE id = ?2")
                 .bind(&new_note)
@@ -7560,6 +8037,142 @@ LIMIT ? OFFSET ?
         Ok(())
     }
 
+    // -- memories cross-device sync helpers --
+    //
+    // The HTTP layer + background loop in screenpipe-engine/src/memories_sync.rs
+    // calls these to read all rows for the manifest, mint sync_uuids on first
+    // publish, and apply remote rows back into the local table. Conflict
+    // resolution (LWW) lives in screenpipe-core::memories::sync and is pure;
+    // these are the I/O endpoints.
+
+    /// Read every memory + its sync metadata for manifest building.
+    /// Returns the full row including sync_uuid (may be NULL for rows
+    /// born locally that haven't synced yet) and sync_modified_by.
+    pub async fn list_memories_for_sync(&self) -> Result<Vec<MemorySyncRow>, SqlxError> {
+        sqlx::query_as::<_, MemorySyncRow>(
+            "SELECT id, sync_uuid, content, source, source_context, tags, importance, \
+                    created_at, updated_at, sync_modified_by \
+             FROM memories",
+        )
+        .fetch_all(&self.pool)
+        .await
+    }
+
+    /// Stamp a freshly-minted sync_uuid + machine id on a row that's
+    /// being published for the first time. No-op if the row was deleted
+    /// while the sync was in flight (id no longer exists).
+    pub async fn set_memory_sync_identity(
+        &self,
+        id: i64,
+        sync_uuid: &str,
+        machine_id: &str,
+    ) -> Result<(), SqlxError> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+        sqlx::query(
+            "UPDATE memories SET sync_uuid = ?1, sync_modified_by = ?2 \
+             WHERE id = ?3 AND sync_uuid IS NULL",
+        )
+        .bind(sync_uuid)
+        .bind(machine_id)
+        .bind(id)
+        .execute(&mut **tx.conn())
+        .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Apply a memory pulled from a remote machine. INSERTs if the
+    /// sync_uuid is unknown locally, UPDATEs the existing row if not.
+    /// Caller is responsible for LWW: this just writes what it's given.
+    /// `frame_id` is intentionally not synced (it's a local FK), so
+    /// imported rows always have NULL frame_id.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn upsert_synced_memory(
+        &self,
+        sync_uuid: &str,
+        content: &str,
+        source: &str,
+        source_context: Option<&str>,
+        tags: &str,
+        importance: f64,
+        created_at: &str,
+        updated_at: &str,
+        sync_modified_by: &str,
+    ) -> Result<(), SqlxError> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+        // SQLite's INSERT … ON CONFLICT (sync_uuid) is the cleanest path,
+        // but the unique index is partial (WHERE sync_uuid IS NOT NULL),
+        // and partial indexes can't drive ON CONFLICT in SQLite < 3.40
+        // we don't gate on. Two-step is safer and the table is small.
+        let existing: Option<(i64,)> =
+            sqlx::query_as("SELECT id FROM memories WHERE sync_uuid = ?1 LIMIT 1")
+                .bind(sync_uuid)
+                .fetch_optional(&mut **tx.conn())
+                .await?;
+        if let Some((id,)) = existing {
+            sqlx::query(
+                "UPDATE memories SET content = ?1, source = ?2, source_context = ?3, \
+                                     tags = ?4, importance = ?5, created_at = ?6, \
+                                     updated_at = ?7, sync_modified_by = ?8 \
+                 WHERE id = ?9",
+            )
+            .bind(content)
+            .bind(source)
+            .bind(source_context)
+            .bind(tags)
+            .bind(importance)
+            .bind(created_at)
+            .bind(updated_at)
+            .bind(sync_modified_by)
+            .bind(id)
+            .execute(&mut **tx.conn())
+            .await?;
+        } else {
+            sqlx::query(
+                "INSERT INTO memories (sync_uuid, content, source, source_context, tags, \
+                                       importance, created_at, updated_at, sync_modified_by) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            )
+            .bind(sync_uuid)
+            .bind(content)
+            .bind(source)
+            .bind(source_context)
+            .bind(tags)
+            .bind(importance)
+            .bind(created_at)
+            .bind(updated_at)
+            .bind(sync_modified_by)
+            .execute(&mut **tx.conn())
+            .await?;
+        }
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Apply a remote tombstone — delete the local row matching the
+    /// uuid. No-op if not found (already deleted, or never synced).
+    pub async fn delete_memory_by_sync_uuid(&self, sync_uuid: &str) -> Result<(), SqlxError> {
+        let mut tx = self.begin_immediate_with_retry().await?;
+        sqlx::query("DELETE FROM memories WHERE sync_uuid = ?1")
+            .bind(sync_uuid)
+            .execute(&mut **tx.conn())
+            .await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    /// Look up a memory's sync_uuid by local id. Used by the DELETE
+    /// route to know whether to record a tombstone (skip if NULL —
+    /// the row was never published, so no other device has it).
+    pub async fn get_memory_sync_uuid(&self, id: i64) -> Result<Option<String>, SqlxError> {
+        let row: Option<(Option<String>,)> =
+            sqlx::query_as("SELECT sync_uuid FROM memories WHERE id = ?1")
+                .bind(id)
+                .fetch_optional(&self.pool)
+                .await?;
+        Ok(row.and_then(|(u,)| u))
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn list_memories(
         &self,
@@ -7823,6 +8436,38 @@ pub fn find_matching_a11y_positions(tree_json: &str, query: &str) -> Vec<TextPos
                     .find(|w| text_lower.contains(*w))
             };
             let needle = needle?;
+
+            // Locate the needle's char offset inside the node's text — used both
+            // to pick the matching line span (when present) and to narrow within
+            // that line. Working in chars (not bytes) keeps the math consistent
+            // with capture-side `LineSpan::char_start/char_count`.
+            let byte_offset = text_lower.find(needle)?;
+            let needle_char_start = text_lower[..byte_offset].chars().count();
+            let needle_char_len = needle.chars().count();
+            if needle_char_len == 0 {
+                return None;
+            }
+
+            // Prefer a line-level bbox when capture stored per-line geometry.
+            // The whole point of `lines`: a multi-line paragraph's `bounds`
+            // would otherwise paint the entire paragraph yellow because the
+            // multi-line guard in `narrow_bbox_to_needle` skips narrowing.
+            if let Some(lines) = n.get("lines").and_then(|v| v.as_array()) {
+                if let Some(pos) = match_against_line_spans(
+                    text,
+                    &text_lower,
+                    needle,
+                    needle_char_start,
+                    needle_char_len,
+                    lines,
+                ) {
+                    return Some(pos);
+                }
+                // Fall through to paragraph-bbox path if no line span covers
+                // the match (defensive: shouldn't happen for well-formed line
+                // captures, but a partial budget abort could leave gaps).
+            }
+
             let b = n.get("bounds")?;
             let left = b.get("left")?.as_f64()? as f32;
             let top = b.get("top")?.as_f64()? as f32;
@@ -7860,6 +8505,63 @@ pub fn find_matching_a11y_positions(tree_json: &str, query: &str) -> Vec<TextPos
     matches.dedup_by(|a, b| a.text == b.text);
 
     matches
+}
+
+/// Find the line span containing the needle and return a tight bbox around
+/// the matching word within that line. Returns `None` if no line covers the
+/// match — caller falls back to the paragraph bbox in that case.
+fn match_against_line_spans(
+    text: &str,
+    _text_lower: &str,
+    needle: &str,
+    needle_char_start: usize,
+    needle_char_len: usize,
+    lines: &[serde_json::Value],
+) -> Option<TextPosition> {
+    let needle_char_end = needle_char_start + needle_char_len;
+    for line in lines {
+        let char_start = line.get("char_start")?.as_u64()? as usize;
+        let char_count = line.get("char_count")?.as_u64()? as usize;
+        let char_end = char_start.checked_add(char_count)?;
+
+        // The match must fall entirely within this line. Multi-line matches
+        // (rare for typical search queries) get handled by the next iteration
+        // or fall through to paragraph bbox if they straddle lines.
+        if needle_char_start < char_start || needle_char_end > char_end {
+            continue;
+        }
+
+        let b = line.get("bounds")?;
+        let left = b.get("left")?.as_f64()? as f32;
+        let top = b.get("top")?.as_f64()? as f32;
+        let width = b.get("width")?.as_f64()? as f32;
+        let height = b.get("height")?.as_f64()? as f32;
+        if width <= 0.001 || height <= 0.001 {
+            continue;
+        }
+
+        // Build a "line text" = the substring this line covers. Run the
+        // existing single-line narrowing against it. The line-relative needle
+        // offset reuses `narrow_bbox_to_needle`'s find-then-fraction math.
+        let line_text: String = text.chars().skip(char_start).take(char_count).collect();
+        let line_lower = line_text.to_lowercase();
+        // The needle must still appear in the lowered line text (it does — we
+        // already matched on the wider text). Use `narrow_bbox_to_needle`
+        // directly: at line granularity the multi-line guard accepts narrowing.
+        let (n_left, n_width) =
+            narrow_bbox_to_needle(&line_text, &line_lower, needle, left, width, height);
+        return Some(TextPosition {
+            text: text.to_string(),
+            confidence: 1.0,
+            bounds: TextBounds {
+                left: n_left,
+                top,
+                width: n_width,
+                height,
+            },
+        });
+    }
+    None
 }
 
 fn calculate_confidence(positions: &[TextPosition]) -> f32 {
@@ -8177,6 +8879,184 @@ mod tests {
             "width should narrow: {}",
             pos.bounds.width
         );
+    }
+
+    // -----------------------------------------------------------------
+    // find_matching_a11y_positions — line-span aware search
+    // -----------------------------------------------------------------
+
+    /// Build a single-node AX tree JSON with optional `lines` array. Lines
+    /// each cover `chars_per_line` characters; their bounds are stacked
+    /// vertically so the top of line N is at `top + N * line_h`.
+    fn ax_node_with_lines(
+        text: &str,
+        node_left: f32,
+        node_top: f32,
+        node_w: f32,
+        node_h: f32,
+        chars_per_line: usize,
+        line_h: f32,
+    ) -> String {
+        use serde_json::json;
+        let total_chars = text.chars().count();
+        let mut spans = Vec::new();
+        let mut start = 0usize;
+        let mut idx = 0usize;
+        while start < total_chars {
+            let count = chars_per_line.min(total_chars - start);
+            spans.push(json!({
+                "char_start": start,
+                "char_count": count,
+                "bounds": {
+                    "left": node_left,
+                    "top": node_top + (idx as f32) * line_h,
+                    "width": node_w,
+                    "height": line_h,
+                }
+            }));
+            start += count;
+            idx += 1;
+        }
+        let nodes = json!([{
+            "role": "AXStaticText",
+            "text": text,
+            "depth": 3,
+            "bounds": {
+                "left": node_left,
+                "top": node_top,
+                "width": node_w,
+                "height": node_h,
+            },
+            "lines": spans,
+        }]);
+        nodes.to_string()
+    }
+
+    #[test]
+    fn a11y_match_uses_line_bbox_not_paragraph() {
+        // Paragraph: 3 lines of 10 chars each. Match "world" appears on line 2.
+        let text = "hello mate\nworld here\ngoodbye yo";
+        // Build with manual char positions: "hello mate" 0..10, "\n" 10, "world here" 11..21, ...
+        // To keep it simple, line our test data to be ASCII-only with explicit char counts.
+        let json = {
+            use serde_json::json;
+            json!([{
+                "role": "AXStaticText",
+                "text": text,
+                "depth": 3,
+                "bounds": { "left": 0.05, "top": 0.20, "width": 0.40, "height": 0.18 },
+                "lines": [
+                    { "char_start": 0,  "char_count": 10, "bounds": { "left": 0.05, "top": 0.20, "width": 0.40, "height": 0.06 }},
+                    { "char_start": 11, "char_count": 10, "bounds": { "left": 0.05, "top": 0.26, "width": 0.40, "height": 0.06 }},
+                    { "char_start": 22, "char_count": 10, "bounds": { "left": 0.05, "top": 0.32, "width": 0.40, "height": 0.06 }}
+                ]
+            }]).to_string()
+        };
+        let positions = find_matching_a11y_positions(&json, "world");
+        assert_eq!(positions.len(), 1);
+        let pos = &positions[0];
+        // top should be the *line 2* top (0.26), not the paragraph top (0.20).
+        assert!(
+            (pos.bounds.top - 0.26).abs() < 0.001,
+            "top should equal line-2 top, got {}",
+            pos.bounds.top
+        );
+        // height should be the line height (0.06), not the paragraph (0.18)
+        assert!(
+            (pos.bounds.height - 0.06).abs() < 0.001,
+            "height should be line height, got {}",
+            pos.bounds.height
+        );
+        // width should narrow within the line — narrower than the full line width
+        assert!(
+            pos.bounds.width < 0.40,
+            "width should narrow within the line: {}",
+            pos.bounds.width
+        );
+    }
+
+    #[test]
+    fn a11y_match_falls_back_to_paragraph_when_no_lines_field() {
+        // Pre-line-capture JSON: no "lines" key. Multi-line paragraph stays
+        // as a single bbox — original behavior, multi-line guard kicks in.
+        let json = r#"[{
+            "role": "AXStaticText",
+            "text": "this is a really long paragraph that wraps across multiple lines and would not fit on one",
+            "depth": 3,
+            "bounds": {"left": 0.05, "top": 0.20, "width": 0.20, "height": 0.18}
+        }]"#;
+        let positions = find_matching_a11y_positions(json, "really");
+        assert_eq!(positions.len(), 1);
+        // No narrowing — paragraph bbox is preserved (multi-line guard in
+        // narrow_bbox_to_needle returns full width).
+        let p = &positions[0];
+        assert!((p.bounds.left - 0.05).abs() < 0.001);
+        assert!((p.bounds.width - 0.20).abs() < 0.001);
+    }
+
+    #[test]
+    fn a11y_match_falls_back_when_no_line_covers_match() {
+        // Line capture aborted partway — only line 1 is present. A query that
+        // matches only on line 3 should fall through to paragraph bbox.
+        let json = r#"[{
+            "role": "AXStaticText",
+            "text": "alpha bravo charlie\ndelta echo foxtrot\ngolf hotel india",
+            "depth": 3,
+            "bounds": {"left": 0.05, "top": 0.20, "width": 0.40, "height": 0.18},
+            "lines": [
+                { "char_start": 0, "char_count": 19, "bounds": { "left": 0.05, "top": 0.20, "width": 0.40, "height": 0.06 } }
+            ]
+        }]"#;
+        // "india" appears at char 53 — not covered by the only line span.
+        let positions = find_matching_a11y_positions(json, "india");
+        assert_eq!(positions.len(), 1);
+        let p = &positions[0];
+        // Should fall back to paragraph bbox (top=0.20, height=0.18).
+        assert!((p.bounds.top - 0.20).abs() < 0.001, "top: {}", p.bounds.top);
+        assert!(
+            (p.bounds.height - 0.18).abs() < 0.001,
+            "height: {}",
+            p.bounds.height
+        );
+    }
+
+    #[test]
+    fn a11y_match_skips_line_with_zero_size_bounds() {
+        // Defensive: a line with degenerate bounds (e.g. blank line at end of
+        // paragraph) shouldn't be returned. Match falls through to next line.
+        let json = r#"[{
+            "role": "AXStaticText",
+            "text": "first\nsecond",
+            "depth": 3,
+            "bounds": {"left": 0.05, "top": 0.20, "width": 0.40, "height": 0.12},
+            "lines": [
+                { "char_start": 0, "char_count": 5, "bounds": { "left": 0.05, "top": 0.20, "width": 0.0, "height": 0.0 }},
+                { "char_start": 6, "char_count": 6, "bounds": { "left": 0.05, "top": 0.26, "width": 0.40, "height": 0.06 }}
+            ]
+        }]"#;
+        // "second" lives in the second line; the first line has zero bounds
+        // and would otherwise be picked. We expect the second line.
+        let positions = find_matching_a11y_positions(json, "second");
+        assert_eq!(positions.len(), 1);
+        assert!((positions[0].bounds.top - 0.26).abs() < 0.001);
+    }
+
+    #[test]
+    fn a11y_match_uses_line_for_line_3_when_multiline_capture_complete() {
+        // Reproduces the Paul Graham brandage paragraph case: long paragraph
+        // wraps across many lines, search query lives 3 lines deep.
+        // Use the helper with regular line widths for a readable test.
+        let para: String = "abcdefghijklmnopqrstuvwxyz".repeat(5);
+        let json = ax_node_with_lines(&para, 0.10, 0.30, 0.50, 0.30, 26, 0.06);
+        // "wxyz" appears at offsets 22..26, 48..52, 74..78, 100..104, 126..130.
+        // The first occurrence (0..26 → line 0) is what should match.
+        let positions = find_matching_a11y_positions(&json, "wxyz");
+        assert_eq!(positions.len(), 1);
+        let p = &positions[0];
+        // Should land on line 0 (top = 0.30).
+        assert!((p.bounds.top - 0.30).abs() < 0.001);
+        // Line height (not paragraph height).
+        assert!((p.bounds.height - 0.06).abs() < 0.001);
     }
 
     fn make_search_match(
