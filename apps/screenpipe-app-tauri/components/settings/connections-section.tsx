@@ -1022,8 +1022,8 @@ function ChatGptPanel() {
 // ---------------------------------------------------------------------------
 
 function OAuthPanel({ integrationId, integrationName }: { integrationId: string; integrationName: string }) {
-  const { settings } = useSettings();
-  const isPro = !!settings.user?.cloud_subscribed;
+  // THADM: disabled pro gating — all OAuth connections are local-first and free
+  const isPro = true;
   const [status, setStatus] = useState<"idle" | "loading" | "connected">("idle");
   const [displayName, setDisplayName] = useState<string | null>(null);
   // Ref guard so a cancelled or timed-out connect attempt doesn't update state after cancel.

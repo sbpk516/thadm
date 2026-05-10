@@ -108,7 +108,7 @@ export function GmailCard() {
             </div>
 
             <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
-              Read and send Gmail messages. Once connected, pipes can search
+              Read and send Gmail messages. Once connected, tasks can search
               messages, read threads, and send email via the local API at{" "}
               <code className="text-xs bg-muted px-1 rounded">
                 /connections/gmail/messages
@@ -190,7 +190,7 @@ export function GmailCard() {
             <span>
               {connected
                 ? accounts.map((a) => a.displayName || a.instance).filter(Boolean).join(", ") || "connected"
-                : "Lets pipes read and send Gmail via the local API"}
+                : "Lets tasks read and send Gmail via the local API"}
             </span>
             <span className="ml-auto">
               {connected ? "● connected" : "○ not connected"}

@@ -5669,10 +5669,10 @@ export function StandaloneChat({
             <div className="flex items-center justify-end gap-0.5 shrink-0 px-2 pb-2 pt-1">
               {(() => {
                 // Privacy filter: removes personal info (names, emails, phones,
-                // addresses, account numbers) from screenpipe API responses
-                // before the AI sees them. Pro-only; non-pro click opens upsell.
-                const isPro = settings.user?.cloud_subscribed === true;
-                const privacyOn = isPro && settings.piPrivacyFilter === true;
+                // addresses, account numbers) from screen data before the AI
+                // sees it. Runs locally via screenpipe-redact (no cloud needed).
+                // THADM: disabled pro gating — local-first feature, free for all.
+                const privacyOn = settings.piPrivacyFilter === true;
                 return (
                   <TooltipProvider delayDuration={150}>
                     <Tooltip>
@@ -5682,10 +5682,6 @@ export function StandaloneChat({
                           size="icon"
                           variant="ghost"
                           onClick={() => {
-                            if (!isPro) {
-                              openUrl("https://screenpi.pe/onboarding");
-                              return;
-                            }
                             updateSettings({ piPrivacyFilter: !privacyOn });
                           }}
                           disabled={isLoading}
@@ -5714,30 +5710,13 @@ export function StandaloneChat({
                         className="max-w-[320px] p-3 space-y-2 text-xs leading-relaxed"
                       >
                         <div className="font-medium text-sm">
-                          {!isPro
-                            ? "Privacy filter — Pro"
-                            : privacyOn
-                              ? "Privacy filter: ON"
-                              : "Privacy filter: OFF"}
+                          {privacyOn ? "Privacy filter: ON" : "Privacy filter: OFF"}
                         </div>
                         <div className="text-muted-foreground">
-                          {!isPro
-                            ? "Remove names, emails, phone numbers and other personal info from your screen data before the AI sees it. Adds ~1–2s per search. Click the shield to upgrade."
-                            : privacyOn
-                              ? "Names, emails, phone numbers and other personal info are removed from your screen data before it reaches the AI. Adds ~1–2s per search. Click the shield to turn off."
-                              : "Turn this on to strip personal info (names, emails, phones, addresses, account numbers) from your screen data before the AI sees it. Adds ~1–2s per search."}
+                          {privacyOn
+                            ? "Names, emails, phone numbers and other personal info are removed from your screen data before it reaches the AI. Adds ~1–2s per search. Click the shield to turn off."
+                            : "Turn this on to strip personal info (names, emails, phones, addresses, account numbers) from your screen data before the AI sees it. Adds ~1–2s per search."}
                         </div>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            openUrl("https://docs.screenpi.pe/privacy-filter");
-                          }}
-                          className="text-[11px] underline text-muted-foreground hover:text-foreground transition-colors"
-                        >
-                          How it works →
-                        </button>
                       </TooltipContent>
                     </Tooltip>
                   </TooltipProvider>
