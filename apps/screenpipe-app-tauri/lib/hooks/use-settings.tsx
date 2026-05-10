@@ -140,7 +140,16 @@ export interface ChatConversation {
 	 *  Drives the right-side `<BrowserSidebar />` panel: when the user
 	 *  re-opens this conversation the panel restores to this URL.
 	 *  Cleared (set to undefined) when the user closes the sidebar. */
-	browserState?: { url: string; updatedAt: number };
+	browserState?: {
+		url: string;
+		updatedAt: number;
+		/** User-chosen panel width in CSS pixels. Defaults to 480 if unset.
+		 *  Persisted so re-opening the chat restores the same layout. */
+		width?: number;
+		/** User has hidden the panel (still has a saved URL — a small
+		 *  "re-open" button is shown in the chat header). */
+		collapsed?: boolean;
+	};
 }
 
 export interface ChatHistoryStore {
@@ -159,10 +168,6 @@ export type Settings = SettingsStore & {
 	lockVaultShortcut?: string;
 	/** When true, audio devices follow system default and auto-switch on changes */
 	useSystemDefaultAudio?: boolean;
-	/** @deprecated Always true — kept for serde compat */
-	enableInputCapture?: boolean;
-	/** @deprecated Always true — kept for serde compat */
-	enableAccessibility?: boolean;
 	/** Enable AI workflow event detection (cloud, triggers event-based pipes) */
 	enableWorkflowEvents?: boolean;
 	/** Audio transcription scheduling: "realtime" (default) or "batch" (longer chunks for quality) */
@@ -185,6 +190,10 @@ export type Settings = SettingsStore & {
 	cloudArchiveRetentionDays?: number;
 	/** Sync pipe configurations across devices (requires cloud sync subscription) */
 	pipeSyncEnabled?: boolean;
+	/** Sync memories (facts, preferences, decisions, insights) across devices.
+	 * Independent of pipeSyncEnabled — a user might want their memories on
+	 * every device but keep pipes device-local, or vice versa. Pro-gated. */
+	memoriesSyncEnabled?: boolean;
 	/** OpenAI-compatible transcription endpoint URL */
 	openaiCompatibleEndpoint?: string;
 	/** OpenAI-compatible transcription API key */
@@ -210,17 +219,15 @@ export type Settings = SettingsStore & {
 	powerMode?: "auto" | "performance" | "battery_saver";
 	/** Show restart notifications when audio/vision capture stalls (default: false for now) */
 	showRestartNotifications?: boolean;
-	/** Offline mode — blocks all external network from pipes, disables PostHog telemetry, keeps Sentry crash reports */
-	offlineMode?: boolean;
 	/** Pause all screen capture when a DRM-protected streaming app (Netflix, Disney+, etc.) or a remote-desktop client (Omnissa/VMware Horizon) is focused — they blank their windows during screen recording */
 	pauseOnDrmContent?: boolean;
+	/** Skip clipboard capture in the UI recorder (events + content). Recommended when piping ~/.screenpipe to a remote LLM since passwords / API keys often pass through the clipboard. */
+	disableClipboardCapture?: boolean;
 	/** Experimental: capture System Audio via CoreAudio Process Tap (macOS 14.4+) instead of ScreenCaptureKit.
 	 *  Off by default. Ignored on macOS <14.4 and non-macOS — falls back to SCK. */
 	experimentalCoreaudioSystemAudio?: boolean;
 	/** Continue recording audio when the screen is locked (default: false) */
 	recordWhileLocked?: boolean;
-	/** Auto-append typed text to meeting notes when a meeting ends */
-	appendTypedTextToMeetingNotes?: boolean;
 	/** Auto-delete local data older than retention days (free alternative to cloud archive) */
 	localRetentionEnabled?: boolean;
 	/** Days to keep data locally before auto-deleting (default: 14) */
@@ -230,6 +237,8 @@ export type Settings = SettingsStore & {
 	localRetentionMode?: "media" | "all";
 	/** Apply macOS vibrancy effect to sidebar for a translucent glass look */
 	translucentSidebar?: boolean;
+	/** Hide model "thinking" reasoning blocks in chat (default: true) */
+	hideThinkingBlocks?: boolean;
 	/** Notification preferences — which notification sources are enabled */
 	notificationPrefs?: {
 		captureStalls: boolean;
@@ -359,7 +368,6 @@ let DEFAULT_SETTINGS: Settings = {
 			ignoredUrls: [],
 			teamFilters: { ignoredWindows: [], includedWindows: [], ignoredUrls: [] },
 
-			vadSensitivity: "medium",
 			analyticsEnabled: true,
 			audioChunkDuration: 30,
 			useChineseMirror: false,
@@ -408,8 +416,6 @@ let DEFAULT_SETTINGS: Settings = {
 				activeConversationId: null,
 				historyEnabled: true,
 			},
-			enableInputCapture: true,
-			enableAccessibility: true,
 			overlayMode: "fullscreen",
 			showOverlayInScreenRecording: false,
 			videoQuality: "balanced",
@@ -419,10 +425,10 @@ let DEFAULT_SETTINGS: Settings = {
 			filterMusic: false,
 			ignoreIncognitoWindows: true,
 			pauseOnDrmContent: false,
+			disableClipboardCapture: false,
 			experimentalCoreaudioSystemAudio: false,
 			recordWhileLocked: false,
-			appendTypedTextToMeetingNotes: true,
-			localRetentionEnabled: true,
+			localRetentionEnabled: false,
 			localRetentionDays: 14,
 			localRetentionMode: "media",
 		};

@@ -22,7 +22,6 @@ import {
   Phone,
   Plug,
   NotebookPen,
-  X,
 } from "lucide-react";
 import { emit } from "@tauri-apps/api/event";
 import { useChatStore } from "@/lib/stores/chat-store";
@@ -30,13 +29,17 @@ import { useOverlayData } from "@/app/shortcut-reminder/use-overlay-data";
 import { cn } from "@/lib/utils";
 import { AppSidebar, SidebarProvider, useSidebarContext } from "@/components/app-sidebar";
 import { usePlatform } from "@/lib/hooks/use-platform";
+import { useIsFullscreen } from "@/lib/hooks/use-is-fullscreen";
 import { FeedbackSection } from "@/components/settings/feedback-section";
 import { PipeStoreView } from "@/components/pipe-store";
 import { MemoriesSection } from "@/components/settings/memories-section";
 import { ConnectionsSection } from "@/components/settings/connections-section";
 import { MeetingNotesSection } from "@/components/meeting-notes";
 import { StandaloneChat } from "@/components/standalone-chat";
-import { ChatSidebar } from "@/components/chat-sidebar";
+import {
+  ChatSidebar,
+  CollapsedChatSidebarButton,
+} from "@/components/chat-sidebar";
 import { mountPiEventRouter } from "@/lib/stores/pi-event-router";
 import { mountPipeRunRecorder } from "@/lib/events/pipe-run-recorder";
 import { mountPipeWatchWriter } from "@/lib/events/pipe-watch-writer";
@@ -79,6 +82,10 @@ const SETTINGS_SECTIONS = new Set<string>([
 function HomeContent() {
   const router = useRouter();
   const { isMac } = usePlatform();
+  // In fullscreen, macOS hides the traffic lights — collapse the
+  // reservation that keeps the top-left action icons clear of them.
+  const isFullscreen = useIsFullscreen();
+  const reserveTrafficLights = isMac && !isFullscreen;
   const [activeSection, setActiveSection] = useQueryState("section", {
     defaultValue: "home",
     parse: (value) => {
@@ -94,6 +101,11 @@ function HomeContent() {
   const { isTranslucent } = useSidebarContext();
   const teamState = useTeam();
   const { isSectionHidden, isSettingLocked, needsLicenseKey, submitLicenseKey } = useEnterprisePolicy();
+  const selectChatConversation = useCallback((id: string) => {
+    setActiveSection("home");
+    useChatStore.getState().actions.setCurrent(id);
+    void emit("chat-load-conversation", { conversationId: id });
+  }, [setActiveSection]);
 
   // Redirect settings sections to the standalone settings page
   useEffect(() => {
@@ -196,12 +208,23 @@ function HomeContent() {
   // Ephemeral collapse for focused workflows (e.g. taking notes during
   // a meeting). Captures the user's prior sidebar state on enter and
   // restores it on exit — never persisted to localStorage.
+  //
+  // Stable identity (no deps) so this callback doesn't re-fire the
+  // child's notify-effect every time `sidebarCollapsed` flips. The prior
+  // version had `[sidebarCollapsed]` in its deps, which meant: user
+  // hits Cmd+B in focused-meeting mode → setSidebarCollapsed(false) →
+  // callback recreated → child's "notify on selectedId/onFocusModeChange"
+  // effect re-ran with selectedId still set → setSidebarCollapsed(true).
+  // Net effect: the sidebar slammed shut every time the user tried to
+  // open it during a meeting.
   const sidebarPrevCollapsedRef = useRef<boolean | null>(null);
+  const sidebarCollapsedRef = useRef(sidebarCollapsed);
+  useEffect(() => { sidebarCollapsedRef.current = sidebarCollapsed; }, [sidebarCollapsed]);
   const handleMeetingFocusModeChange = useCallback(
     (focused: boolean) => {
       if (focused) {
         if (sidebarPrevCollapsedRef.current === null) {
-          sidebarPrevCollapsedRef.current = sidebarCollapsed;
+          sidebarPrevCollapsedRef.current = sidebarCollapsedRef.current;
         }
         setSidebarCollapsed(true);
       } else if (sidebarPrevCollapsedRef.current !== null) {
@@ -210,7 +233,7 @@ function HomeContent() {
         setSidebarCollapsed(prev);
       }
     },
-    [sidebarCollapsed],
+    [],
   );
 
   // Cmd+B / Ctrl+B to toggle sidebar
@@ -575,7 +598,7 @@ function HomeContent() {
                       // top-1 + p-1 puts the 14px icon's center at y≈15px, matching the
                       // vertical center of the macOS traffic lights (which sit at y≈14).
                       "fixed top-1 z-20 p-1 rounded-md transition-colors",
-                      isMac ? "left-[78px]" : "left-2",
+                      reserveTrafficLights ? "left-[78px]" : "left-2",
                       isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                     )}
                   >
@@ -597,7 +620,7 @@ function HomeContent() {
                     className={cn(
                       "fixed top-1 z-20 p-1 rounded-md transition-colors",
                       // 28px right of the collapse icon (icon 16 + gap 8 + small breathing).
-                      isMac ? "left-[110px]" : "left-9",
+                      reserveTrafficLights ? "left-[110px]" : "left-9",
                       isTranslucent ? "vibrant-nav-item" : "text-muted-foreground hover:text-foreground hover:bg-muted/50"
                     )}
                   >
@@ -855,6 +878,12 @@ function HomeContent() {
                   }
                   return btn;
                 })}
+                {sidebarCollapsed && (
+                  <CollapsedChatSidebarButton
+                    onSelect={selectChatConversation}
+                    isTranslucent={isTranslucent}
+                  />
+                )}
               </div>
 
 
@@ -1049,6 +1078,7 @@ function HomeContent() {
             )}
           </div>
       </div>
+
     </div>
   );
 }

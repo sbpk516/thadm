@@ -68,8 +68,6 @@ impl ServerCore {
             std::env::set_var("SCREENPIPE_ANALYTICS_ID", &config.analytics_id);
         }
         // THADM: hard-disable analytics regardless of settings — local-first invariant.
-        let _offline_mode = screenpipe_core::offline::is_offline_mode();
-        let _analytics_effective = config.analytics_enabled && !_offline_mode;
         analytics::init(false);
 
         if config.use_chinese_mirror {
@@ -476,6 +474,130 @@ impl ServerCore {
         // mDNS
         if let Err(e) = screenpipe_connect::mdns::advertise(config.port) {
             warn!("mdns advertisement failed (non-fatal): {}", e);
+        }
+
+        // ── Async PII reconciliation workers (issue #3185 / PR #3188) ─────
+        // Two independent workers — text and image — each gated by its
+        // own toggle. Both off by default; users opt in through
+        // Settings → Privacy → "AI PII removal".
+        //
+        // The single `pii_backend` config flag selects the inner
+        // adapter for BOTH modalities:
+        //   - "local"   → local ONNX (text: stub, image: rfdetr_v8)
+        //   - "tinfoil" → confidential-compute enclave (H200) for both
+        let backend = config.pii_backend.as_str();
+        let use_tinfoil = matches!(backend, "tinfoil" | "cloud" | "enclave");
+
+        if config.async_pii_redaction {
+            use screenpipe_redact::adapters::opf::{OpfAdapter, OpfConfig};
+            use screenpipe_redact::adapters::tinfoil::TinfoilRedactor;
+            use screenpipe_redact::pipeline::{Pipeline, PipelineConfig};
+            use screenpipe_redact::worker::{Worker, WorkerConfig, ALL_TARGET_TABLES};
+            use screenpipe_redact::Redactor;
+
+            // Backend selection for the text "AI" step:
+            //   - "local"   → on-device candle OPF v3 (opf-rs). First
+            //                 run downloads ~2.8 GB from
+            //                 huggingface.co/screenpipe/pii-text-redactor
+            //                 in the background; until the download
+            //                 finishes the worker runs regex-only.
+            //   - "tinfoil" → Tinfoil confidential-compute enclave.
+            //
+            // The worker is destructive-only: it overwrites the source
+            // columns (`text` / `transcription` / `text_content` /
+            // `accessibility_text`) with the redacted text and stamps
+            // `*_redacted_at`. That's what the user-facing "AI PII
+            // removal" toggle means. The 20260507 migration drops the
+            // dead duplicate columns the old non-destructive mode used.
+            if use_tinfoil {
+                info!("starting async text-PII reconciliation worker (backend=tinfoil)");
+                let ai: Arc<dyn Redactor> = Arc::new(TinfoilRedactor::from_env());
+                let pipeline = Pipeline::regex_then_ai(ai, PipelineConfig::default());
+                let pipeline_arc = Arc::new(pipeline) as Arc<dyn Redactor>;
+                let cfg = WorkerConfig {
+                    tables: ALL_TARGET_TABLES.to_vec(),
+                    ..Default::default()
+                };
+                let _ = Worker::new(db.pool.clone(), pipeline_arc, cfg).spawn();
+            } else {
+                // Local mode: spawn the download+load off the boot path
+                // so a slow first-run HF pull doesn't block the app
+                // launch. The worker is created inside the spawned
+                // task once the model is ready.
+                let pool = db.pool.clone();
+                tokio::spawn(async move {
+                    info!(
+                        "fetching local OPF v3 checkpoint (~2.8 GB on first run, cached at \
+                         ~/.screenpipe/models/opf-v3/)"
+                    );
+                    let pipeline = match OpfAdapter::load_or_download(OpfConfig::default()).await {
+                        Ok(adapter) => {
+                            info!(
+                                "starting async text-PII reconciliation worker (backend=local, \
+                                 opf-rs)"
+                            );
+                            let ai: Arc<dyn Redactor> = Arc::new(adapter);
+                            Pipeline::regex_then_ai(ai, PipelineConfig::default())
+                        }
+                        Err(e) => {
+                            warn!(
+                                "couldn't load local OPF redactor ({e}); running text-PII \
+                                 worker in regex-only mode. Switch backend to 'tinfoil' in \
+                                 Settings → Privacy → AI PII removal to use the cloud enclave \
+                                 instead."
+                            );
+                            Pipeline::regex_only()
+                        }
+                    };
+                    let pipeline_arc = Arc::new(pipeline) as Arc<dyn Redactor>;
+                    let cfg = WorkerConfig {
+                        tables: ALL_TARGET_TABLES.to_vec(),
+                        ..Default::default()
+                    };
+                    let _ = Worker::new(pool, pipeline_arc, cfg).spawn();
+                });
+            }
+        }
+
+        if config.async_image_pii_redaction {
+            use screenpipe_redact::adapters::rfdetr::{RfdetrConfig, RfdetrRedactor};
+            use screenpipe_redact::adapters::tinfoil_image::TinfoilImageRedactor;
+            use screenpipe_redact::image::worker::{ImageWorker, ImageWorkerConfig};
+            use screenpipe_redact::ImageRedactor;
+
+            let pool = db.pool.clone();
+            if use_tinfoil {
+                info!("starting async image-PII worker (backend=tinfoil)");
+                let detector =
+                    Arc::new(TinfoilImageRedactor::from_env()) as Arc<dyn ImageRedactor>;
+                let _ = ImageWorker::new(pool, detector, ImageWorkerConfig::default()).spawn();
+            } else {
+                // Local mode: rfdetr_v8 ONNX. First-run downloads
+                // ~108 MB from huggingface.co/screenpipe/pii-image-redactor
+                // and verifies SHA-256 before landing in ~/.screenpipe/models/.
+                tokio::spawn(async move {
+                    match RfdetrRedactor::load_or_download(RfdetrConfig::default()).await {
+                        Ok(detector) => {
+                            info!("starting async image-PII worker (backend=local)");
+                            let detector_arc =
+                                Arc::new(detector) as Arc<dyn ImageRedactor>;
+                            let _ = ImageWorker::new(
+                                pool,
+                                detector_arc,
+                                ImageWorkerConfig::default(),
+                            )
+                            .spawn();
+                        }
+                        Err(e) => {
+                            warn!(
+                                "image-PII (local) enabled but couldn't load rfdetr_v8 model; \
+                                 skipping: {e}. switch to backend=tinfoil in Settings to use \
+                                 the cloud enclave instead."
+                            );
+                        }
+                    }
+                });
+            }
         }
 
         Ok(Self {

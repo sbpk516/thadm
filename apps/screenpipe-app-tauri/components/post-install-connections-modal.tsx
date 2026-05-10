@@ -160,7 +160,7 @@ export function PostInstallConnectionsModal({
             set up connections for &quot;{pipeName}&quot;
           </DialogTitle>
           <DialogDescription className="text-xs">
-            this pipe requires the following connections to work properly.
+            this task requires the following connections to work properly.
             configure them now or skip and set them up later in settings.
           </DialogDescription>
         </DialogHeader>

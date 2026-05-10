@@ -18,7 +18,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger, TooltipProvider } from "@/components/ui/tooltip";
 import { useSettings, ChatMessage, ChatConversation } from "@/lib/hooks/use-settings";
 import { cn } from "@/lib/utils";
-import { Loader2, Send, Square, User, Settings, ExternalLink, X, ImageIcon, History, Search, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, Copy, Check, Clock, Paperclip, Filter, RefreshCw, GitBranch, MoreHorizontal, Pencil, Pin, Shield, ShieldCheck } from "lucide-react";
+import { Loader2, Send, Square, User, Settings, ExternalLink, X, ImageIcon, History, Search, Trash2, ChevronLeft, ChevronRight, ChevronDown, ChevronUp, Plus, Copy, Check, Clock, Paperclip, Filter, RefreshCw, GitBranch, MoreHorizontal, Pencil, Pin, Shield, ShieldCheck, Sparkles } from "lucide-react";
 import { SchedulePromptDialog } from "@/components/chat/schedule-prompt-dialog";
 import { PipeContextBanner } from "@/components/chat/pipe-context-banner";
 import { BrowserSidebar } from "@/components/browser-sidebar";
@@ -47,6 +47,7 @@ import { statusForEvent } from "@/lib/stores/pi-event-router";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { usePlatform } from "@/lib/hooks/use-platform";
+import { useIsFullscreen } from "@/lib/hooks/use-is-fullscreen";
 import { useSqlAutocomplete } from "@/lib/hooks/use-sql-autocomplete";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { useTimelineStore } from "@/lib/hooks/use-timeline-store";
@@ -169,7 +170,7 @@ function buildSystemPrompt(): string {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offsetStr = getTimezoneOffsetString();
 
-  return `You are the user's Screenpipe assistant. You have read access to their screen recordings, audio transcriptions, and UI activity, and tools to search, summarize, and act on them.
+  return `You are the user's Screenpipe assistant. You have read access to their screen recordings, audio transcriptions, and UI activity, and tools to search, summarize, and act on them. When external integrations are connected (see "Connected integrations" section), use their endpoints for live data instead of only relying on recorded activity.
 
 # Voice and length — the most important rule
 
@@ -203,9 +204,14 @@ When summarizing what the user did, write like a friend recapping their day. Con
 - If a search returns empty, silently widen and retry. Don't enumerate possibilities or ask the user to choose.
 - Never say "no data found" after one filtered search — verify first with an unfiltered time-only search.
 
+# Connection write policy
+
+Never POST, PUT, or PATCH to a connection proxy unless the user explicitly asks you to create, write, or modify something in that service. For ambiguous requests, read first. Ask before writing.
+
 # Tool selection
 
-- "meeting / call / conversation / what did I/they say" → search with content_type: "audio", no q param
+- "upcoming meetings / calendar events / what's on my calendar / schedule" → if a calendar integration is connected (google-calendar, apple-calendar), call its events endpoint first; only fall back to audio search if no calendar is connected
+- "meeting / call / conversation / what did I/they say" → search with content_type: "audio", no q param (for past meetings/calls captured by screenpipe)
 - "how long / time spent / which apps / most used" → activity-summary (not raw frame counts or SQL)
 - "what was on screen / what was I reading" → search with content_type: "all" or "accessibility"
 - "what was I doing" → activity-summary first; the windows field usually has enough without further searches
@@ -261,6 +267,17 @@ User's timezone: ${timezone} (UTC${offsetStr})
 User's local time: ${now.toLocaleString()}`;
 }
 
+function buildConnectionsContext(
+  connections: Array<{ id: string; name: string; category?: string; description?: string }>
+): string {
+  const withDesc = connections.filter((c) => c.description);
+  if (withDesc.length === 0) return "";
+  const entries = withDesc
+    .map((c) => `## ${c.name} (${c.id})\n${c.description}`)
+    .join("\n\n");
+  return `\n\n# Connected integrations\n\nThe user has connected the following external services. Use the endpoints listed under each to fetch live data when relevant. All endpoints are on http://localhost:3030 and require \`-H "Authorization: Bearer $SCREENPIPE_API_AUTH_KEY"\`.\n\n${entries}`;
+}
+
 interface SearchResult {
   type: "OCR" | "Audio" | "UI";
   content: {
@@ -300,6 +317,11 @@ interface Message {
   model?: string;
   provider?: string;
   retryPrompt?: string; // when set, renders a retry CTA on error messages
+  /** True between optimistic enqueue and the moment Pi's drain loop picks
+   *  the prompt up (`agent_start` for this turn). Drives a lighter visual
+   *  treatment so the user can tell at-a-glance which messages are still
+   *  waiting in line vs. already in-flight. Cleared by handleAgentStart. */
+  queued?: boolean;
 }
 
 // Tool icons by name
@@ -548,8 +570,8 @@ function ToolCallRailItem({ toolCall, isLast }: { toolCall: ToolCall; isLast: bo
   );
 }
 
-function ThinkingBlock({ text, isThinking, durationMs }: { text: string; isThinking: boolean; durationMs?: number }) {
-  const [expanded, setExpanded] = useState(false);
+function ThinkingBlock({ text, isThinking, durationMs, defaultExpanded = false }: { text: string; isThinking: boolean; durationMs?: number; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded);
   const [elapsed, setElapsed] = useState(0);
   const startRef = useRef(Date.now());
 
@@ -901,7 +923,7 @@ function buildToolSummary(toolCalls: ToolCall[]): string {
   return parts.join(", ");
 }
 
-function ToolCallGroup({ toolCalls }: { toolCalls: ToolCall[] }) {
+function ToolCallGroup({ toolCalls, defaultExpanded = false }: { toolCalls: ToolCall[]; defaultExpanded?: boolean }) {
   const [manualExpand, setManualExpand] = useState<boolean | null>(null);
 
   const hasRunning = toolCalls.some((tc) => tc.isRunning);
@@ -911,8 +933,11 @@ function ToolCallGroup({ toolCalls }: { toolCalls: ToolCall[] }) {
   const total = toolCalls.length;
   const summary = allDone ? buildToolSummary(toolCalls) : "";
 
-  // Auto-expand while running, auto-collapse when done (user can override)
-  const isExpanded = manualExpand !== null ? manualExpand : hasRunning;
+  // Auto-expand while running, auto-collapse when done (user can override).
+  // `defaultExpanded` keeps the group open even when done — used for
+  // messages whose entire output is tool calls (typical pipe-runs)
+  // where the tool result is the whole story.
+  const isExpanded = manualExpand !== null ? manualExpand : (hasRunning || defaultExpanded);
 
   return (
     <div className="w-full min-w-0">
@@ -988,6 +1013,8 @@ function ToolCallGroup({ toolCalls }: { toolCalls: ToolCall[] }) {
 // Renders message content with interleaved text and tool call blocks
 function MessageContent({ message, onImageClick, onRetry }: { message: Message; onImageClick?: (images: string[], index: number) => void; onRetry?: (prompt: string) => void }) {
   const isUser = message.role === "user";
+  const { settings } = useSettings();
+  const hideThinkingBlocks = settings?.hideThinkingBlocks ?? true;
 
   // Retry CTA — shown at the bottom of error messages that have a retryPrompt
   const retryCta = !isUser && message.retryPrompt ? (
@@ -1008,6 +1035,13 @@ function MessageContent({ message, onImageClick, onRetry }: { message: Message; 
   // Group consecutive tool blocks into collapsible containers
   if (message.contentBlocks && message.contentBlocks.length > 0) {
     const grouped = groupContentBlocks(message.contentBlocks);
+    // When the message has no rendered prose (no text block — common for
+    // pipe-run executions whose entire output is thinking + tool calls),
+    // expand thinking blocks by default. Otherwise the collapsed
+    // "thought for 0s" pill is the only visible thing on the message
+    // and the chat panel reads as empty even though there's real
+    // content to see.
+    const hasText = grouped.some((g) => g.type === "text");
     return (
       <div className="space-y-2 min-w-0 w-full overflow-hidden">
         {grouped.map((group) => {
@@ -1015,10 +1049,16 @@ function MessageContent({ message, onImageClick, onRetry }: { message: Message; 
             return <MarkdownBlock key={`text-${group.key}`} text={group.text} isUser={isUser} />;
           }
           if (group.type === "thinking") {
+            // Settings → Display → Hide Thinking Blocks (default true). Even
+            // when shown the block starts collapsed: the "thought for Xs"
+            // pill is enough signal that the assistant did chain-of-thought
+            // work — auto-expanding (the c092166e0 behavior) drew the eye
+            // to raw reasoning instead of the response.
+            if (hideThinkingBlocks) return null;
             return <ThinkingBlock key={`thinking-${group.key}`} text={group.text} isThinking={group.isThinking} durationMs={group.durationMs} />;
           }
           if (group.type === "tool-group") {
-            return <ToolCallGroup key={`tools-${group.key}`} toolCalls={group.toolCalls} />;
+            return <ToolCallGroup key={`tools-${group.key}`} toolCalls={group.toolCalls} defaultExpanded={!hasText} />;
           }
           return null;
         })}
@@ -1070,7 +1110,11 @@ function CollapsibleUserMessage({ label, fullContent }: { label: string; fullCon
       <div className="flex items-center gap-1.5">
         <span className="flex-1 text-sm font-medium">{label}</span>
         <button
-          onClick={() => setExpanded(!expanded)}
+          onClick={(e) => {
+            e.stopPropagation();
+            setExpanded(!expanded);
+          }}
+          onMouseUp={(e) => e.stopPropagation()}
           className="shrink-0 p-0.5 rounded hover:bg-background/20 text-background/60 hover:text-background/90 transition-colors"
           title={expanded ? "Collapse prompt" : "Show full prompt"}
         >
@@ -1268,6 +1312,10 @@ export function StandaloneChat({
 } = {}) {
   const { settings, updateSettings, isSettingsLoaded, reloadStore } = useSettings();
   const { isMac } = usePlatform();
+  // Drop the macOS traffic-light reservation when the window is fullscreen
+  // (the buttons hide). Only relevant in standalone mode (no parent
+  // className) — the embedded variant is below the host's chrome anyway.
+  const isFullscreen = useIsFullscreen();
   const { items: appItems } = useSqlAutocomplete("app");
   const { suggestions: autoSuggestions, refreshing: suggestionsRefreshing, forceRefresh: refreshSuggestions } = useAutoSuggestions();
   const { templatePipes, loading: pipesLoading } = usePipes();
@@ -1275,8 +1323,20 @@ export function StandaloneChat({
   // filter popover so users can mention them directly with @id — helps the
   // agent pick the right connection for a query instead of having to guess.
   const [connections, setConnections] = useState<
-    Array<{ id: string; name: string; category?: string }>
+    Array<{ id: string; name: string; category?: string; description?: string }>
   >([]);
+  // Watch the input section's width so suggestion chips can collapse into
+  // a popover on narrow chat columns.
+  useEffect(() => {
+    const el = inputSectionRef.current;
+    if (!el) return;
+    const measure = () => setInputSectionWidth(el.getBoundingClientRect().width);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -1284,11 +1344,11 @@ export function StandaloneChat({
         const res = await localFetch("/connections");
         if (!res.ok) return;
         const json = (await res.json()) as {
-          data?: Array<{ id: string; name: string; connected: boolean; category?: string }>;
+          data?: Array<{ id: string; name: string; connected: boolean; category?: string; description?: string }>;
         };
         const list = (json.data ?? [])
           .filter((c) => c.connected)
-          .map((c) => ({ id: c.id, name: c.name, category: c.category }));
+          .map((c) => ({ id: c.id, name: c.name, category: c.category, description: c.description }));
         if (!cancelled) setConnections(list);
       } catch {
         // silent — filter just won't surface connections, no UI regression
@@ -1297,6 +1357,29 @@ export function StandaloneChat({
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  // Re-fetch connections whenever the window becomes visible — picks up any
+  // integrations connected in Settings while the chat was open.
+  useEffect(() => {
+    const fetchConnections = async () => {
+      try {
+        const res = await localFetch("/connections");
+        if (!res.ok) return;
+        const json = (await res.json()) as {
+          data?: Array<{ id: string; name: string; connected: boolean; category?: string; description?: string }>;
+        };
+        const list = (json.data ?? [])
+          .filter((c) => c.connected)
+          .map((c) => ({ id: c.id, name: c.name, category: c.category, description: c.description }));
+        setConnections(list);
+      } catch { /* silent */ }
+    };
+    const onVisible = () => {
+      if (document.visibilityState === "visible") fetchConnections();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
   }, []);
 
   // Custom summary templates (persisted in settings)
@@ -1409,6 +1492,12 @@ export function StandaloneChat({
   const abortControllerRef = useRef<AbortController | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
+  // Tracks the input section's width so we can collapse the auto-suggestion
+  // chips into a popover when the chat column is narrow (e.g. when the
+  // BrowserSidebar opens and squeezes the chat). Updated by a ResizeObserver
+  // attached to the input wrapper.
+  const inputSectionRef = useRef<HTMLDivElement>(null);
+  const [inputSectionWidth, setInputSectionWidth] = useState(800);
   const [isUserScrolledUp, setIsUserScrolledUp] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const dropdownRef = useRef<HTMLDivElement>(null);
@@ -1476,7 +1565,7 @@ export function StandaloneChat({
   const lastUserMessageRef = useRef<string>("");
 
   // Ref to sendMessage so useEffect callbacks can call it without stale closures
-  const sendMessageRef = useRef<(msg: string) => Promise<void>>();
+  const sendMessageRef = useRef<(msg: string, displayLabel?: string) => Promise<void>>();
   // Bypass guard for auto-send from chat-prefill (Pi confirmed running but React state stale)
   const autoSendBypassRef = useRef(false);
 
@@ -1953,6 +2042,78 @@ export function StandaloneChat({
     useChatStore.getState().actions.setPanelSession(conversationId);
   }, [conversationId]);
 
+  // E2E hook: expose a function to seed a user message into a session.
+  // Required by parallel-chat.spec.ts because `ensureAssistantPlaceholder`
+  // (added 2026-04-29 in e1f55023d) only creates an assistant bubble when
+  // the last message in LOCAL React state is `role: "user"`. Without a
+  // way to inject a user message, the test's pure pi_event-faking path
+  // can't materialize any assistant DOM and CI has been red on every PR
+  // since.
+  //
+  // Three places get updated:
+  //   1. Local React state (`setMessages`) — what `ensureAssistantPlaceholder`
+  //      reads via `setMessages(prev => …)`. This is the critical one.
+  //   2. The chat-store via `upsert` — needed because `appendMessage` no-ops
+  //      when the session record doesn't exist yet (a brand-new session
+  //      created by `chat-load-conversation` → `startNewConversation` does
+  //      NOT seed a sessions[id] entry; that only happens on first save
+  //      after agent_end). Without upsert, the seed silently disappears.
+  //   3. `piSessionIdRef.current` — set if the panel hasn't yet caught up
+  //      to the requested session, so `text_delta` handlers (keyed by
+  //      sessionId) route correctly.
+  //
+  // Production impact: zero — only a non-functional reference on `window`,
+  // never read from production code paths.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    (window as any).__e2eSeedUserMessage = (sid: string, text: string) => {
+      const id = `e2e-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+      const userMsg = {
+        id,
+        role: "user" as const,
+        content: text,
+        timestamp: Date.now(),
+      };
+
+      // (2) Ensure the session record exists in the store so subsequent
+      // appendMessage / setStreaming / snapshotSession calls actually
+      // mutate something. upsert overwrites if existing, so we read first
+      // and merge messages by hand.
+      const store = useChatStore.getState();
+      const existing = store.sessions[sid];
+      if (!existing) {
+        store.actions.upsert({
+          id: sid,
+          title: "e2e",
+          preview: text.slice(0, 60),
+          status: "idle",
+          messageCount: 1,
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          pinned: false,
+          unread: false,
+          messages: [userMsg as any],
+        });
+      } else {
+        store.actions.appendMessage(sid, userMsg as any);
+      }
+
+      // (1) Mirror to local React state so `ensureAssistantPlaceholder`
+      // sees the user-tail on the next text_delta. Always do this — the
+      // test only ever seeds for the about-to-stream session, which is
+      // by definition what the panel is rendering.
+      setMessages((prev) => [...prev, userMsg as any]);
+
+      // (3) Force the session ref in case the panel hasn't finished
+      // switching yet. Otherwise text_deltas with this sid would route
+      // to the wrong handler.
+      piSessionIdRef.current = sid;
+    };
+    return () => {
+      delete (window as any).__e2eSeedUserMessage;
+    };
+  }, []);
+
   // Cross-window rename sync. The chat-store is window-local (zustand
   // lives in each WebView's JS context), so a rename done in the /chat
   // overlay would otherwise never reach the chat-sidebar in /home. The
@@ -2200,19 +2361,23 @@ export function StandaloneChat({
   // Remove a specific @mention from input
   const removeFilter = (filterType: "time" | "content" | "app" | "speaker", label?: string) => {
     let newInput = input;
-    if (filterType === "time" && label) {
+    if (filterType === "time") {
       // Remove time mentions like @today, @yesterday, @last-hour, etc.
-      const timePatterns: Record<string, RegExp> = {
-        "today": /@today\b/gi,
-        "yesterday": /@yesterday\b/gi,
-        "last week": /@last[- ]?week\b/gi,
-        "last hour": /@last[- ]?hour\b/gi,
-        "this morning": /@this[- ]?morning\b/gi,
-      };
-      const pattern = timePatterns[label];
-      if (pattern) newInput = newInput.replace(pattern, "").trim();
+      if(label){
+        const timePatterns: Record<string, RegExp> = {
+          "today": /@today\b/gi,
+          "yesterday": /@yesterday\b/gi,
+          "last week": /@last[- ]?week\b/gi,
+          "last hour": /@last[- ]?hour\b/gi,
+          "this morning": /@this[- ]?morning\b/gi,
+        };
+        const pattern = timePatterns[label];
+        if (pattern) newInput = newInput.replace(pattern, "").trim();
+      }else{
+        newInput = newInput.replace(/@(today|yesterday|last[- ]?week|last[- ]?hour|this[- ]?morning)\b/gi, "").trim();
+      }
     } else if (filterType === "content") {
-      newInput = newInput.replace(/@(audio|screen)\b/gi, "").trim();
+      newInput = newInput.replace(/@(audio|screen|input)\b/gi, "").trim();
     } else if (filterType === "app" && activeFilters.appName) {
       // Remove app mention - need to find the pattern
       const appPattern = new RegExp(`@${activeFilters.appName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`, "gi");
@@ -2395,13 +2560,12 @@ export function StandaloneChat({
   // THADM: disabled — bypass login gate so chat is always accessible
   const needsLogin = false; // activePreset?.provider === "screenpipe-cloud" && !settings.user?.token;
   // Pi auto-starts on first message, so don't block chat when Pi is not running
-  const canChat = hasPresets && hasValidModel && !needsLogin && !piStarting;
+  const canChat = hasPresets && hasValidModel && !piStarting;
 
   const getDisabledReason = (): string | null => {
     if (!hasPresets) return "No AI presets configured";
     if (!activePreset) return "No preset selected";
     if (!hasValidModel) return `No model selected in "${activePreset.id}" preset`;
-    if (needsLogin) return "Login required";
     if (piStarting) return "Starting Pi agent...";
     return null;
   };
@@ -2490,7 +2654,8 @@ export function StandaloneChat({
     // This is passed via --append-system-prompt to Pi, enabling Anthropic prompt
     // caching (90% input cost reduction on subsequent messages).
     const presetPrompt = p.prompt || "";
-    const systemPrompt = `${buildSystemPrompt()}\n\n${presetPrompt}`.trim() || null;
+    const connectionsCtx = buildConnectionsContext(connections);
+    const systemPrompt = `${buildSystemPrompt()}\n\n${presetPrompt}${connectionsCtx}`.trim() || null;
     return {
       provider: p.provider,
       url: p.url || "",
@@ -2500,7 +2665,26 @@ export function StandaloneChat({
       systemPrompt,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activePreset?.provider, activePreset?.url, activePreset?.model, activePreset?.apiKey, (activePreset as any)?.maxTokens, activePreset?.prompt]);
+  }, [activePreset?.provider, activePreset?.url, activePreset?.model, activePreset?.apiKey, (activePreset as any)?.maxTokens, activePreset?.prompt, connections]);
+
+  // When connections change (e.g., user connected Google Calendar in Settings),
+  // silently restart Pi if the system prompt changed and no message is in-flight.
+  useEffect(() => {
+    if (connections.length === 0) return;
+    const config = buildProviderConfig();
+    if (!config) return;
+    const running = piRunningConfigRef.current;
+    if (!running || running.systemPrompt === config.systemPrompt) return;
+    if (piMessageIdRef.current) return; // don't interrupt an active turn
+    commands.piUpdateConfig(settings.user?.token ?? null, config)
+      .then(() => {
+        if (piRunningConfigRef.current) {
+          piRunningConfigRef.current = { ...piRunningConfigRef.current, systemPrompt: config.systemPrompt };
+        }
+      })
+      .catch(() => {});
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connections]);
 
   // Check Pi status on mount — Pi is auto-started at app boot by Rust
   useEffect(() => {
@@ -2895,6 +3079,62 @@ export function StandaloneChat({
               setMessages((prev) =>
                 prev.map((m) => m.id === msgId ? { ...m, content: `Error: ${fullError || "Something went wrong"}` } : m)
               );
+            }
+          }
+        } else if (data.type === "message_start" && data.message?.role === "user") {
+          // pi-mono fires `message_start` for a user message at the start of
+          // every turn that introduces one — i.e. (a) the original prompt
+          // and (b) each queued followUp processed inside the SAME agent run
+          // (only one `agent_end` fires for the whole run, after all
+          // followUps drain). If we relied on `agent_end` to close out the
+          // current assistant message, the followUp's text_delta would land
+          // on the previous turn's assistant bubble (the user saw responses
+          // mashed together: "...Which?Hey. What do you need?").
+          //
+          // Clear the streaming refs here so the next text_delta lazily
+          // creates a fresh assistant placeholder via `ensureAssistantPlaceholder`.
+          // Skip the very first `message_start (user)` of a run — at that
+          // point `sendPiMessage` has just created an empty placeholder and
+          // there's nothing streamed yet (clearing would orphan the
+          // placeholder and re-create a duplicate on the first delta).
+          const hasStreamedContent =
+            piStreamingTextRef.current.length > 0 ||
+            piContentBlocksRef.current.length > 0;
+          if (hasStreamedContent) {
+            piStreamingTextRef.current = "";
+            piMessageIdRef.current = null;
+            piContentBlocksRef.current = [];
+            // Don't touch isLoading/isStreaming — pi-mono is still busy
+            // processing the followUp turn.
+          }
+
+          // The user message tied to this turn just left the queue and is
+          // now in-flight — clear the `queued` flag so the bubble drops
+          // its muted treatment. We match on content text since pi-mono
+          // doesn't echo our optimistic message id back.
+          {
+            const text = (() => {
+              const c = data.message?.content;
+              if (typeof c === "string") return c;
+              if (Array.isArray(c)) {
+                return c
+                  .filter((p: any) => p?.type === "text" && typeof p.text === "string")
+                  .map((p: any) => p.text)
+                  .join("");
+              }
+              return "";
+            })();
+            if (text) {
+              setMessages((prev) => {
+                let cleared = false;
+                return prev.map((m) => {
+                  if (cleared || !m.queued || m.role !== "user" || m.content !== text) {
+                    return m;
+                  }
+                  cleared = true;
+                  return { ...m, queued: false };
+                });
+              });
             }
           }
         } else if ((data.type === "message_start" || data.type === "message_end") &&
@@ -3629,6 +3869,8 @@ export function StandaloneChat({
     // Local optimistic message + chat-store mirror. Skips assistant placeholder
     // entirely; the new turn's `agent_start` (downstream from the rust queue
     // dequeue) will create one through the existing event flow.
+    // Mark queued=true so the bubble renders with a muted/lighter treatment
+    // until Pi actually starts streaming this turn (cleared in handleAgentStart).
     const newUserMessage: Message = {
       id: Date.now().toString(),
       role: "user",
@@ -3636,6 +3878,7 @@ export function StandaloneChat({
       ...(displayLabel ? { displayContent: displayLabel } : {}),
       ...(pastedImages.length > 0 ? { images: [...pastedImages] } : {}),
       timestamp: Date.now(),
+      queued: true,
     };
     setMessages((prev) => [...prev, newUserMessage]);
     setInput("");
@@ -4225,7 +4468,7 @@ export function StandaloneChat({
         className={cn(
           "relative flex items-center gap-3 px-4 py-3 border-b border-border/50 bg-gradient-to-r from-background to-muted/30",
           !className && "cursor-grab active:cursor-grabbing",
-          isMac && !className && "pl-[72px]"
+          isMac && !className && !isFullscreen && "pl-[72px]"
         )}
         onMouseDown={async (e) => {
           if (className) return; // embedded — don't drag
@@ -4301,6 +4544,15 @@ export function StandaloneChat({
           the floating overlay window. Home page hides this entirely
           (`hideInlineHistory`) and the same list is rendered in the
           main AppSidebar instead. */}
+
+      {/* Horizontal split: chat column on the left, BrowserSidebar on the
+          right. The browser panel is a sibling of the *whole* chat
+          column (messages + input), so when it opens it pushes both the
+          message scroller and the input bar — instead of the prior
+          structure where it sat next to messages only and the input bar
+          extended underneath it. */}
+      <div className="flex-1 flex min-h-0" data-browser-panel-host>
+      <div className="flex-1 flex flex-col min-w-0">
       <div className="flex-1 flex overflow-hidden">
         <AnimatePresence>
           {!hideInlineHistory && showHistory && (
@@ -4600,11 +4852,15 @@ export function StandaloneChat({
                   setEditingMessageId(message.id);
                 }}
                 className={cn(
-                  "relative rounded-xl px-4 py-3 text-sm border overflow-hidden max-w-full",
+                  "relative rounded-xl px-4 py-3 text-sm border overflow-hidden max-w-full transition-opacity",
                   message.role === "user"
                     ? "bg-foreground text-background border-foreground"
                     : "bg-muted/30 border-border/50",
-                  message.role === "user" && !isLoading && editingMessageId !== message.id && "cursor-text"
+                  message.role === "user" && !isLoading && editingMessageId !== message.id && "cursor-text",
+                  // Queued user messages — visually de-emphasised so the eye stays on
+                  // the active turn. Cleared when pi-mono fires message_start for
+                  // this turn (see handler above).
+                  message.queued && "opacity-50 border-dashed"
                 )}
               >
                 {editingMessageId === message.id ? (
@@ -4631,7 +4887,7 @@ export function StandaloneChat({
                       const idx = messages.findIndex((m) => m.id === message.id);
                       if (idx === -1) return;
                       setMessages((prev) => prev.slice(0, idx));
-                      sendMessage(trimmed);
+                      sendMessage(trimmed, message.displayContent);
                     }}
                     onKeyDown={(e) => {
                       if (e.key === "Escape") { e.preventDefault(); setEditingMessageId(null); }
@@ -4810,10 +5066,11 @@ export function StandaloneChat({
                   key={p.id}
                   layout
                   initial={{ opacity: 0, x: -6 }}
-                  animate={{ opacity: 0.85, x: 0 }}
+                  animate={{ opacity: 0.55, x: 0 }}
                   exit={{ opacity: 0, x: 6, scale: 0.96 }}
                   transition={{ duration: 0.18 }}
-                  className="group/qcard flex items-center gap-2 px-3 py-2 rounded-md border border-dashed border-border/60 bg-muted/30 text-sm text-muted-foreground hover:border-border hover:bg-muted/50 transition-colors"
+                  whileHover={{ opacity: 0.85 }}
+                  className="group/qcard flex items-center gap-2 px-3 py-2 rounded-md border border-dashed border-border/40 bg-transparent text-sm text-muted-foreground/80 hover:border-border hover:bg-muted/30 transition-colors"
                   title={p.preview.length > 80 ? p.preview : undefined}
                 >
                   <span className="font-mono text-[10px] text-muted-foreground/50 shrink-0 w-4 text-right">
@@ -4857,15 +5114,10 @@ export function StandaloneChat({
       )}
       </div>
 
-      {/* Agent-controlled embedded browser. Slides in from the right when the
-          agent navigates (or when restoring a chat that has saved state).
-          The actual page is rendered by a Tauri child Webview positioned
-          on top of the placeholder div. */}
-      <BrowserSidebar conversationId={conversationId} />
       </div> {/* End of main content area with history sidebar */}
 
       {/* Input */}
-      <div className="relative border-t border-border/50 bg-gradient-to-t from-muted/20 to-transparent">
+      <div ref={inputSectionRef} className="relative border-t border-border/50 bg-gradient-to-t from-muted/20 to-transparent">
         <div className="max-w-4xl mx-auto w-full">
         {/* Prefill, filters, suggestions first; then attached images in gap; then agent bar; then form */}
         {/* Prefill context indicator from search */}
@@ -4993,29 +5245,79 @@ export function StandaloneChat({
           )}
         </AnimatePresence>
 
-        {/* Persistent auto-suggestions above input */}
+        {/* Persistent auto-suggestions above input. Inline chips when the
+            input is wide enough; collapses to a single trigger button that
+            opens a popover when narrow (e.g. BrowserSidebar squeezed the
+            chat column). 520px is the rough threshold below which 4 chips
+            wrap to multiple rows and eat too much vertical space. */}
         {messages.length > 0 && !isLoading && autoSuggestions.length > 0 && (
-          <div className="px-3 pt-2 flex flex-wrap gap-1.5 items-center">
-            {autoSuggestions.slice(0, 4).map((s, i) => (
+          inputSectionWidth >= 520 ? (
+            <div className="px-3 pt-2 flex flex-wrap gap-1.5 items-center">
+              {autoSuggestions.slice(0, 4).map((s, i) => (
+                <button
+                  key={i}
+                  type="button"
+                  onClick={() => sendMessage(s.text)}
+                  className="px-2.5 py-1 text-[11px] font-mono bg-muted/20 hover:bg-foreground hover:text-background border border-border/20 hover:border-foreground text-muted-foreground transition-all duration-150 cursor-pointer max-w-[280px] truncate"
+                  title={s.preview ? `${s.text} — ${s.preview}` : s.text}
+                >
+                  {s.text}
+                </button>
+              ))}
               <button
-                key={i}
-                type="button"
-                onClick={() => sendMessage(s.text)}
-                className="px-2.5 py-1 text-[11px] font-mono bg-muted/20 hover:bg-foreground hover:text-background border border-border/20 hover:border-foreground text-muted-foreground transition-all duration-150 cursor-pointer max-w-[280px] truncate"
-                title={s.preview ? `${s.text} — ${s.preview}` : s.text}
+                onClick={refreshSuggestions}
+                disabled={suggestionsRefreshing}
+                className="p-0.5 text-muted-foreground/30 hover:text-foreground transition-colors duration-150 disabled:opacity-30 cursor-pointer"
+                title="refresh suggestions"
               >
-                {s.text}
+                <RefreshCw className={`w-3 h-3 ${suggestionsRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
               </button>
-            ))}
-            <button
-              onClick={refreshSuggestions}
-              disabled={suggestionsRefreshing}
-              className="p-0.5 text-muted-foreground/30 hover:text-foreground transition-colors duration-150 disabled:opacity-30 cursor-pointer"
-              title="refresh suggestions"
-            >
-              <RefreshCw className={`w-3 h-3 ${suggestionsRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
-            </button>
-          </div>
+            </div>
+          ) : (
+            <div className="px-3 pt-2 flex items-center gap-1.5">
+              <Popover>
+                <PopoverTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-mono bg-muted/20 hover:bg-foreground hover:text-background border border-border/20 hover:border-foreground text-muted-foreground transition-all duration-150 cursor-pointer"
+                    title="Suggested prompts"
+                  >
+                    <Sparkles className="w-3 h-3" strokeWidth={1.5} />
+                    <span>suggestions</span>
+                    <ChevronDown className="w-3 h-3" strokeWidth={1.5} />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  className="w-72 p-1"
+                  align="start"
+                  side="top"
+                  sideOffset={6}
+                >
+                  <div className="flex flex-col gap-0.5">
+                    {autoSuggestions.slice(0, 4).map((s, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => sendMessage(s.text)}
+                        className="text-left px-2 py-1.5 text-[11px] font-mono rounded-sm hover:bg-muted text-muted-foreground hover:text-foreground transition-colors line-clamp-2"
+                        title={s.preview ? `${s.text} — ${s.preview}` : s.text}
+                      >
+                        {s.text}
+                      </button>
+                    ))}
+                  </div>
+                </PopoverContent>
+              </Popover>
+              <button
+                onClick={refreshSuggestions}
+                disabled={suggestionsRefreshing}
+                className="p-0.5 text-muted-foreground/30 hover:text-foreground transition-colors duration-150 disabled:opacity-30 cursor-pointer"
+                title="refresh suggestions"
+              >
+                <RefreshCw className={`w-3 h-3 ${suggestionsRefreshing ? 'animate-spin' : ''}`} strokeWidth={1.5} />
+              </button>
+            </div>
+          )
         )}
 
         {/* Attached images in the gap (above agent bar, like reference); click to open full-screen viewer */}
@@ -5078,16 +5380,26 @@ export function StandaloneChat({
                 time
               </div>
               {STATIC_MENTION_SUGGESTIONS.filter((s) => s.category === "time").map((s) => {
-                const isActive = activeFilters.timeRanges.some((r) => r.label === s.description);
+                const timeLabels: Record<string, string> = {
+                  "today's activity": "today",
+                  "yesterday": "yesterday",
+                  "past 7 days": "last week",
+                  "past hour": "last hour",
+                  "this morning": "this morning",
+                };
+                const isActive = activeFilters.timeRanges.some((r) => r.label === timeLabels[s.description]);
                 return (
                   <button
                     key={s.tag}
                     type="button"
                     onClick={() => {
                       if (isActive) {
-                        removeFilter("time", s.description);
+                        removeFilter("time", timeLabels[s.description]);
                       } else {
-                        setInput((prev) => `${s.tag} ${prev.trim()}`.trim() + " ");
+                        removeFilter("time");
+                        setTimeout(() => {
+                          setInput((prev) => `${s.tag} ${prev.trim()}`.trim() + " ");
+                        }, 0);
                       }
                       setAppFilterOpen(false);
                     }}
@@ -5118,8 +5430,10 @@ export function StandaloneChat({
                       if (isActive) {
                         removeFilter("content");
                       } else {
-                        if (activeFilters.contentType) removeFilter("content");
-                        setInput((prev) => `${s.tag} ${prev.trim()}`.trim() + " ");
+                        removeFilter("content");
+                        setTimeout(() => {
+                          setInput((prev) => `${s.tag} ${prev.trim()}`.trim() + " ");
+                        }, 0);
                       }
                       setAppFilterOpen(false);
                     }}
@@ -5486,6 +5800,14 @@ export function StandaloneChat({
         </form>
       </div> {/* End of max-w-4xl input wrapper */}
       </div>
+      </div> {/* End of chat column */}
+
+      {/* Agent-controlled embedded browser. Slides in from the right when
+          the agent navigates (or when restoring a chat that has saved
+          state). The actual page is rendered by a Tauri WebviewWindow
+          positioned over the placeholder div inside this component. */}
+      <BrowserSidebar conversationId={conversationId} />
+      </div> {/* End of horizontal chat+browser split */}
 
 
       {scheduleDialogMessage && (

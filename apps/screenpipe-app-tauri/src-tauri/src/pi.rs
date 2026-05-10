@@ -523,6 +523,34 @@ fn find_local_pi_entrypoint() -> Option<String> {
     }
 }
 
+/// Extract the plain-text content from a pi-mono `message` JSON value (the
+/// shape that ships in `message_start`/`message_end` events). pi-mono encodes
+/// user messages as either `content: "string"` or
+/// `content: [{type: "text", text: "..."}, ...]`. We concatenate all text
+/// parts in order. Used to match an incoming user message against the queued
+/// prompt rail's preview text.
+fn extract_user_message_text(msg: &serde_json::Value) -> String {
+    let content = match msg.get("content") {
+        Some(c) => c,
+        None => return String::new(),
+    };
+    if let Some(s) = content.as_str() {
+        return s.to_string();
+    }
+    if let Some(arr) = content.as_array() {
+        let mut out = String::new();
+        for part in arr {
+            if part.get("type").and_then(|t| t.as_str()) == Some("text") {
+                if let Some(t) = part.get("text").and_then(|v| v.as_str()) {
+                    out.push_str(t);
+                }
+            }
+        }
+        return out;
+    }
+    String::new()
+}
+
 fn find_pi_executable() -> Option<String> {
     // 1. Check screenpipe-managed local install first (preferred — we control the deps)
     if let Some(js) = find_local_pi_entrypoint() {
@@ -613,31 +641,10 @@ fn ensure_web_search_extension(
         .join("extensions");
     let ext_path = ext_dir.join("web-search.ts");
 
-    // Offline mode: never install web search (it calls api.screenpi.pe)
-    // Re-read from store.bin each time (not cached) so runtime toggles take effect
-    let offline = {
-        let store_path = screenpipe_core::paths::default_screenpipe_data_dir().join("store.bin");
-        std::fs::read_to_string(&store_path)
-            .ok()
-            .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
-            .map(|data| {
-                data.get("offlineMode")
-                    .and_then(|v| v.as_bool())
-                    .or_else(|| {
-                        data.get("settings")
-                            .and_then(|s| s.get("offlineMode"))
-                            .and_then(|v| v.as_bool())
-                    })
-                    .unwrap_or(false)
-            })
-            .unwrap_or(false)
+    let is_screenpipe_cloud = match provider_config {
+        Some(config) => matches!(config.provider.as_str(), "screenpipe-cloud" | "pi"),
+        None => true, // default preset = screenpipe cloud
     };
-
-    let is_screenpipe_cloud = !offline
-        && match provider_config {
-            Some(config) => matches!(config.provider.as_str(), "screenpipe-cloud" | "pi"),
-            None => true, // default preset = screenpipe cloud
-        };
 
     if is_screenpipe_cloud {
         std::fs::create_dir_all(&ext_dir)
@@ -1541,21 +1548,59 @@ pub async fn pi_start_inner(
             // prompt was sent while the first was still running.
             if let Some(ref qs) = queue_state_for_reader {
                 match event_type.as_deref() {
+                    Some("agent_start") => {
+                        // A prompt has begun streaming. Suppress the
+                        // response→done fallback below so the prompt's
+                        // mid-stream `response` ACK doesn't unblock the
+                        // queue early.
+                        qs.mark_agent_active();
+                    }
                     Some("agent_end") => {
-                        // Agent fully done — unblock the queue immediately.
+                        // Note: pi-mono fires `agent_end` mid-prompt during
+                        // its auto-retry path. Only `mark_agent_idle` here —
+                        // pi-mono's followUp queue (engaged via
+                        // `streamingBehavior: "followUp"` on prompt commands)
+                        // is what serializes back-to-back prompts now, so we
+                        // don't need `signal_done` to gate the next prompt.
+                        // The done_notify is still fired so WaitDone callers
+                        // (new_session/abort) advance.
+                        qs.mark_agent_idle();
                         qs.signal_done();
                     }
+                    Some("message_start") => {
+                        // Pi-mono just started processing a message. If it's
+                        // a user message, find the matching entry in the
+                        // queued-prompt rail and remove it — this is the
+                        // moment the prompt transitions from "queued in
+                        // pi-mono's followUp queue" to in-flight.
+                        if let Some(parsed_v) = parsed.as_ref() {
+                            if let Some(msg) = parsed_v.get("message") {
+                                let role = msg.get("role").and_then(|r| r.as_str());
+                                if role == Some("user") {
+                                    let text = extract_user_message_text(msg);
+                                    if !text.is_empty() {
+                                        qs.dequeue_first_matching_text(&text);
+                                    }
+                                }
+                            }
+                        }
+                    }
                     Some("response") => {
-                        // Fallback for new_session/abort when no active prompt is
-                        // running (no agent_end fires in that case). Also covers the
-                        // prompt ACK path as a safety net.
-                        // Note: this runs on a std::thread (not tokio), so use
-                        // std::thread::spawn + std::thread::sleep.
-                        let qs = qs.clone();
-                        std::thread::spawn(move || {
-                            std::thread::sleep(std::time::Duration::from_millis(500));
-                            qs.signal_done();
-                        });
+                        // Only meaningful for new_session/abort — those don't
+                        // fire agent_start/agent_end. For prompts (which use
+                        // WriteOnly and rely on pi-mono's internal queue),
+                        // firing done here is unnecessary; suppress while a
+                        // prompt is mid-stream so we don't race the active
+                        // turn for any blocking caller.
+                        if !qs.is_agent_active() {
+                            // Note: this runs on a std::thread (not tokio),
+                            // so use std::thread::spawn + std::thread::sleep.
+                            let qs = qs.clone();
+                            std::thread::spawn(move || {
+                                std::thread::sleep(std::time::Duration::from_millis(500));
+                                qs.signal_done();
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -1741,9 +1786,16 @@ pub async fn pi_prompt(
             .ok_or("Pi command queue not initialized")?
     };
 
+    // `streamingBehavior: "followUp"` tells pi-mono to internally queue this
+    // prompt when its agent is mid-stream (instead of throwing "Agent is
+    // already processing"). pi-mono ignores this option when idle, so it's
+    // safe to set unconditionally. This is the SDK-blessed way to handle
+    // back-to-back prompts and is robust against pi-mono's auto-retry path,
+    // which otherwise fires `agent_end` mid-prompt and would race our queue.
     let mut cmd = json!({
         "type": "prompt",
-        "message": message
+        "message": message,
+        "streamingBehavior": "followUp",
     });
     if let Some(imgs) = images {
         if !imgs.is_empty() {
@@ -1751,12 +1803,17 @@ pub async fn pi_prompt(
         }
     }
 
-    // Send through the prompt-aware path so the queue UI shows it as queued
-    // until the drain loop pulls and writes it to stdin.
+    // Send through the prompt-aware path so the queue UI surfaces this entry
+    // until pi-mono confirms it's started processing (via message_start).
+    // WriteOnly mode: the drain loop writes to stdin and advances immediately
+    // — pi-mono's followUp queue handles serialization with any in-flight
+    // prompt. Combined with `streamingBehavior: "followUp"` on the command,
+    // this avoids the "already processing" race that fires when the agent
+    // momentarily idles between auto-retries.
     let (_queue_id, rx) = queue
         .send_prompt(
             cmd,
-            crate::pi_command_queue::WaitMode::StreamThenWaitDone,
+            crate::pi_command_queue::WaitMode::WriteOnly,
             message.clone(),
         )
         .await?;
@@ -2769,9 +2826,9 @@ mod tests {
         }
     }
 
-    #[test]
-    fn test_build_models_json_default_has_screenpipe_provider() {
-        let config = build_models_json(None, None);
+    #[tokio::test]
+    async fn test_build_models_json_default_has_screenpipe_provider() {
+        let config = build_models_json(None, None).await;
         let providers = config["providers"].as_object().unwrap();
         assert!(providers.contains_key("screenpipe"));
         assert_eq!(providers.len(), 1);
@@ -2784,27 +2841,27 @@ mod tests {
         assert!(sp["models"].as_array().unwrap().len() > 0);
     }
 
-    #[test]
-    fn test_build_models_json_with_user_token() {
-        let config = build_models_json(Some("tok_abc123"), None);
+    #[tokio::test]
+    async fn test_build_models_json_with_user_token() {
+        let config = build_models_json(Some("tok_abc123"), None).await;
         let sp = &config["providers"]["screenpipe"];
         assert_eq!(sp["apiKey"], "tok_abc123");
     }
 
-    #[test]
-    fn test_build_models_json_screenpipe_cloud_no_extra_provider() {
+    #[tokio::test]
+    async fn test_build_models_json_screenpipe_cloud_no_extra_provider() {
         let pc = make_provider_config("screenpipe-cloud", "auto");
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let providers = config["providers"].as_object().unwrap();
         // screenpipe-cloud maps to "" (empty), so only the screenpipe provider is added
         assert_eq!(providers.len(), 1);
         assert!(providers.contains_key("screenpipe"));
     }
 
-    #[test]
-    fn test_build_models_json_openai_adds_second_provider() {
+    #[tokio::test]
+    async fn test_build_models_json_openai_adds_second_provider() {
         let pc = make_provider_config("openai", "gpt-4o");
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let providers = config["providers"].as_object().unwrap();
         assert_eq!(providers.len(), 2);
         assert!(providers.contains_key("screenpipe"));
@@ -2819,19 +2876,19 @@ mod tests {
         assert_eq!(models[0]["id"], "gpt-4o");
     }
 
-    #[test]
-    fn test_build_models_json_ollama_provider() {
+    #[tokio::test]
+    async fn test_build_models_json_ollama_provider() {
         let pc = make_provider_config("native-ollama", "llama3");
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let providers = config["providers"].as_object().unwrap();
         assert!(providers.contains_key("ollama"));
         assert_eq!(providers["ollama"]["baseUrl"], "http://localhost:11434/v1");
     }
 
-    #[test]
-    fn test_build_models_json_anthropic_provider() {
+    #[tokio::test]
+    async fn test_build_models_json_anthropic_provider() {
         let pc = make_provider_config("anthropic", "claude-sonnet-4-5");
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let providers = config["providers"].as_object().unwrap();
         assert!(providers.contains_key("anthropic-byok"));
         assert_eq!(
@@ -2841,35 +2898,35 @@ mod tests {
         assert_eq!(providers["anthropic-byok"]["api"], "anthropic-messages");
     }
 
-    #[test]
-    fn test_build_models_json_custom_with_empty_url_skipped() {
+    #[tokio::test]
+    async fn test_build_models_json_custom_with_empty_url_skipped() {
         // custom provider with empty URL should be skipped (would invalidate schema)
         let pc = make_provider_config("custom", "my-model");
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let providers = config["providers"].as_object().unwrap();
         assert_eq!(providers.len(), 1); // only screenpipe
         assert!(!providers.contains_key("custom"));
     }
 
-    #[test]
-    fn test_build_models_json_custom_with_url() {
+    #[tokio::test]
+    async fn test_build_models_json_custom_with_url() {
         let mut pc = make_provider_config("custom", "my-model");
         pc.url = "http://my-server:8080/v1".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let providers = config["providers"].as_object().unwrap();
         assert_eq!(providers.len(), 2);
         assert!(providers.contains_key("custom"));
         assert_eq!(providers["custom"]["baseUrl"], "http://my-server:8080/v1");
     }
 
-    #[test]
-    fn test_build_models_json_custom_generic_no_compat_override() {
+    #[tokio::test]
+    async fn test_build_models_json_custom_generic_no_compat_override() {
         // Plain OpenAI-compatible endpoints (Ollama, vLLM, OpenRouter-like)
         // should NOT have compat.maxTokensField set — Pi's auto-detection
         // defaults to max_completion_tokens which works for most of these.
         let mut pc = make_provider_config("custom", "my-model");
         pc.url = "http://localhost:8080/v1".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert!(
             model.get("compat").is_none(),
@@ -2877,11 +2934,11 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_models_json_azure_openai_forces_max_completion_tokens() {
+    #[tokio::test]
+    async fn test_build_models_json_azure_openai_forces_max_completion_tokens() {
         let mut pc = make_provider_config("custom", "gpt-4o");
         pc.url = "https://myresource.openai.azure.com/openai/deployments/gpt-4o".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert_eq!(
             model["compat"]["maxTokensField"], "max_completion_tokens",
@@ -2889,62 +2946,62 @@ mod tests {
         );
     }
 
-    #[test]
-    fn test_build_models_json_azure_foundry_forces_max_completion_tokens() {
+    #[tokio::test]
+    async fn test_build_models_json_azure_foundry_forces_max_completion_tokens() {
         let mut pc = make_provider_config("custom", "gpt-5-mini");
         pc.url = "https://myresource.services.ai.azure.com/api/projects/proj".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
     }
 
-    #[test]
-    fn test_build_models_json_azure_cognitive_services_forces_max_completion_tokens() {
+    #[tokio::test]
+    async fn test_build_models_json_azure_cognitive_services_forces_max_completion_tokens() {
         let mut pc = make_provider_config("custom", "my-deployment");
         pc.url = "https://myresource.cognitiveservices.azure.com/".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
     }
 
-    #[test]
-    fn test_build_models_json_gpt5_model_forces_max_completion_tokens() {
+    #[tokio::test]
+    async fn test_build_models_json_gpt5_model_forces_max_completion_tokens() {
         // Even on a generic OpenAI-compatible proxy, GPT-5 models require
         // max_completion_tokens. Detect by model ID.
         let mut pc = make_provider_config("custom", "gpt-5");
         pc.url = "https://my-proxy.example.com/v1".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
     }
 
-    #[test]
-    fn test_build_models_json_o3_model_forces_max_completion_tokens() {
+    #[tokio::test]
+    async fn test_build_models_json_o3_model_forces_max_completion_tokens() {
         let mut pc = make_provider_config("custom", "o3-mini");
         pc.url = "https://my-proxy.example.com/v1".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert_eq!(model["compat"]["maxTokensField"], "max_completion_tokens");
     }
 
-    #[test]
-    fn test_build_models_json_regular_gpt4_no_compat_override() {
+    #[tokio::test]
+    async fn test_build_models_json_regular_gpt4_no_compat_override() {
         // gpt-4 and gpt-4o should NOT be forced — they work with both field names
         // and Pi's default is already max_completion_tokens for non-chutes URLs.
         let mut pc = make_provider_config("custom", "gpt-4o");
         pc.url = "https://my-proxy.example.com/v1".to_string();
-        let config = build_models_json(None, Some(&pc));
+        let config = build_models_json(None, Some(&pc)).await;
         let model = &config["providers"]["custom"]["models"][0];
         assert!(model.get("compat").is_none());
     }
 
-    #[test]
-    fn test_build_models_json_no_stale_providers() {
+    #[tokio::test]
+    async fn test_build_models_json_no_stale_providers() {
         // The key regression test: even if an old models.json had a corrupted
         // provider, build_models_json always produces a clean config with only
         // the providers we explicitly add. This is a pure function so there is
         // no file to corrupt — the test verifies the output shape is always valid.
-        let config = build_models_json(Some("tok"), None);
+        let config = build_models_json(Some("tok"), None).await;
         let providers = config["providers"].as_object().unwrap();
 
         // Only "screenpipe" — no leftover providers

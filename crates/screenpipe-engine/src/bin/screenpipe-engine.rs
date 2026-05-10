@@ -41,8 +41,7 @@ use screenpipe_screen::monitor::list_monitors;
 use serde_json::json;
 use std::{
     env, fs,
-    net::SocketAddr,
-    net::{IpAddr, Ipv4Addr},
+    net::{IpAddr, SocketAddr},
     ops::Deref,
     path::PathBuf,
     sync::Arc,
@@ -449,7 +448,6 @@ async fn main() -> anyhow::Result<()> {
                     map.insert("use_pii_removal".into(), json!(record_args.use_pii_removal));
                     map.insert("disable_vision".into(), json!(record_args.disable_vision));
                     map.insert("vad_engine".into(), json!("Silero"));
-                    // enable_input_capture / enable_accessibility always true (removed as settings)
                     map.insert("enable_sync".into(), json!(record_args.enable_sync));
                     map.insert(
                         "sync_interval_secs".into(),
@@ -1483,6 +1481,141 @@ async fn main() -> anyhow::Result<()> {
                 }
             }
         });
+    }
+
+    // Spawn the async PII reconciliation worker (issue #3185).
+    // Off by default — only runs when `--async-pii-redaction` is set.
+    // The capture path is unaffected either way.
+    if record_args.async_pii_redaction {
+        use screenpipe_redact::{
+            adapters::{
+                opf::{OpfAdapter, OpfConfig},
+                tinfoil::TinfoilRedactor,
+            },
+            pipeline::{Pipeline, PipelineConfig},
+            worker::{Worker, WorkerConfig, ALL_TARGET_TABLES},
+            Redactor,
+        };
+        use std::sync::Arc;
+
+        info!("starting async PII reconciliation worker (destructive overwrite of source columns)");
+
+        // Pipeline: regex pre-pass + AI fallback. Regex catches
+        // structural PII deterministically and on-device. AI step
+        // resolves to:
+        //   1. local opf-rs (candle, ~74 ms p50 on Mac CPU, 41 ms on
+        //      Metal). First run downloads ~2.8 GB from
+        //      huggingface.co/screenpipe/pii-text-redactor and verifies
+        //      SHA-256 before landing at ~/.screenpipe/models/opf-v3/.
+        //      Spawned off the boot path so a slow first-run pull
+        //      doesn't block the engine.
+        //   2. Tinfoil confidential-compute enclave when TINFOIL_*
+        //      env vars are set and local opf-rs is unavailable.
+        //   3. regex-only otherwise (still destructive — overwrites
+        //      regex-redacted text into the source columns).
+        let pool = db.pool.clone();
+        tokio::spawn(async move {
+            info!(
+                "fetching local OPF v3 checkpoint (~2.8 GB on first run, cached at \
+                 ~/.screenpipe/models/opf-v3/)"
+            );
+            let pipeline = match OpfAdapter::load_or_download(OpfConfig::default()).await {
+                Ok(adapter) => {
+                    info!("text-PII AI step: local opf-rs (candle)");
+                    let ai: Arc<dyn Redactor> = Arc::new(adapter);
+                    Pipeline::regex_then_ai(ai, PipelineConfig::default())
+                }
+                Err(e) => {
+                    if std::env::var("TINFOIL_API_KEY").is_ok()
+                        || std::env::var("TINFOIL_BASE_URL").is_ok()
+                    {
+                        info!("text-PII AI step: tinfoil enclave (local opf-rs unavailable: {e})");
+                        let ai: Arc<dyn Redactor> = Arc::new(TinfoilRedactor::from_env());
+                        Pipeline::regex_then_ai(ai, PipelineConfig::default())
+                    } else {
+                        tracing::warn!(
+                            "text-PII AI step disabled — local opf-rs unavailable ({e}) and no \
+                             TINFOIL_* env vars set. Worker will run regex-only."
+                        );
+                        Pipeline::regex_only()
+                    }
+                }
+            };
+            let pipeline_arc = Arc::new(pipeline) as Arc<dyn Redactor>;
+
+            let worker_cfg = WorkerConfig {
+                tables: ALL_TARGET_TABLES.to_vec(),
+                ..Default::default()
+            };
+            let _worker_handle = Worker::new(pool, pipeline_arc, worker_cfg).spawn();
+            // The worker runs for the lifetime of the engine. We don't
+            // join its handle — when the process exits the runtime
+            // tears down the task. If we ever want graceful shutdown
+            // (drain in-flight HTTP calls), wire `_worker_handle` into
+            // the shutdown_tx flow.
+        });
+    }
+
+    // Image-PII reconciliation worker (issue #3185 follow-up).
+    // Independent of the text worker — users can toggle either one
+    // without the other. Requires the rfdetr_v9 model present and at
+    // least one of the `onnx-*` or `mlx-mac` cargo features built.
+    if record_args.async_image_pii_redaction {
+        use screenpipe_redact::adapters::rfdetr::{RfdetrConfig, RfdetrRedactor};
+        use screenpipe_redact::image::worker::{ImageWorker, ImageWorkerConfig};
+        use screenpipe_redact::ImageRedactor;
+        use std::sync::Arc;
+
+        // Prefer the MLX runtime on Mac when the safetensors weights
+        // are present (~6× faster than the CoreML EP path). Falls
+        // through to the ONNX adapter otherwise — load_or_download
+        // fetches rfdetr_v9.onnx from
+        // huggingface.co/screenpipe/pii-image-redactor on first run
+        // (~108 MB), verifies SHA-256, caches at
+        // ~/.screenpipe/models/. Subsequent starts are instant.
+        #[allow(unused_mut)]
+        let mut detector_arc: Option<Arc<dyn ImageRedactor>> = None;
+        #[cfg(all(feature = "rfdetr-mlx", target_os = "macos"))]
+        {
+            use screenpipe_redact::adapters::rfdetr_mlx::{RfdetrMlxConfig, RfdetrMlxRedactor};
+            match RfdetrMlxRedactor::load(RfdetrMlxConfig::default()) {
+                Ok(d) => {
+                    info!("image-PII detector: rfdetr-mlx (Apple Silicon GPU)");
+                    detector_arc = Some(Arc::new(d) as Arc<dyn ImageRedactor>);
+                }
+                Err(e) => {
+                    tracing::info!(
+                        "rfdetr-mlx unavailable ({e}); falling back to ONNX adapter"
+                    );
+                }
+            }
+        }
+        if detector_arc.is_none() {
+            match RfdetrRedactor::load_or_download(RfdetrConfig::default()).await {
+                Ok(d) => {
+                    info!("image-PII detector: rfdetr (ONNX Runtime)");
+                    detector_arc = Some(Arc::new(d) as Arc<dyn ImageRedactor>);
+                }
+                Err(e) => {
+                    // Loud-but-non-fatal: capture continues; user gets
+                    // an explicit "model missing or download failed"
+                    // message in the log, and the regular text
+                    // redactor (if enabled) keeps running.
+                    tracing::warn!(
+                        "image-PII redaction enabled but couldn't load model; skipping: {e}. \
+                         check network reachability to huggingface.co or pre-stage \
+                         rfdetr_v9.onnx at ~/.screenpipe/models/."
+                    );
+                }
+            }
+        }
+        if let Some(detector) = detector_arc {
+            info!(
+                "starting async image-PII reconciliation worker (destructive overwrite of source JPGs)"
+            );
+            let cfg = ImageWorkerConfig::default();
+            let _img_handle = ImageWorker::new(db.pool.clone(), detector, cfg).spawn();
+        }
     }
 
     // Add auto-destruct watcher
