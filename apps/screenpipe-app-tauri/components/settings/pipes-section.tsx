@@ -1660,8 +1660,8 @@ export function PipesSection() {
                     <span><strong>day recap</strong> — summarizes what you accomplished today</span>
                   </div>
                   <div className="flex items-center gap-2 p-2 rounded-md bg-muted/50">
-                    <span>🧘‍♂</span>
-                    <span><strong>focus assistant</strong> — notifies you when you get distracted</span>
+                    <span>🎙️</span>
+                    <span><strong>meeting summary</strong> — captures action items from your meetings</span>
                   </div>
                 </div>
                 <button

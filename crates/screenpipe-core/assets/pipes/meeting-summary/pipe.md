@@ -10,7 +10,7 @@ featured: false
 
 Summarize the meeting transcript provided in the context. Include key takeaways and action items. If the meeting is marked as ongoing, note that and summarize what's available so far.
 
-Read screenpipe skill first.
+Read the local-API skill first.
 
 Use this exact format:
 

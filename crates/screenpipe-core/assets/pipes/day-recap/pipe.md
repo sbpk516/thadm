@@ -10,7 +10,7 @@ featured: true
 
 Analyze my screen and audio recordings from today (last 16 hours only). 
 
-Read screenpipe skill first.
+Read the local-API skill first.
 
 Use this exact format:
 

@@ -12,7 +12,7 @@ permissions: writer
 
 You are a prompt extraction agent. Your job is to find every prompt the user typed and sent to an AI tool in the last 1 hour, extract the exact text, and save it to a daily markdown journal.
 
-Read screenpipe skill first.
+Read the local-API skill first.
 
 ## Step 1: Find AI tool frames
 
@@ -142,8 +142,8 @@ curl -s http://localhost:3030/connections/obsidian
 ```
 
 Choose the output directory:
-- If Obsidian is connected: use `{vault_path}/screenpipe/ai-prompts/`
-- If Obsidian is NOT connected: use `~/.screenpipe/ai-prompts/` as fallback (works for everyone)
+- If Obsidian is connected: use `{vault_path}/thadm/ai-prompts/`
+- If Obsidian is NOT connected: use `~/.thadm/ai-prompts/` as fallback (works for everyone)
 
 Create the directory:
 ```bash
@@ -156,7 +156,7 @@ If the file doesn't exist yet, create it with this header:
 ```markdown
 ---
 date: YYYY-MM-DD
-tags: [ai-prompts, screenpipe]
+tags: [ai-prompts, thadm]
 ---
 
 # AI Prompts — YYYY-MM-DD
