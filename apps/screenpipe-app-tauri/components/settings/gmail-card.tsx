@@ -17,8 +17,7 @@ interface GmailAccount {
 }
 
 export function GmailCard() {
-  // THADM: disabled pro gating — Gmail OAuth is local-first and free
-  const isPro = true;
+  // THADM: pro gating removed — Gmail OAuth is local-first and free
   const [accounts, setAccounts] = useState<GmailAccount[]>([]);
   const [isConnecting, setIsConnecting] = useState(false);
   const [disconnecting, setDisconnecting] = useState<string | null>(null);
@@ -146,20 +145,7 @@ export function GmailCard() {
             )}
 
             {/* Connect / Add account button */}
-            {!isPro && !connected ? (
-              <div className="flex flex-col gap-1.5">
-                <Button disabled size="sm" className="gap-1.5 h-7 text-xs opacity-60">
-                  <Lock className="h-3 w-3" />pro required
-                </Button>
-                <button
-                  onClick={() => openUrl("https://screenpi.pe/onboarding")}
-                  className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                >
-                  upgrade to pro to connect
-                </button>
-              </div>
-            ) : (
-              <Button
+            <Button
                 variant="outline"
                 size="sm"
                 onClick={handleConnect}
@@ -179,7 +165,6 @@ export function GmailCard() {
                   ? "Add another account"
                   : "Connect Gmail"}
               </Button>
-            )}
           </div>
         </div>
 

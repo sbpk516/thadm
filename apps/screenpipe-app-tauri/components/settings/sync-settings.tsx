@@ -186,110 +186,16 @@ function SyncBenefits() {
   );
 }
 
-// Onboarding/upgrade prompt
-function SyncOnboarding({ onSubscribe, onRefresh, isLoading, isRefreshing, isLoggedIn }: { onSubscribe: (isAnnual: boolean) => void; onRefresh: () => void; isLoading: boolean; isRefreshing: boolean; isLoggedIn: boolean }) {
-  const [isAnnual, setIsAnnual] = useState(true);
-
+// THADM: Cloud sync is disabled in thadm — show a feature-disabled notice
+// instead of the Screenpipe-Pro upsell + checkout flow.
+function SyncOnboarding(_props: { onSubscribe: (isAnnual: boolean) => void; onRefresh: () => void; isLoading: boolean; isRefreshing: boolean; isLoggedIn: boolean }) {
   return (
-    <div className="space-y-6">
-      <div className="text-center">
-        <CloudSyncAnimation />
-        <h3 className="text-xl font-semibold mt-4">Cloud Sync</h3>
-        <p className="text-sm text-muted-foreground mt-2">
-          Sync your Screenpipe data across all your devices with end-to-end encryption
-        </p>
-      </div>
-
-      <SyncBenefits />
-
-      <Card className="p-4 bg-primary/5 border-primary/20">
-        <div className="flex items-center justify-between">
-          <div>
-            <div className="flex items-center gap-2">
-              <Sparkles className="w-4 h-4 text-primary" />
-              <span className="font-medium">Thadm Pro</span>
-            </div>
-            <p className="text-sm text-muted-foreground mt-1">
-              50GB storage · 3 devices · Priority support
-            </p>
-          </div>
-          <div className="text-right">
-            <div className="text-lg font-bold">
-              ${isAnnual ? "19" : "29"}
-              <span className="text-sm font-normal text-muted-foreground">
-                /mo
-              </span>
-            </div>
-            {isAnnual && (
-              <p className="text-xs text-primary">$228/year - Save 34%</p>
-            )}
-          </div>
-        </div>
-
-        {/* Billing toggle */}
-        <div className="flex items-center justify-center gap-3 mt-4">
-          <span className={`text-sm ${!isAnnual ? "text-foreground" : "text-muted-foreground"}`}>
-            Monthly
-          </span>
-          <Switch
-            checked={isAnnual}
-            onCheckedChange={setIsAnnual}
-          />
-          <span className={`text-sm ${isAnnual ? "text-foreground" : "text-muted-foreground"}`}>
-            Annual
-          </span>
-        </div>
-
-        {isLoggedIn ? (
-          <Button
-            className="w-full mt-4"
-            onClick={() => onSubscribe(isAnnual)}
-            disabled={isLoading}
-          >
-            {isLoading ? (
-              <Loader2 className="w-4 h-4 animate-spin mr-2" />
-            ) : null}
-            Get Cloud Sync
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
-        ) : (
-          <div className="mt-4 space-y-2">
-            <p className="text-sm text-center text-muted-foreground">
-              Please log in to subscribe
-            </p>
-            <Button
-              className="w-full"
-              variant="outline"
-              onClick={async () => {
-                const { open } = await import("@tauri-apps/plugin-shell");
-                await open("https://screenpi.pe/login");
-              }}
-            >
-              Log in to continue
-              <ArrowRight className="w-4 h-4 ml-2" />
-            </Button>
-          </div>
-        )}
-        <a
-          href="https://docs.screenpi.pe/cloud-sync"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="text-xs text-center text-muted-foreground mt-3 block hover:text-primary underline"
-        >
-          Learn how encryption works →
-        </a>
-      </Card>
-
-      <Button
-        variant="ghost"
-        size="sm"
-        onClick={onRefresh}
-        disabled={isRefreshing}
-        className="mx-auto flex items-center gap-2 text-muted-foreground"
-      >
-        <RefreshCw className={`w-3 h-3 ${isRefreshing ? "animate-spin" : ""}`} />
-        {isRefreshing ? "Checking..." : "Already subscribed? Refresh"}
-      </Button>
+    <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Cloud sync is disabled in thadm. Your data stays local — use a
+        local backup (e.g. Time Machine, rsync) if you want copies on
+        another machine.
+      </p>
     </div>
   );
 }

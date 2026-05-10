@@ -20,8 +20,7 @@ interface DriveFile {
 }
 
 export function GoogleDocsCard() {
-  // THADM: disabled pro gating — Google Docs OAuth is local-first and free
-  const isPro = true;
+  // THADM: pro gating removed — Google Docs OAuth is local-first and free
   const [connected, setConnected] = useState(false);
   const [email, setEmail] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
@@ -134,19 +133,7 @@ export function GoogleDocsCard() {
               Only docs you open with screenpipe or that screenpipe creates are visible — not your whole Drive.
             </p>
 
-            {!connected && !isPro ? (
-              <div className="flex flex-col gap-1.5">
-                <Button disabled size="sm" className="gap-1.5 text-xs opacity-60">
-                  <Lock className="h-3 w-3" />pro required
-                </Button>
-                <button
-                  onClick={() => openUrl("https://screenpi.pe/onboarding")}
-                  className="text-[10px] text-muted-foreground hover:text-foreground underline"
-                >
-                  upgrade to pro to connect
-                </button>
-              </div>
-            ) : !connected ? (
+            {!connected ? (
               <Button
                 variant="outline"
                 size="sm"

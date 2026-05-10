@@ -1069,7 +1069,7 @@ const AISection = ({
             { id: "auto", name: "Auto (recommended)", provider: "screenpipe" },
             { id: "claude-haiku-4-5", name: "Haiku 4.5 (fast)", provider: "screenpipe" },
             { id: "claude-sonnet-4-5", name: "Sonnet 4.5 (balanced)", provider: "screenpipe" },
-            { id: "claude-opus-4-6", name: "Opus 4.6 (powerful, pro)", provider: "screenpipe" },
+            { id: "claude-opus-4-6", name: "Opus 4.6 (powerful)", provider: "screenpipe" },
             { id: "gemini-3-flash", name: "Gemini 3 Flash (fast)", provider: "screenpipe" },
             { id: "gemini-3.1-flash-lite", name: "Gemini 3.1 Flash-Lite (cheapest)", provider: "screenpipe" },
             { id: "gemini-3.1-pro", name: "Gemini 3.1 Pro (balanced)", provider: "screenpipe" },
@@ -1476,24 +1476,8 @@ const AISection = ({
                             key={model.id}
                             value={model.id}
                             onSelect={async () => {
-                              if (model.id === "claude-opus-4-6" && !settings.user?.cloud_subscribed) {
-                                if (!settings.user?.token) {
-                                  await commands.openLoginWindow();
-                                } else {
-                                  try {
-                                    const res = await fetch("https://screenpi.pe/api/cloud-sync/checkout", {
-                                      method: "POST",
-                                      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${settings.user.token}` },
-                                      body: JSON.stringify({ tier: "pro", billingPeriod: "monthly", userId: settings.user.id, email: settings.user.email }),
-                                    });
-                                    const data = await res.json();
-                                    if (data.url) await openUrl(data.url);
-                                  } catch (e) {
-                                    console.error("checkout failed:", e);
-                                  }
-                                }
-                                return;
-                              }
+                              // THADM: removed Opus 4.6 Pro upsell — all models
+                              // selectable without subscription gating
                               updateSettingsPreset({ model: model.id });
                               setIsModelPickerOpen(false);
                             }}
@@ -2018,16 +2002,8 @@ export const AIPresets = () => {
   const removePreset = async (id: string) => {
     setIsLoading(true);
     try {
-      // Prevent deletion of cloud preset for Pro subscribers
-      const presetToRemove = settings.aiPresets.find((preset) => preset.id === id);
-      if (presetToRemove?.provider === "screenpipe-cloud" && settings.user?.cloud_subscribed) {
-        toast({
-          title: "Cannot delete cloud preset",
-          description: "This preset is included with your Pro subscription",
-          variant: "destructive",
-        });
-        return;
-      }
+      // THADM: removed cloud-preset-locked-for-Pro check. Users may delete
+      // any preset; no Pro tier in thadm.
 
       const checkIfDefault = settings.aiPresets.find(
         (preset) => preset.id === id

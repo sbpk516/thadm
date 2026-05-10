@@ -225,45 +225,12 @@ export function AccountSection() {
         </div>
       </div>
 
-      {/* Subscribed view */}
+      {/* Subscribed view — THADM: stripped "Thadm Pro" header + benefits
+          list since thadm has no Pro tier. Sync toggles below kept for
+          users who still have cloud_subscribed=true from legacy data. */}
       {settings.user?.cloud_subscribed ? (
         <Card className="p-5">
-          <div className="flex items-center justify-between mb-4">
-            <div className="flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary" />
-              <h3 className="text-lg font-semibold">Thadm Pro</h3>
-              <span className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium">active</span>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openUrl("https://screenpi.pe/billing")}
-              >
-                <CreditCard className="w-3.5 h-3.5 mr-1.5" />
-                Billing <ExternalLinkIcon className="w-3.5 h-3.5 ml-1.5" />
-              </Button>
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-2 text-sm text-muted-foreground">
-            <div className="flex items-center gap-2">
-              <span>✓</span> encrypted cloud archive
-            </div>
-            <div className="flex items-center gap-2">
-              <span>✓</span> cloud transcription — higher quality
-            </div>
-            <div className="flex items-center gap-2">
-              <span>✓</span> 100x more AI queries
-            </div>
-            <div className="flex items-center gap-2">
-              <span>✓</span> priority support
-            </div>
-            <div className="flex items-center gap-2">
-              <span>✓</span> encrypted pipe sync across devices
-            </div>
-          </div>
-
-          {/* Pipe sync */}
+          {/* Task sync */}
           <div className="mt-4 pt-4 border-t border-border/50">
             <div className="flex items-center justify-between">
               <div>
@@ -393,201 +360,14 @@ export function AccountSection() {
             </Button>
           </Card>
 
-          {/* Pro upsell — collapsed, secondary */}
-          <details className="group">
-            <summary className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground hover:text-foreground transition-colors">
-              <Sparkles className="h-4 w-4" />
-              Optional: upgrade to Thadm Pro
-              <span className="text-xs ml-auto group-open:hidden">show details</span>
-            </summary>
-            <Card className="mt-3 p-5">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <Sparkles className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">Thadm Pro</h3>
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold">{isAnnual ? "$26" : "$39"}</span>
-                    <span className="text-muted-foreground text-sm">/month</span>
-                    {isAnnual && (
-                      <span className="text-xs border border-foreground/20 text-foreground px-2 py-0.5 rounded-full font-medium">
-                        save 33%
-                      </span>
-                    )}
-                  </div>
-                  {isAnnual && (
-                    <p className="text-xs text-muted-foreground mt-0.5">$312/year, billed annually</p>
-                  )}
-                </div>
-                <PricingToggle isAnnual={isAnnual} onToggle={setIsAnnual} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm mb-4">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Shield className="h-3.5 w-3.5 shrink-0" />
-                  encrypted cloud sync — 50GB, 3 devices
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Zap className="h-3.5 w-3.5 shrink-0" />
-                  cloud transcription — higher quality, saves 2-3GB RAM
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                  100x more AI queries
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                  priority support
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                  encrypted pipe sync across devices
-                </div>
-              </div>
-
-              <Button
-                className="w-full bg-foreground text-background hover:bg-background hover:text-foreground transition-colors duration-150"
-                size="lg"
-                onClick={handleCheckout}
-              >
-                login & upgrade to pro
-                <ExternalLinkIcon className="w-4 h-4 ml-2" />
-              </Button>
-            </Card>
-          </details>
-
-          {/* Locked pipe sync toggle — not logged in */}
-          <Card className="p-4 opacity-75">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">task sync across devices</p>
-                <p className="text-xs text-muted-foreground">
-                  sync your pipes & configs to all devices linked to your account
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch disabled checked={false} />
-                <button
-                  onClick={() => commands.openLoginWindow()}
-                  className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium flex items-center gap-1 hover:bg-primary/20 transition-colors cursor-pointer"
-                >
-                  <Lock className="h-3 w-3" />
-                  Pro
-                </button>
-              </div>
-            </div>
-          </Card>
+          {/* THADM: removed Pro upsell — no Pro tier; all features available
+              to trial / annual / lifetime subscribers without gating. */}
         </>
       ) : (
-        /* Logged in, free tier: show upsell */
-        <>
-          {/* Pro plan card with animated border */}
-          <div className="group relative rounded-lg p-[1px] overflow-hidden">
-            {/* Animated spinning border — oversized rotated square with conic gradient */}
-            <div
-              className="absolute inset-[-100%] animate-[spin-border_4s_linear_infinite]"
-              style={{
-                background: "conic-gradient(from 0deg, transparent 0%, transparent 35%, hsl(var(--foreground)) 50%, transparent 65%, transparent 100%)",
-              }}
-            />
-            {/* Inner card */}
-            <Card className="relative p-5 bg-background border-0">
-              <div className="flex items-start justify-between mb-4">
-                <div>
-                  <div className="flex items-center gap-2 mb-1">
-                    <Sparkles className="h-5 w-5" />
-                    <h3 className="text-lg font-semibold">Thadm Pro</h3>
-                  </div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-2xl font-bold">{isAnnual ? "$26" : "$39"}</span>
-                    <span className="text-muted-foreground text-sm">/month</span>
-                    {isAnnual && (
-                      <span className="text-xs border border-foreground/20 text-foreground px-2 py-0.5 rounded-full font-medium">
-                        save 33%
-                      </span>
-                    )}
-                  </div>
-                  {isAnnual && (
-                    <p className="text-xs text-muted-foreground mt-0.5">$312/year, billed annually</p>
-                  )}
-                </div>
-                <PricingToggle isAnnual={isAnnual} onToggle={setIsAnnual} />
-              </div>
-
-              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-sm mb-4">
-                <div className="flex items-center gap-2 text-foreground">
-                  <Shield className="h-3.5 w-3.5 shrink-0" />
-                  encrypted cloud sync — 50GB, 3 devices
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Zap className="h-3.5 w-3.5 shrink-0" />
-                  cloud transcription — higher quality, saves 2-3GB RAM
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                  100x more AI queries
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <Sparkles className="h-3.5 w-3.5 shrink-0" />
-                  priority support
-                </div>
-                <div className="flex items-center gap-2 text-foreground">
-                  <RefreshCw className="h-3.5 w-3.5 shrink-0" />
-                  encrypted pipe sync across devices
-                </div>
-              </div>
-
-              <Button
-                className="w-full bg-foreground text-background hover:bg-background hover:text-foreground transition-colors duration-150"
-                size="lg"
-                onClick={handleCheckout}
-              >
-                upgrade to pro
-                <ExternalLinkIcon className="w-4 h-4 ml-2" />
-              </Button>
-
-            </Card>
-          </div>
-
-          {/* Locked pipe sync toggle — free tier */}
-          <Card className="p-4 opacity-75">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-sm font-medium">task sync across devices</p>
-                <p className="text-xs text-muted-foreground">
-                  sync your pipes & configs to all devices linked to your account
-                </p>
-              </div>
-              <div className="flex items-center gap-2">
-                <Switch disabled checked={false} />
-                <button
-                  onClick={handleCheckout}
-                  className="text-xs bg-primary/10 text-primary px-2 py-0.5 rounded-full font-medium flex items-center gap-1 hover:bg-primary/20 transition-colors cursor-pointer"
-                >
-                  <Lock className="h-3 w-3" />
-                  Pro
-                </button>
-              </div>
-            </div>
-          </Card>
-
-          {/* Current free tier - compact */}
-          <div className="px-3 py-2 rounded-lg border border-border/50">
-            <p className="text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">free tier:</span>{" "}
-              local whisper transcription (uses ~2GB RAM)
-            </p>
-          </div>
-
-          {/* CSS animation for spinning border */}
-          <style>{`
-            @keyframes spin-border {
-              from { transform: rotate(0deg); }
-              to { transform: rotate(360deg); }
-            }
-          `}</style>
-        </>
+        /* THADM: removed Pro upsell card + locked sync card + free-tier panel
+            for logged-in users without a cloud subscription. No Pro tier in
+            thadm; all features are available without gating. */
+        null
       )}
 
       <ReferralCard />

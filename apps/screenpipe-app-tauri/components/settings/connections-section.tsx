@@ -1022,8 +1022,7 @@ function ChatGptPanel() {
 // ---------------------------------------------------------------------------
 
 function OAuthPanel({ integrationId, integrationName }: { integrationId: string; integrationName: string }) {
-  // THADM: disabled pro gating — all OAuth connections are local-first and free
-  const isPro = true;
+  // THADM: pro gating removed — all OAuth connections are local-first and free
   const [status, setStatus] = useState<"idle" | "loading" | "connected">("idle");
   const [displayName, setDisplayName] = useState<string | null>(null);
   // Ref guard so a cancelled or timed-out connect attempt doesn't update state after cancel.
@@ -1096,18 +1095,6 @@ function OAuthPanel({ integrationId, integrationName }: { integrationId: string;
           <Button onClick={handleDisconnect} variant="outline" size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal">
             <LogOut className="h-3 w-3" />disconnect{displayName ? ` (${displayName})` : ""}
           </Button>
-        ) : !isPro ? (
-          <div className="flex flex-col gap-1.5">
-            <Button disabled size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal whitespace-nowrap opacity-60">
-              <Lock className="h-3 w-3" />pro required
-            </Button>
-            <button
-              onClick={() => openUrl("https://screenpi.pe/onboarding")}
-              className="text-[10px] text-muted-foreground hover:text-foreground underline"
-            >
-              upgrade to pro to connect
-            </button>
-          </div>
         ) : status === "loading" ? (
           <div className="flex gap-2 items-center">
             <Button disabled size="sm" className="gap-1.5 h-7 text-xs normal-case font-sans tracking-normal whitespace-nowrap">

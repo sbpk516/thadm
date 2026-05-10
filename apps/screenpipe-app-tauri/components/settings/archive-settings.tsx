@@ -220,50 +220,21 @@ export function ArchiveSettings() {
     }
   };
 
-  // Not a pro user — show upgrade prompt
+  // THADM: cloud archive is a disabled cloud feature in thadm. Show a
+  // simple "not available" notice instead of the pro-tier upsell.
   if (!isProUser) {
     return (
-      <div className="space-y-6">
-        <p className="text-muted-foreground text-sm mb-4">
-          Encrypt and archive old data to the cloud to free disk space.{" "}
-          <button
-            onClick={() => openUrl("https://docs.screenpi.pe/cloud-archive")}
-            className="underline underline-offset-2 hover:text-foreground transition-colors"
-          >
-            Learn more
-          </button>
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Cloud archive is disabled in thadm. Your screen data stays local —
+          use the disk-usage section to manage retention manually.
         </p>
-        <div className="flex items-center gap-2">
-            <Badge variant="secondary" className="text-[10px]">
-              pro
-            </Badge>
-        </div>
-
-        <Card>
-          <CardContent className="p-5">
-            <div className="flex items-center gap-3 mb-3">
-              <Lock className="h-5 w-5 text-muted-foreground" />
-              <p className="text-sm text-muted-foreground">
-                Cloud archive is available with Thadm Pro.
-              </p>
-            </div>
-            <Button size="sm" onClick={handleCheckout}>
-              {isLoggedIn ? "Upgrade to pro" : "Log in to upgrade"}
-            </Button>
-          </CardContent>
-        </Card>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center gap-2">
-          <Badge variant="secondary" className="text-[10px]">
-            pro
-          </Badge>
-      </div>
-
       {/* Retention selector */}
       <p className="text-sm text-muted-foreground">
           Encrypt and archive data older than{" "}
