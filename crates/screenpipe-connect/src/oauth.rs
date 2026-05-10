@@ -63,6 +63,46 @@ use tokio::sync::oneshot;
 pub const OAUTH_REDIRECT_URI: &str = "http://localhost:3030/connections/oauth/callback";
 
 // ---------------------------------------------------------------------------
+// THADM: Runtime OAuth credential overrides
+// ---------------------------------------------------------------------------
+// Each integration ships with a hardcoded fallback client_id that points at
+// the upstream screenpipe Google Cloud / Azure / Notion / etc. projects.
+// Until thadm registers its own OAuth apps with each provider, the consent
+// screens will show "louis@screenpi.pe" as the developer.
+//
+// To swap in your own OAuth client_id without touching the source:
+//   THADM_OAUTH_<INTEGRATION>_CLIENT_ID=<your-client-id>
+// Examples:
+//   THADM_OAUTH_GMAIL_CLIENT_ID=...
+//   THADM_OAUTH_GOOGLE_CALENDAR_CLIENT_ID=...
+//   THADM_OAUTH_MICROSOFT365_CLIENT_ID=...
+//
+// To redirect the token exchange to your own server (required if you supply
+// your own client_ids — screenpipe's exchange server does not hold your
+// client_secrets):
+//   THADM_OAUTH_EXCHANGE_URL=https://your-domain.example/api/oauth/exchange
+//
+// Integration IDs are uppercased and `-` → `_`. e.g. `google-calendar` →
+// THADM_OAUTH_GOOGLE_CALENDAR_CLIENT_ID.
+
+/// Resolve the effective client_id for an integration: env var override
+/// if set, otherwise the hardcoded fallback shipped in the binary.
+pub fn resolve_client_id(integration_id: &str, fallback: &str) -> String {
+    let env_key = format!(
+        "THADM_OAUTH_{}_CLIENT_ID",
+        integration_id.to_uppercase().replace('-', "_")
+    );
+    std::env::var(&env_key).unwrap_or_else(|_| fallback.to_string())
+}
+
+/// Resolve the effective token-exchange URL: env var override if set,
+/// otherwise the upstream screenpipe proxy.
+pub fn resolve_exchange_url() -> String {
+    std::env::var("THADM_OAUTH_EXCHANGE_URL")
+        .unwrap_or_else(|_| EXCHANGE_PROXY_URL.to_string())
+}
+
+// ---------------------------------------------------------------------------
 // Pending callback map — shared between oauth_connect (Tauri) and the
 // /connections/oauth/callback HTTP handler (screenpipe-engine)
 // ---------------------------------------------------------------------------
@@ -922,8 +962,12 @@ pub async fn exchange_code(
     code: &str,
     redirect_uri: &str,
 ) -> Result<Value> {
+    // THADM: exchange URL is env-overridable via THADM_OAUTH_EXCHANGE_URL.
+    // Required when you provide your own client_ids — screenpipe's exchange
+    // server doesn't hold your client_secrets and will fail on lookup.
+    let exchange_url = resolve_exchange_url();
     let resp = client
-        .post(EXCHANGE_PROXY_URL)
+        .post(&exchange_url)
         .json(&serde_json::json!({
             "integration_id": integration_id,
             "code":           code,

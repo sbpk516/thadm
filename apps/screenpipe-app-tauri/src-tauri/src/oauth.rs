@@ -98,12 +98,17 @@ pub async fn oauth_connect(
 
     let redirect_uri = config.redirect_uri_override.unwrap_or(OAUTH_REDIRECT_URI);
 
+    // THADM: env-overridable client_id (THADM_OAUTH_<INTEGRATION>_CLIENT_ID).
+    // Falls back to the hardcoded screenpipe-owned client_id shipped in the
+    // binary if no override is set.
+    let effective_client_id = oauth::resolve_client_id(&integration_id, config.client_id);
+
     let mut auth_url =
         reqwest::Url::parse(config.auth_url).map_err(|e| format!("bad auth_url: {}", e))?;
     {
         let mut pairs = auth_url.query_pairs_mut();
         pairs
-            .append_pair("client_id", config.client_id)
+            .append_pair("client_id", &effective_client_id)
             .append_pair("response_type", "code")
             .append_pair("redirect_uri", redirect_uri)
             .append_pair("state", &state);
