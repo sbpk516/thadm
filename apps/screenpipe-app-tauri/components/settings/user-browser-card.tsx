@@ -145,7 +145,7 @@ export function UserBrowserCard() {
                 className="text-xs"
               >
                 <ExternalLink className="h-3 w-3 mr-1.5" />
-                Install Screenpipe Browser Bridge
+                Install Browser Bridge extension
               </Button>
             ) : (
               <p className="text-xs text-muted-foreground">

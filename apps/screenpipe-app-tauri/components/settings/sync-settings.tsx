@@ -207,7 +207,7 @@ function SyncOnboarding({ onSubscribe, onRefresh, isLoading, isRefreshing, isLog
           <div>
             <div className="flex items-center gap-2">
               <Sparkles className="w-4 h-4 text-primary" />
-              <span className="font-medium">Screenpipe Pro</span>
+              <span className="font-medium">Thadm Pro</span>
             </div>
             <p className="text-sm text-muted-foreground mt-1">
               50GB storage · 3 devices · Priority support
