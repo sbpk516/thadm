@@ -14,6 +14,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { useSettings, makeDefaultPresets } from "@/lib/hooks/use-settings";
 import { localFetch } from "@/lib/api";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { readTextFile } from "@tauri-apps/plugin-fs";
@@ -443,8 +444,9 @@ export default function EngineStartup({
 
       const userToken = settings.user?.token;
 
-      if (preset?.provider === "screenpipe-cloud" && userToken) {
-        endpoint = "https://api.screenpi.pe/v1/chat/completions";
+      const cloudAiUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_CLOUD_AI_URL");
+      if (preset?.provider === "screenpipe-cloud" && userToken && cloudAiUrl) {
+        endpoint = `${cloudAiUrl}/v1/chat/completions`;
         model = preset.model || model;
         auth = { Authorization: `Bearer ${userToken}` };
       } else if (
@@ -455,9 +457,9 @@ export default function EngineStartup({
         endpoint = `${preset.url.replace(/\/$/, "")}/chat/completions`;
         model = preset.model;
         auth = { Authorization: `Bearer ${preset.apiKey}` };
-      } else if (userToken) {
+      } else if (userToken && cloudAiUrl) {
         // Fall back to cloud even if preset is non-cloud but token exists.
-        endpoint = "https://api.screenpi.pe/v1/chat/completions";
+        endpoint = `${cloudAiUrl}/v1/chat/completions`;
         auth = { Authorization: `Bearer ${userToken}` };
       } else {
         // No way to call any model. Bail and reset the gate so a later poll
@@ -710,7 +712,11 @@ if the input is sparse, just describe what little you have warmly. don't apologi
   const sendLogs = async () => {
     setIsSendingLogs(true);
     try {
-      const BASE_URL = "https://screenpi.pe";
+      const BASE_URL = resolveThadmEnv("NEXT_PUBLIC_THADM_LOG_UPLOAD_URL");
+      if (!BASE_URL) {
+        setIsSendingLogs(false);
+        return;
+      }
       const machineId =
         localStorage?.getItem("machineId") || crypto.randomUUID();
       try {
@@ -943,14 +949,23 @@ if the input is sparse, just describe what little you have warmly. don't apologi
           )}
 
           <p className="font-mono text-[10px] text-muted-foreground/50 text-center lowercase tracking-wide">
-            stays on your machine ·{" "}
-            <button
-              type="button"
-              onClick={() => openUrl("https://screenpi.pe/security")}
-              className="underline hover:text-muted-foreground transition-colors"
-            >
-              how it works ↗
-            </button>
+            stays on your machine
+            {(() => {
+              const securityUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_SECURITY_URL");
+              if (!securityUrl) return null;
+              return (
+                <>
+                  {" · "}
+                  <button
+                    type="button"
+                    onClick={() => openUrl(securityUrl)}
+                    className="underline hover:text-muted-foreground transition-colors"
+                  >
+                    how it works ↗
+                  </button>
+                </>
+              );
+            })()}
           </p>
 
           <button
@@ -1078,16 +1093,20 @@ if the input is sparse, just describe what little you have warmly. don't apologi
                     </>
                   )}
                 </Button>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() =>
-                    openUrl("https://cal.com/team/screenpipe/chat")
-                  }
-                  className="font-mono text-[10px] h-7 px-2"
-                >
-                  <Calendar className="w-3 h-3 mr-1" /> help
-                </Button>
+                {(() => {
+                  const bookingUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_BOOKING_URL");
+                  if (!bookingUrl) return null;
+                  return (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => openUrl(bookingUrl)}
+                      className="font-mono text-[10px] h-7 px-2"
+                    >
+                      <Calendar className="w-3 h-3 mr-1" /> help
+                    </Button>
+                  );
+                })()}
               </div>
             </motion.div>
           )}

@@ -14,6 +14,7 @@ import { useSettings, DEFAULT_PROMPT } from "@/lib/hooks/use-settings";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { revealItemInDir } from "@tauri-apps/plugin-opener";
 import { localFetch } from "@/lib/api";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { homeDir, join } from "@tauri-apps/api/path";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { getVersion } from "@tauri-apps/api/app";
@@ -151,7 +152,11 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
   const sendLogs = async () => {
     setIsSendingLogs(true);
     try {
-      const BASE_URL = "https://screenpi.pe";
+      const BASE_URL = resolveThadmEnv("NEXT_PUBLIC_THADM_LOG_UPLOAD_URL");
+      if (!BASE_URL) {
+        setIsSendingLogs(false);
+        return;
+      }
       const machineId = localStorage?.getItem("machineId") || crypto.randomUUID();
       try { localStorage?.setItem("machineId", machineId); } catch {}
       const identifier = settings.user?.id || machineId;
@@ -202,8 +207,10 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
     }
   };
 
+  const bookingUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_BOOKING_URL");
   const openBookingLink = () => {
-    openUrl("https://cal.com/team/screenpipe/chat");
+    if (!bookingUrl) return;
+    openUrl(bookingUrl);
   };
 
   const ensureDefaultPreset = async () => {
@@ -629,14 +636,16 @@ const OnboardingStatus: React.FC<OnboardingStatusProps> = ({
                       <><Upload className="w-3 h-3 mr-1" /> send logs</>
                     )}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={openBookingLink}
-                    className="font-mono text-[10px] h-7 px-2"
-                  >
-                    <Calendar className="w-3 h-3 mr-1" /> help
-                  </Button>
+                  {bookingUrl && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={openBookingLink}
+                      className="font-mono text-[10px] h-7 px-2"
+                    >
+                      <Calendar className="w-3 h-3 mr-1" /> help
+                    </Button>
+                  )}
                 </div>
               </motion.div>
             )}

@@ -77,21 +77,30 @@ async function sendHeartbeat(licenseKey: string): Promise<void> {
       pipeStatuses = await gatherPipeStatuses();
     } catch {}
 
-    await tauriFetch("https://screenpi.pe/api/enterprise/heartbeat", {
-      method: "POST",
-      headers: {
-        "X-License-Key": licenseKey,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        device_id: deviceId,
-        hostname,
-        platform: devicePlatform,
-        app_version: appVersion,
-        recording_status: { frame_status: frameStatus, audio_status: audioStatus },
-        pipe_statuses: pipeStatuses,
-      }),
-    });
+    // THADM: disabled — screenpi.pe enterprise heartbeat
+    // await tauriFetch("https://screenpi.pe/api/enterprise/heartbeat", {
+    //   method: "POST",
+    //   headers: {
+    //     "X-License-Key": licenseKey,
+    //     "Content-Type": "application/json",
+    //   },
+    //   body: JSON.stringify({
+    //     device_id: deviceId,
+    //     hostname,
+    //     platform: devicePlatform,
+    //     app_version: appVersion,
+    //     recording_status: { frame_status: frameStatus, audio_status: audioStatus },
+    //     pipe_statuses: pipeStatuses,
+    //   }),
+    // });
+    void licenseKey;
+    void deviceId;
+    void hostname;
+    void devicePlatform;
+    void appVersion;
+    void frameStatus;
+    void audioStatus;
+    void pipeStatuses;
   } catch {}
 }
 

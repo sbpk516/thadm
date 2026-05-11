@@ -14,8 +14,15 @@ import {
   wrapKeyWithPassphrase,
   unwrapKeyWithPassphrase,
 } from "../team-crypto";
+import { resolveThadmEnv } from "../utils/thadm-urls";
 
-const API = "https://screenpi.pe/api/team";
+// Team features require a cloud backend; thadm ships with this disabled.
+// When `NEXT_PUBLIC_THADM_TEAM_API_BASE_URL` is unset, every fetch below
+// throws synchronously (invalid URL) and is caught by the surrounding
+// try/catch — surfaced to the UI as "failed to fetch team", which is the
+// intended behavior.
+const TEAM_API_BASE = resolveThadmEnv("NEXT_PUBLIC_THADM_TEAM_API_BASE_URL");
+const API = TEAM_API_BASE ? `${TEAM_API_BASE}/api/team` : "";
 
 // key stored under "team_key_<team_id>" in ~/.screenpipe/store.bin
 // this is the same Tauri secure store used for settings, auth tokens, etc.
@@ -178,7 +185,10 @@ export function useTeam() {
 
             // 2. export key to base64 and build web URL with key in fragment
             const base64Key = await exportTeamKey(key);
-            inviteLink = `https://screenpi.pe/join/${tokenData.invite_token}#key=${encodeURIComponent(base64Key)}`;
+            const joinBase = resolveThadmEnv("NEXT_PUBLIC_THADM_TEAM_JOIN_URL");
+            inviteLink = joinBase
+              ? `${joinBase}/${tokenData.invite_token}#key=${encodeURIComponent(base64Key)}`
+              : null;
             // no passphrase needed in new flow
             invitePassphrase = null;
           }

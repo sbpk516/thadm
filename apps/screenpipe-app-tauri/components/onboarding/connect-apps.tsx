@@ -631,33 +631,35 @@ export default function ConnectApps({ handleNextSlide }: ConnectAppsProps) {
       user_type: isPro ? "pro" : "free",
     });
 
-    try {
-      const response = await fetch("https://screenpi.pe/api/cloud-sync/checkout", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${settings.user.token}`,
-        },
-        body: JSON.stringify({
-          tier: "pro",
-          billingPeriod: "yearly",
-          userId: settings.user.id,
-          email: settings.user.email,
-        }),
-      });
-
-      const data = await response.json();
-      if (data.url) {
-        await openUrl(data.url);
-      } else {
-        await openUrl("https://screenpi.pe/billing");
-        return;
-      }
-    } catch (error) {
-      console.error("failed to start onboarding checkout:", error);
-      await openUrl("https://screenpi.pe/billing");
-      return;
-    }
+    // THADM: disabled — screenpi.pe Pro checkout + billing portal
+    // try {
+    //   const response = await fetch("https://screenpi.pe/api/cloud-sync/checkout", {
+    //     method: "POST",
+    //     headers: {
+    //       "Content-Type": "application/json",
+    //       Authorization: `Bearer ${settings.user.token}`,
+    //     },
+    //     body: JSON.stringify({
+    //       tier: "pro",
+    //       billingPeriod: "yearly",
+    //       userId: settings.user.id,
+    //       email: settings.user.email,
+    //     }),
+    //   });
+    //
+    //   const data = await response.json();
+    //   if (data.url) {
+    //     await openUrl(data.url);
+    //   } else {
+    //     await openUrl("https://screenpi.pe/billing");
+    //     return;
+    //   }
+    // } catch (error) {
+    //   console.error("failed to start onboarding checkout:", error);
+    //   await openUrl("https://screenpi.pe/billing");
+    //   return;
+    // }
+    return;
 
     // The background interval (above) already polls loadUser every 8s —
     // it will detect the activated subscription automatically once Stripe

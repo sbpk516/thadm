@@ -12,6 +12,7 @@ import posthog from "posthog-js";
 import { User } from "../utils/tauri";
 import { SettingsStore } from "../utils/tauri";
 import { installAuthInterceptor } from "../auth-guard";
+import { resolveThadmEnv } from "../utils/thadm-urls";
 export type VadSensitivity = "low" | "medium" | "high";
 
 export type AIProviderType =
@@ -979,8 +980,12 @@ export const SettingsProvider: React.FC<{ children: React.ReactNode }> = ({ chil
 	};
 
 	const loadUser = async (token: string) => {
+		const accountApiBase = resolveThadmEnv("NEXT_PUBLIC_THADM_ACCOUNT_API_BASE_URL");
+		if (!accountApiBase) {
+			throw new Error("user account API disabled — set NEXT_PUBLIC_THADM_ACCOUNT_API_BASE_URL to enable");
+		}
 		try {
-			const response = await fetch(`https://screenpi.pe/api/user`, {
+			const response = await fetch(`${accountApiBase}/api/user`, {
 				method: "POST",
 				headers: {
 					"Content-Type": "application/json",

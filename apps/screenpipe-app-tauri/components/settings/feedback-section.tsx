@@ -9,11 +9,19 @@ import { MessageSquare, Github, Lightbulb, ChevronDown, ChevronUp, Calendar, Fil
 import { open } from "@tauri-apps/plugin-shell";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { IntercomChat } from "./intercom-chat";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 export function FeedbackSection() {
   const { settings } = useSettings();
   const [chatOpen, setChatOpen] = useState(false);
   const isLoggedIn = !!settings.user?.email;
+
+  const docsUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_DOCS_BASE_URL");
+  const videoUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_VIDEO_URL");
+  const ideasUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_IDEAS_URL");
+  const githubUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_GITHUB_URL");
+  const changelogUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_CHANGELOG_URL");
+  const bookingUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_BOOKING_URL");
 
   return (
     <div className="space-y-5" data-testid="section-help">
@@ -33,113 +41,125 @@ export function FeedbackSection() {
           <ShareLogsButton showShareLink={true} />
         </div>
 
-        <div className="px-3 py-2.5 bg-card border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div>
-                <h3 className="text-sm font-medium text-foreground">Documentation</h3>
-                <p className="text-xs text-muted-foreground">guides, API reference, integrations</p>
+        {docsUrl && (
+          <div className="px-3 py-2.5 bg-card border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <BookOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Documentation</h3>
+                  <p className="text-xs text-muted-foreground">guides, API reference, integrations</p>
+                </div>
               </div>
+              <button
+                onClick={() => open(docsUrl)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
+              >
+                docs →
+              </button>
             </div>
-            <button
-              onClick={() => open("https://docs.screenpi.pe")}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
-            >
-              docs.screenpi.pe →
-            </button>
           </div>
-        </div>
+        )}
 
-        <div className="px-3 py-2.5 bg-card border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <Youtube className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div>
-                <h3 className="text-sm font-medium text-foreground">Video tutorials</h3>
-                <p className="text-xs text-muted-foreground">watch demos and walkthroughs</p>
+        {videoUrl && (
+          <div className="px-3 py-2.5 bg-card border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Youtube className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Video tutorials</h3>
+                  <p className="text-xs text-muted-foreground">watch demos and walkthroughs</p>
+                </div>
               </div>
+              <button
+                onClick={() => open(videoUrl)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
+              >
+                watch →
+              </button>
             </div>
-            <button
-              onClick={() => open("https://www.youtube.com/@screen_pipe/videos")}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
-            >
-              youtube →
-            </button>
           </div>
-        </div>
+        )}
 
-        <div className="px-3 py-2.5 bg-card border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <Lightbulb className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div>
-                <h3 className="text-sm font-medium text-foreground">Feature ideas</h3>
-                <p className="text-xs text-muted-foreground">vote or submit requests</p>
+        {ideasUrl && (
+          <div className="px-3 py-2.5 bg-card border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Lightbulb className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Feature ideas</h3>
+                  <p className="text-xs text-muted-foreground">vote or submit requests</p>
+                </div>
               </div>
+              <button
+                onClick={() => open(ideasUrl)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
+              >
+                ideas →
+              </button>
             </div>
-            <button
-              onClick={() => open("https://screenpi.pe/ideas")}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
-            >
-              screenpi.pe/ideas →
-            </button>
           </div>
-        </div>
+        )}
 
-        <div className="px-3 py-2.5 bg-card border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <Github className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div>
-                <h3 className="text-sm font-medium text-foreground">GitHub issues</h3>
-                <p className="text-xs text-muted-foreground">bugs & technical issues</p>
+        {githubUrl && (
+          <div className="px-3 py-2.5 bg-card border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Github className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">GitHub issues</h3>
+                  <p className="text-xs text-muted-foreground">bugs & technical issues</p>
+                </div>
               </div>
+              <button
+                onClick={() => open(githubUrl)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
+              >
+                open →
+              </button>
             </div>
-            <button
-              onClick={() => open("https://github.com/screenpipe/screenpipe/issues")}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
-            >
-              open →
-            </button>
           </div>
-        </div>
+        )}
 
-        <div className="px-3 py-2.5 bg-card border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div>
-                <h3 className="text-sm font-medium text-foreground">Changelog</h3>
-                <p className="text-xs text-muted-foreground">what&apos;s new in each version</p>
+        {changelogUrl && (
+          <div className="px-3 py-2.5 bg-card border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Changelog</h3>
+                  <p className="text-xs text-muted-foreground">what&apos;s new in each version</p>
+                </div>
               </div>
+              <button
+                onClick={() => open(changelogUrl)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
+              >
+                changelog →
+              </button>
             </div>
-            <button
-              onClick={() => open("https://screenpi.pe/changelog")}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
-            >
-              screenpi.pe/changelog →
-            </button>
           </div>
-        </div>
+        )}
 
-        <div className="px-3 py-2.5 bg-card border border-border">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2.5">
-              <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
-              <div>
-                <h3 className="text-sm font-medium text-foreground">Book a call</h3>
-                <p className="text-xs text-muted-foreground">talk with the founder</p>
+        {bookingUrl && (
+          <div className="px-3 py-2.5 bg-card border border-border">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <Calendar className="h-4 w-4 text-muted-foreground shrink-0" />
+                <div>
+                  <h3 className="text-sm font-medium text-foreground">Book a call</h3>
+                  <p className="text-xs text-muted-foreground">talk with the team</p>
+                </div>
               </div>
+              <button
+                onClick={() => open(bookingUrl)}
+                className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
+              >
+                schedule →
+              </button>
             </div>
-            <button
-              onClick={() => open("https://cal.com/team/screenpipe/chat")}
-              className="text-xs text-muted-foreground hover:text-foreground transition-colors duration-150"
-            >
-              schedule →
-            </button>
           </div>
-        </div>
+        )}
 
         {/* Live chat — only visible when logged in */}
         {isLoggedIn && (

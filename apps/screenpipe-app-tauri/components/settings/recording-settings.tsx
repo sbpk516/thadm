@@ -948,11 +948,11 @@ export function RecordingSettings() {
 
 Most of this data gets quietly filtered away before you're even conscious of it. Your visual cortex silently discards ninety-nine percent of what hits your retina, keeping only the fragments it judges important: a familiar face in a crowd, a flash of movement at the edge of your peripheral vision, the subtle shift in someone's expression during a conversation.
 
-Screenpipe works on a similar philosophy. It watches everything that flows through your digital world — every window, every tab, every meeting, every notification — and distills it into searchable, meaningful memory. Think of it as a second brain that never forgets, never gets tired, and never loses track of that important thing someone said three weeks ago on a Tuesday afternoon.
+Thadm works on a similar philosophy. It watches everything that flows through your digital world — every window, every tab, every meeting, every notification — and distills it into searchable, meaningful memory. Think of it as a second brain that never forgets, never gets tired, and never loses track of that important thing someone said three weeks ago on a Tuesday afternoon.
 
 The average knowledge worker switches between four hundred different windows per day and types roughly forty words per minute across dozens of applications. Without a system to capture and organize this firehose of information, most of it simply evaporates.
 
-Your screen is a pipe. Everything you see, hear, and type flows through it. Screenpipe just makes sure nothing valuable leaks away.`;
+Your screen is a stream. Everything you see, hear, and type flows through it. Thadm just makes sure nothing valuable leaks away.`;
 
   const handleIgnoredWindowsChange = (values: string[]) => {
     // Convert all values to lowercase for comparison

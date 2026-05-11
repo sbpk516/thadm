@@ -10,9 +10,11 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { listen } from "@tauri-apps/api/event";
 import posthog from "posthog-js";
 import { localFetch } from "@/lib/api";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
-const WELCOME_URL = "https://screenpi.pe/welcome";
-// minimum seconds before Continue is enabled (so screenpipe has time to capture)
+const WELCOME_URL =
+  resolveThadmEnv("NEXT_PUBLIC_THADM_WELCOME_URL") ?? "https://example.com";
+// minimum seconds before Continue is enabled (so thadm has time to capture)
 const MIN_READ_SECONDS = 15;
 // auto-advance after this many seconds (don't block forever)
 const AUTO_ADVANCE_SECONDS = 120;
@@ -192,7 +194,7 @@ export default function ReadContent({ handleNextSlide }: ReadContentProps) {
             {opened ? "open again" : "open in browser"}
           </button>
           <p className="font-mono text-xs text-center text-muted-foreground">
-            screenpi.pe/welcome
+            {WELCOME_URL.replace(/^https?:\/\//, "")}
           </p>
         </div>
 

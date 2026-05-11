@@ -80,7 +80,7 @@ export default function EncryptionChoice({
           Encrypt your secrets?
         </h1>
         <p className="font-mono text-[10px] text-muted-foreground mt-2 text-center max-w-xs">
-          Screenpipe will encrypt API keys and tokens in your macOS Keychain. You can
+          Thadm will encrypt API keys and tokens in your macOS Keychain. You can
           enable or disable this anytime in Settings.
         </p>
       </div>

@@ -35,6 +35,7 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { onOpenUrl } from "@tauri-apps/plugin-deep-link";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { commands } from "@/lib/utils/tauri";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import posthog from "posthog-js";
 
 export function TeamSection() {
@@ -489,7 +490,7 @@ export function TeamSection() {
           {showJoinInput ? (
             <div className="flex gap-2">
               <Input
-                placeholder="paste invite link (https://screenpi.pe/join/... or thadm://...)"
+                placeholder="paste invite link (thadm://join/...)"
                 value={inviteInput}
                 onChange={(e) => setInviteInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleJoinFromLink()}
@@ -573,7 +574,7 @@ export function TeamSection() {
           </p>
           <div className="flex items-center gap-2">
             <Input
-              placeholder="paste invite link (https://screenpi.pe/join/...)"
+              placeholder="paste invite link (thadm://join/...)"
               value={inviteInput}
               onChange={(e) => setInviteInput(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && handleJoinFromLink()}
@@ -684,7 +685,12 @@ export function TeamSection() {
                   }
 
                   const token = settings.user?.token;
-                  const res = await fetch("https://screenpi.pe/api/team", {
+                  const teamApiBase = resolveThadmEnv("NEXT_PUBLIC_THADM_TEAM_API_BASE_URL");
+                  if (!teamApiBase) {
+                    toast({ title: "team backend disabled in thadm", variant: "destructive" });
+                    return;
+                  }
+                  const res = await fetch(`${teamApiBase}/api/team`, {
                     method: "PATCH",
                     headers: {
                       "Content-Type": "application/json",

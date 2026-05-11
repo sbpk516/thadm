@@ -22,6 +22,7 @@ import { Lock, CloudUpload, AlertTriangle, Loader2, Play } from "lucide-react";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { commands } from "@/lib/utils/tauri";
 import { localFetch } from "@/lib/api";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 interface ArchiveStatus {
   enabled: boolean;
@@ -254,12 +255,18 @@ export function ArchiveSettings() {
             </SelectContent>
           </Select>{" "}
           to free disk space.{" "}
-          <button
-            onClick={() => openUrl("https://docs.screenpi.pe/cloud-archive")}
-            className="underline underline-offset-2 hover:text-foreground transition-colors"
-          >
-            Learn more
-          </button>
+          {(() => {
+            const docsBase = resolveThadmEnv("NEXT_PUBLIC_THADM_DOCS_BASE_URL");
+            if (!docsBase) return null;
+            return (
+              <button
+                onClick={() => openUrl(`${docsBase}/cloud-archive`)}
+                className="underline underline-offset-2 hover:text-foreground transition-colors"
+              >
+                Learn more
+              </button>
+            );
+          })()}
         </p>
 
       {/* Toggle */}

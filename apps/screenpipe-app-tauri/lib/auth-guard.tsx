@@ -9,6 +9,7 @@ import { useSettings } from "@/lib/hooks/use-settings";
 import { toast } from "@/components/ui/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import posthog from "posthog-js";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 const CHECK_INTERVAL_MS = 10 * 60 * 1000; // 10 minutes
 const TOAST_COOLDOWN_MS = 5 * 60 * 1000;
@@ -16,12 +17,14 @@ const TOAST_COOLDOWN_MS = 5 * 60 * 1000;
 let lastToastTime = 0;
 
 function openLogin() {
+  const loginUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_LOGIN_URL");
+  if (!loginUrl) return;
   // dynamic import to avoid SSR/test crashes from tauri plugins
   import("@tauri-apps/plugin-shell").then(({ open }) => {
-    open("https://screenpi.pe/login");
+    open(loginUrl);
   }).catch(() => {
     // fallback: window.open works in tauri webview
-    window.open("https://screenpi.pe/login", "_blank");
+    window.open(loginUrl, "_blank");
   });
 }
 

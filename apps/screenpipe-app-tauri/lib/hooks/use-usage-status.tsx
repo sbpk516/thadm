@@ -5,6 +5,7 @@
 
 import { useEffect, useState } from "react";
 import { useSettings } from "@/lib/hooks/use-settings";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 /**
  * Daily quota snapshot from the ai-proxy worker's /v1/usage endpoint.
@@ -24,7 +25,10 @@ export interface UsageStatus {
   resets_at: string;
 }
 
-const USAGE_URL = "https://api.screenpi.pe/v1/usage";
+const USAGE_URL = (() => {
+  const base = resolveThadmEnv("NEXT_PUBLIC_THADM_CLOUD_AI_URL");
+  return base ? `${base}/v1/usage` : null;
+})();
 /** Poll interval — 30s is frequent enough that a user who sends a burst
  *  sees the chip appear promptly, rare enough not to hammer the worker. */
 const POLL_INTERVAL_MS = 30_000;
@@ -39,6 +43,7 @@ export function useUsageStatus(): UsageStatus | null {
     let timer: ReturnType<typeof setTimeout> | null = null;
 
     const fetchOnce = async () => {
+      if (!USAGE_URL) return;
       try {
         const res = await fetch(USAGE_URL, {
           headers: token ? { Authorization: `Bearer ${token}` } : {},

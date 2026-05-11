@@ -86,6 +86,7 @@ import {
 } from "@/components/ui/dialog";
 import { PostInstallConnectionsModal } from "@/components/post-install-connections-modal";
 import posthog from "posthog-js";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { MemoizedReactMarkdown } from "@/components/markdown";
 import { useDeviceMonitor } from "@/lib/hooks/use-device-monitor";
 import { Monitor, Wifi, WifiOff, ScanSearch } from "lucide-react";
@@ -859,9 +860,17 @@ export function PipesSection() {
   };
 
   const sharePipePublic = async (pipe: PipeStatus) => {
+    const shareBase = resolveThadmEnv("NEXT_PUBLIC_THADM_PIPE_SHARE_URL");
+    if (!shareBase) {
+      toast({
+        title: "public sharing disabled",
+        description: "set NEXT_PUBLIC_THADM_PIPE_SHARE_URL to enable.",
+      });
+      return;
+    }
     setSharingPublic(pipe.config.name);
     try {
-      const res = await fetch("https://screenpi.pe/api/pipes/share", {
+      const res = await fetch(`${shareBase}/api/pipes/share`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
