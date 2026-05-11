@@ -7,7 +7,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Screenpipe Browser Bridge — Settings</title>
+    <title>Thadm Browser Bridge — Settings</title>
     <style>
       :root {
         color-scheme: light dark;
@@ -139,28 +139,27 @@
     </style>
   </head>
   <body>
-    <h1>Screenpipe Browser Bridge</h1>
+    <h1>Thadm Browser Bridge</h1>
     <p class="subtitle">
-      Lets the screenpipe app execute JavaScript in your browser tabs (used by
-      pipes that read or fill web pages).
+      Lets the thadm app execute JavaScript in your browser tabs (used by
+      tasks that read or fill web pages).
     </p>
 
     <div class="field">
       <label for="token">API token</label>
-      <input id="token" type="password" placeholder="paste your screenpipe API token" autocomplete="off" spellcheck="false" />
+      <input id="token" type="password" placeholder="paste your thadm API token" autocomplete="off" spellcheck="false" />
       <span class="help">
-        In screenpipe: Settings → Privacy → Security → "Require API
+        In thadm: Settings → Privacy → Security → "Require API
         Authentication" — click the eye icon to reveal, then the copy icon.
-        Or run <code>screenpipe auth token</code> in a terminal.
       </span>
     </div>
 
     <div class="field">
-      <label for="baseUrl">screenpipe server URL</label>
+      <label for="baseUrl">thadm server URL</label>
       <input id="baseUrl" type="text" value="http://127.0.0.1:3030" spellcheck="false" />
       <span class="help">
         Default is <code>http://127.0.0.1:3030</code>. Only change this if you
-        run screenpipe on a different host or port.
+        run thadm on a different host or port.
       </span>
     </div>
 
@@ -172,8 +171,7 @@
     <div id="status" data-state="idle"></div>
 
     <footer>
-      <a href="https://screenpi.pe" target="_blank" rel="noopener noreferrer">screenpi.pe</a>
-      · <a href="https://github.com/screenpipe/screenpipe" target="_blank" rel="noopener noreferrer">source</a>
+      <span>Thadm Browser Bridge</span>
     </footer>
 
     <script src="options.js" type="module"></script>

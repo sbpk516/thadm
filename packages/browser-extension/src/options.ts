@@ -71,7 +71,7 @@ async function probeConnection(
   } catch (e: any) {
     return {
       status: "server_down",
-      message: `can't reach screenpipe at ${baseUrl} — is the app running?`,
+      message: `can't reach thadm at ${baseUrl} — is the app running?`,
     };
   }
 
@@ -87,7 +87,7 @@ async function probeConnection(
       return {
         status: "auth_required",
         message: token
-          ? "token was rejected — copy a fresh one from screenpipe Settings"
+          ? "token was rejected — copy a fresh one from thadm Settings"
           : "this server requires a token — paste one above",
       };
     }
@@ -135,7 +135,7 @@ async function init(): Promise<void> {
     const { status, message } = await probeConnection(token, baseUrl);
     setStatus(status, message);
   } else {
-    setStatus("idle", "paste your screenpipe API token to get started");
+    setStatus("idle", "paste your thadm API token to get started");
   }
 }
 

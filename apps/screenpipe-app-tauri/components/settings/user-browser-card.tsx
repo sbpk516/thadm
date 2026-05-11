@@ -22,11 +22,17 @@ import { ExternalLink, Loader2 } from "lucide-react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { localFetch } from "@/lib/api";
 import { toast } from "@/components/ui/use-toast";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 const POLL_INTERVAL_MS = 5_000;
 
+// Direct .../detail/<id> URL once the extension is published — set via
+// NEXT_PUBLIC_THADM_BROWSER_EXTENSION_URL. Until then we fall back to a CWS
+// search for "thadm browser bridge", which gracefully shows no results
+// instead of pointing the user at screenpipe's extension.
 const CHROME_WEBSTORE_URL =
-  "https://chromewebstore.google.com/search/screenpipe%20browser%20bridge";
+  resolveThadmEnv("NEXT_PUBLIC_THADM_BROWSER_EXTENSION_URL") ??
+  "https://chromewebstore.google.com/search/thadm%20browser%20bridge";
 
 type Status =
   | { kind: "loading" }

@@ -59,7 +59,7 @@ function setStatusUI(status: ConnStatus): void {
     ok: "bridge connected",
     bridge_down: "server reachable — bridge connecting…",
     auth_required: "needs token — open settings",
-    server_down: "screenpipe not running",
+    server_down: "thadm not running",
     error: "connection error",
   };
   text.textContent = labels[status];
