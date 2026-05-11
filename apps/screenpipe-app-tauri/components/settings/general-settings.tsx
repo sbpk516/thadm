@@ -19,6 +19,7 @@ import { getVersion } from "@tauri-apps/api/app";
 import { commands } from "@/lib/utils/tauri";
 import { UpdateBanner } from "@/components/update-banner";
 import { useIsEnterpriseBuild } from "@/lib/hooks/use-is-enterprise-build";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 export default function GeneralSettings() {
   const isEnterprise = useIsEnterpriseBuild();
@@ -44,13 +45,21 @@ export default function GeneralSettings() {
       setShowVersions(!showVersions);
       return;
     }
+    const updateCheckUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_UPDATE_CHECK_URL");
+    if (!updateCheckUrl) {
+      toast({
+        title: "version rollback unavailable",
+        description: "set NEXT_PUBLIC_THADM_UPDATE_CHECK_URL to enable.",
+      });
+      return;
+    }
     try {
       const { arch, type: osType } = await import("@tauri-apps/plugin-os").then(m => ({ arch: m.arch(), type: m.type() }));
       let targetArch = "darwin-aarch64";
       if (osType === "macos") targetArch = arch === "x86_64" ? "darwin-x86_64" : "darwin-aarch64";
       else if (osType === "windows") targetArch = "windows-x86_64";
 
-      const resp = await fetch(`https://screenpi.pe/api/app-update/versions/${targetArch}`);
+      const resp = await fetch(`${updateCheckUrl}/${targetArch}`);
       if (!resp.ok) throw new Error("failed to fetch versions");
       const data = await resp.json();
       const versions = (data.versions || []).filter((v: string) => v !== currentVersion);

@@ -35,6 +35,7 @@ import {
   Key,
 } from "lucide-react";
 import { localFetch } from "@/lib/api";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { toast } from "@/components/ui/use-toast";
 import { invoke } from "@tauri-apps/api/core";
 import {
@@ -472,14 +473,20 @@ function ActiveSyncSettings({
               Everything syncs automatically in the background. Screen recordings, audio, and transcriptions.
               Uses ~0.8 GB per monitor per day.
             </p>
-            <a
-              href="https://docs.screenpi.pe/cloud-sync"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-muted-foreground hover:text-primary underline"
-            >
-              Learn how encryption works →
-            </a>
+            {(() => {
+              const docsBase = resolveThadmEnv("NEXT_PUBLIC_THADM_DOCS_BASE_URL");
+              if (!docsBase) return null;
+              return (
+                <a
+                  href={`${docsBase}/cloud-sync`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-xs text-muted-foreground hover:text-primary underline"
+                >
+                  Learn how encryption works →
+                </a>
+              );
+            })()}
           </div>
 
 

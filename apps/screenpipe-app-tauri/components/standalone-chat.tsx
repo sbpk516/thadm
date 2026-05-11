@@ -38,6 +38,7 @@ import rehypeRaw from "rehype-raw";
 import posthog from "posthog-js";
 import { open as openUrl } from "@tauri-apps/plugin-shell";
 import { save as saveDialog, open as openFileDialog } from "@tauri-apps/plugin-dialog";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { writeTextFile, readFile } from "@tauri-apps/plugin-fs";
 import { commands } from "@/lib/utils/tauri";
 import { emit } from "@tauri-apps/api/event";
@@ -169,6 +170,10 @@ function buildSystemPrompt(): string {
   const now = new Date();
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offsetStr = getTimezoneOffsetString();
+  const docsBase = resolveThadmEnv("NEXT_PUBLIC_THADM_DOCS_BASE_URL");
+  const apiReferenceLine = docsBase
+    ? `60+ endpoints (frames, audio, pipes, tags, etc.) at ${docsBase}/llms-full.txt. Fetch when you need anything beyond /search, /activity-summary, or /speakers.`
+    : `60+ endpoints (frames, audio, pipes, tags, etc.). Use /search, /activity-summary, /speakers, and discover others from server responses.`;
 
   return `You are the user's Thadm assistant. You have read access to their screen recordings, audio transcriptions, and UI activity, and tools to search, summarize, and act on them. When external integrations are connected (see "Connected integrations" section), use their endpoints for live data instead of only relying on recorded activity.
 
@@ -253,7 +258,7 @@ Never fabricate frame IDs or timestamps.
 
 # Full API reference
 
-60+ endpoints (frames, audio, pipes, tags, etc.) at https://docs.screenpi.pe/llms-full.txt. Fetch when you need anything beyond /search, /activity-summary, or /speakers.
+${apiReferenceLine}
 
 # Rich rendering — only when it earns its space
 

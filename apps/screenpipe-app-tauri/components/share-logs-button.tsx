@@ -23,6 +23,7 @@ import {
   TooltipProvider,
 } from "./ui/tooltip";
 import { localFetch } from "@/lib/api";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { useHealthCheck } from "@/lib/hooks/use-health-check";
 import { loadAllConversations } from "@/lib/chat-storage";
 import { redactPii } from "@/lib/utils/redact-pii";
@@ -207,9 +208,16 @@ export const ShareLogsButton = ({
     const logFiles = await getLogFiles();
     if (!logFiles.length) return;
 
+    const BASE_URL = resolveThadmEnv("NEXT_PUBLIC_THADM_LOG_UPLOAD_URL");
+    if (!BASE_URL) {
+      toast({
+        title: "log upload disabled",
+        description: "Set NEXT_PUBLIC_THADM_LOG_UPLOAD_URL to enable.",
+      });
+      return;
+    }
     setIsSending(true);
     try {
-      const BASE_URL = "https://screenpi.pe";
       const identifier = settings.user?.id || machineId;
       const type = settings.user?.id ? "user" : "machine";
 

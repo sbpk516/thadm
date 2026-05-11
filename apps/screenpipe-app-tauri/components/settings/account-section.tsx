@@ -26,6 +26,7 @@ import { localFetch } from "@/lib/api";
 import { listen } from "@tauri-apps/api/event";
 import { PricingToggle } from "./pricing-toggle";
 import { ReferralCard } from "./referral-card";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import posthog from "posthog-js";
 
 
@@ -189,14 +190,20 @@ export function AccountSection() {
         <div className="flex gap-2">
           {settings.user?.token ? (
             <>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => openUrl("https://screenpi.pe/account")}
-              >
-                <UserCog className="w-4 h-4 mr-1.5" />
-                manage
-              </Button>
+              {(() => {
+                const accountUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_ACCOUNT_URL");
+                if (!accountUrl) return null;
+                return (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => openUrl(accountUrl)}
+                  >
+                    <UserCog className="w-4 h-4 mr-1.5" />
+                    manage
+                  </Button>
+                );
+              })()}
               <Button
                 variant="outline"
                 size="sm"

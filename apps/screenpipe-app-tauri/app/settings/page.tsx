@@ -42,6 +42,7 @@ import { useEnterprisePolicy } from "@/lib/hooks/use-enterprise-policy";
 import { useSettings } from "@/lib/hooks/use-settings";
 import { commands } from "@/lib/utils/tauri";
 import { toast } from "@/components/ui/use-toast";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 
 type SettingsSection =
   | "account"
@@ -70,8 +71,19 @@ function ReferralSection() {
   const [copied, setCopied] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
   const [sending, setSending] = useState(false);
+  const refBase = resolveThadmEnv("NEXT_PUBLIC_THADM_REFERRAL_BASE_URL");
   const referralCode = settings.user?.id ? `REF-${settings.user.id.slice(0, 8).toUpperCase()}` : "";
-  const referralLink = referralCode ? `https://screenpi.pe/?ref=${referralCode}` : "";
+  const referralLink = refBase && referralCode ? `${refBase}/?ref=${referralCode}` : "";
+
+  if (!refBase) {
+    return (
+      <div className="space-y-4">
+        <p className="text-sm text-muted-foreground">
+          referral program unavailable. set <code className="text-xs">NEXT_PUBLIC_THADM_REFERRAL_BASE_URL</code> to enable.
+        </p>
+      </div>
+    );
+  }
 
   const handleCopy = async () => {
     if (!referralLink) return;
@@ -81,10 +93,10 @@ function ReferralSection() {
   };
 
   const handleInvite = async () => {
-    if (!inviteEmail || !referralLink || sending) return;
+    if (!inviteEmail || !referralLink || sending || !refBase) return;
     setSending(true);
     try {
-      const res = await fetch("https://screenpi.pe/api/referral/invite", {
+      const res = await fetch(`${refBase}/api/referral/invite`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -108,7 +120,7 @@ function ReferralSection() {
   return (
     <div className="space-y-6">
       <p className="text-sm text-muted-foreground mb-4">
-        give <span className="font-semibold text-foreground">10% off</span> screenpipe and get{" "}
+        give <span className="font-semibold text-foreground">10% off</span> thadm and get{" "}
         <span className="font-semibold text-foreground">1 free month</span> for each person you refer.
       </p>
       <div className="space-y-4">
@@ -116,7 +128,7 @@ function ReferralSection() {
           <h3 className="text-sm font-medium text-foreground mb-2">how it works</h3>
           <div className="space-y-1.5 text-sm text-muted-foreground">
             <p>1. share your invite link</p>
-            <p>2. they sign up and get <span className="font-semibold text-foreground">10% off</span> screenpipe</p>
+            <p>2. they sign up and get <span className="font-semibold text-foreground">10% off</span> thadm</p>
             <p>3. you get a <span className="font-semibold text-foreground">free month</span> when they start using it</p>
           </div>
         </div>

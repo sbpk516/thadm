@@ -28,6 +28,7 @@ import { Separator } from "@/components/ui/separator";
 import { RefreshCw, AlertTriangle, WifiOff, Upload, Loader, Check, Calendar, X } from "lucide-react";
 
 import { open as openUrl } from "@tauri-apps/plugin-shell";
+import { resolveThadmEnv } from "@/lib/utils/thadm-urls";
 import { readTextFile } from "@tauri-apps/plugin-fs";
 import { getVersion } from "@tauri-apps/api/app";
 import { version as osVersion, platform as osPlatform } from "@tauri-apps/plugin-os";
@@ -248,8 +249,10 @@ export default function OverlayPage() {
     }
   };
 
+  const bookingUrl = resolveThadmEnv("NEXT_PUBLIC_THADM_BOOKING_URL");
   const openBookingLink = () => {
-    openUrl("https://cal.com/team/screenpipe/chat");
+    if (!bookingUrl) return;
+    openUrl(bookingUrl);
   };
 
   const handleRestartServer = async () => {
@@ -425,15 +428,17 @@ export default function OverlayPage() {
                     )}
                     {logsSent ? "logs sent" : isSendingLogs ? "sending..." : "send logs"}
                   </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={openBookingLink}
-                    className="text-muted-foreground"
-                  >
-                    <Calendar className="h-4 w-4 mr-1.5" />
-                    schedule call
-                  </Button>
+                  {bookingUrl && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={openBookingLink}
+                      className="text-muted-foreground"
+                    >
+                      <Calendar className="h-4 w-4 mr-1.5" />
+                      schedule call
+                    </Button>
+                  )}
                   <Button
                     variant="outline"
                     size="sm"
