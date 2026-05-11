@@ -39,6 +39,10 @@ uuid = { version = "1.5.0", features = ["v4"] }
 thiserror = "1"
 lettre = { version = "0.11", default-features = false, features = ["smtp-transport", "tokio1-rustls-tls", "builder"] }
 mdns-sd = "0.13"
+# THADM: direct OAuth token exchange — base64 for Notion Basic auth,
+# url for parsing GitHub's form-encoded fallback response.
+base64 = "0.22"
+url = "2"
 sqlx = { version = "0.7", features = ["sqlite", "runtime-tokio-rustls"] }
 libsqlite3-sys = { version = "0.26", features = ["bundled"] }
 

@@ -971,7 +971,7 @@ async fn oauth_callback(Query(params): Query<OAuthCallbackQuery>) -> (StatusCode
             let html =
                 "<html><body style=\"font-family:system-ui;text-align:center;padding:60px\">\
                 <h2>Connected!</h2>\
-                <p>You can close this tab and return to screenpipe.</p>\
+                <p>You can close this tab and return to thadm.</p>\
                 <script>window.close()</script>\
                 </body></html>"
                     .to_string();

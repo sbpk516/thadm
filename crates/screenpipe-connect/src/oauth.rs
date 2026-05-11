@@ -48,6 +48,7 @@
 //! That's it -- all Tauri commands and frontend rendering are automatic.
 
 use anyhow::Result;
+use base64::Engine as _;
 use once_cell::sync::Lazy;
 use screenpipe_secrets::SecretStore;
 use serde_json::Value;
@@ -77,10 +78,21 @@ pub const OAUTH_REDIRECT_URI: &str = "http://localhost:3030/connections/oauth/ca
 //   THADM_OAUTH_GOOGLE_CALENDAR_CLIENT_ID=...
 //   THADM_OAUTH_MICROSOFT365_CLIENT_ID=...
 //
-// To redirect the token exchange to your own server (required if you supply
-// your own client_ids — screenpipe's exchange server does not hold your
-// client_secrets):
-//   THADM_OAUTH_EXCHANGE_URL=https://your-domain.example/api/oauth/exchange
+// Two ways to make the token exchange use your own credentials:
+//
+// 1) Direct exchange (recommended for "Desktop app" OAuth clients):
+//      THADM_OAUTH_<INTEGRATION>_CLIENT_ID=<your-client-id>
+//      THADM_OAUTH_<INTEGRATION>_CLIENT_SECRET=<your-client-secret>
+//    When BOTH are set, thadm calls the provider's token endpoint
+//    directly (e.g. https://oauth2.googleapis.com/token) — no server
+//    needed in between. Required for the provider list in
+//    `provider_token_url()` below.
+//
+// 2) Proxy through your own server (for "Web application" types where
+//    you don't want to ship client_secret with the binary):
+//      THADM_OAUTH_EXCHANGE_URL=https://your-domain.example/api/oauth/exchange
+//    Your server holds the client_secret and relays the exchange to
+//    Google. Replicates screenpipe's upstream pattern.
 //
 // Integration IDs are uppercased and `-` → `_`. e.g. `google-calendar` →
 // THADM_OAUTH_GOOGLE_CALENDAR_CLIENT_ID.
@@ -95,11 +107,44 @@ pub fn resolve_client_id(integration_id: &str, fallback: &str) -> String {
     std::env::var(&env_key).unwrap_or_else(|_| fallback.to_string())
 }
 
+/// Resolve the optional client_secret for an integration. When set,
+/// triggers direct token exchange against the provider (no proxy).
+pub fn resolve_client_secret(integration_id: &str) -> Option<String> {
+    let env_key = format!(
+        "THADM_OAUTH_{}_CLIENT_SECRET",
+        integration_id.to_uppercase().replace('-', "_")
+    );
+    std::env::var(&env_key).ok()
+}
+
 /// Resolve the effective token-exchange URL: env var override if set,
 /// otherwise the upstream screenpipe proxy.
 pub fn resolve_exchange_url() -> String {
     std::env::var("THADM_OAUTH_EXCHANGE_URL")
         .unwrap_or_else(|_| EXCHANGE_PROXY_URL.to_string())
+}
+
+/// Map integration_id → provider's OAuth token endpoint. Used for direct
+/// token exchange when both client_id + client_secret env vars are set.
+/// Returns `None` for providers we haven't wired up yet — those will keep
+/// using the proxy path.
+pub fn provider_token_url(integration_id: &str) -> Option<&'static str> {
+    match integration_id {
+        // Google services share one token endpoint
+        "gmail" | "google-calendar" | "google-docs" | "google-sheets" => {
+            Some("https://oauth2.googleapis.com/token")
+        }
+        // Microsoft services share one token endpoint
+        "microsoft365" | "teams" => {
+            Some("https://login.microsoftonline.com/common/oauth2/v2.0/token")
+        }
+        "notion" => Some("https://api.notion.com/v1/oauth/token"),
+        "github" => Some("https://github.com/login/oauth/access_token"),
+        "calendly" => Some("https://auth.calendly.com/oauth/token"),
+        "zoom" => Some("https://zoom.us/oauth/token"),
+        "supabase" => Some("https://api.supabase.com/v1/oauth/token"),
+        _ => None,
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -962,9 +1007,16 @@ pub async fn exchange_code(
     code: &str,
     redirect_uri: &str,
 ) -> Result<Value> {
-    // THADM: exchange URL is env-overridable via THADM_OAUTH_EXCHANGE_URL.
-    // Required when you provide your own client_ids — screenpipe's exchange
-    // server doesn't hold your client_secrets and will fail on lookup.
+    // THADM: prefer direct exchange when the user supplies their own
+    // client_id + client_secret + a known provider token_url.
+    let client_secret = resolve_client_secret(integration_id);
+    let token_url = provider_token_url(integration_id);
+    if let (Some(secret), Some(url)) = (client_secret, token_url) {
+        return direct_exchange(client, integration_id, code, redirect_uri, url, &secret).await;
+    }
+
+    // Fallback: proxy through the configured exchange server (default:
+    // screenpi.pe). Override with THADM_OAUTH_EXCHANGE_URL.
     let exchange_url = resolve_exchange_url();
     let resp = client
         .post(&exchange_url)
@@ -988,4 +1040,98 @@ pub async fn exchange_code(
     let json: Value = serde_json::from_str(&body)
         .map_err(|e| anyhow::anyhow!("oauth exchange returned non-JSON body: {e}: {body}"))?;
     Ok(json)
+}
+
+/// Direct exchange against a provider's token endpoint, using the user's
+/// own client_id + client_secret (no relay server). Form-encoded body —
+/// works for Google, Microsoft, GitHub, Calendly, Zoom, Supabase. Notion
+/// uses JSON; if we hit it, special-case there. For now, form-encoded is
+/// the common path.
+async fn direct_exchange(
+    client: &reqwest::Client,
+    integration_id: &str,
+    code: &str,
+    redirect_uri: &str,
+    token_url: &str,
+    client_secret: &str,
+) -> Result<Value> {
+    // Look up the effective client_id the same way oauth_connect does so
+    // the values match. We can't re-derive from integration here without
+    // the OAuthConfig, so trust the env var override (with no fallback —
+    // direct exchange only triggers when env var is set anyway).
+    let client_id_env = format!(
+        "THADM_OAUTH_{}_CLIENT_ID",
+        integration_id.to_uppercase().replace('-', "_")
+    );
+    let client_id = std::env::var(&client_id_env).map_err(|_| {
+        anyhow::anyhow!(
+            "direct exchange requires {} to be set",
+            client_id_env
+        )
+    })?;
+
+    // Notion wants JSON + Basic auth, not form-encoded — special-case so
+    // we don't silently send the wrong shape.
+    if integration_id == "notion" {
+        let basic = base64::engine::general_purpose::STANDARD
+            .encode(format!("{}:{}", client_id, client_secret).as_bytes());
+        let resp = client
+            .post(token_url)
+            .header("Authorization", format!("Basic {}", basic))
+            .header("Content-Type", "application/json")
+            .json(&serde_json::json!({
+                "grant_type": "authorization_code",
+                "code": code,
+                "redirect_uri": redirect_uri,
+            }))
+            .send()
+            .await?;
+        return decode_token_response(integration_id, resp).await;
+    }
+
+    let resp = client
+        .post(token_url)
+        .form(&[
+            ("grant_type", "authorization_code"),
+            ("code", code),
+            ("client_id", &client_id),
+            ("client_secret", client_secret),
+            ("redirect_uri", redirect_uri),
+        ])
+        .send()
+        .await?;
+    decode_token_response(integration_id, resp).await
+}
+
+async fn decode_token_response(
+    integration_id: &str,
+    resp: reqwest::Response,
+) -> Result<Value> {
+    let status = resp.status();
+    let body = resp.text().await.unwrap_or_default();
+    if !status.is_success() {
+        return Err(anyhow::anyhow!(
+            "direct oauth exchange for {} returned {}: {}",
+            integration_id,
+            status,
+            body
+        ));
+    }
+    // GitHub returns form-encoded by default unless you ask for JSON via Accept.
+    // For now, try JSON first; if it fails, try parsing form-encoded.
+    if let Ok(json) = serde_json::from_str::<Value>(&body) {
+        return Ok(json);
+    }
+    // Form-encoded fallback (GitHub legacy)
+    let mut map = serde_json::Map::new();
+    for (k, v) in url::form_urlencoded::parse(body.as_bytes()) {
+        map.insert(k.into_owned(), Value::String(v.into_owned()));
+    }
+    if map.is_empty() {
+        return Err(anyhow::anyhow!(
+            "oauth exchange returned unparseable body: {}",
+            body
+        ));
+    }
+    Ok(Value::Object(map))
 }
