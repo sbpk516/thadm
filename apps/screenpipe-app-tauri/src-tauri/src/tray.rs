@@ -8,7 +8,7 @@ use crate::health::{
     get_audio_device_status, get_recording_info, get_recording_status, DeviceKind, RecordingStatus,
 };
 use crate::recording::{local_api_context_from_app, RecordingState};
-use crate::store::{get_store, OnboardingStore, SettingsStore};
+use crate::store::{get_store, LicenseStore, OnboardingStore, SettingsStore};
 use crate::updates::{is_enterprise_build, is_source_build};
 use crate::window::ShowRewindWindow;
 use anyhow::Result;
@@ -35,6 +35,23 @@ use tracing::{debug, error, info};
 /// handler in main.rs knows this is an intentional quit (not just a window close).
 pub static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
+/// Resolved plan info for the tray menu. Derived from the existing
+/// `LicenseStore` (LemonSqueezy-backed) — see `store.rs::LicenseStore`.
+#[derive(Clone, PartialEq, Eq)]
+enum TrayPlan {
+    /// Active license, lifetime tier — no expiry, no upgrade entry.
+    Lifetime,
+    /// Active license, annual tier. `days_to_renewal` is informational
+    /// (we don't actually know the Stripe end date from LemonSqueezy
+    /// validation, so this is currently always None and the menu uses
+    /// a static "Annual plan" label without an expiry countdown).
+    Annual,
+    /// Free trial in progress.
+    Trial { days_remaining: i64 },
+    /// Trial ran out and no valid license.
+    Expired,
+}
+
 /// Pre-fetched data for building the tray menu. All store reads, settings
 /// deserialization, and permission checks happen OFF the main thread; only
 /// the lightweight menu-item construction runs on the main thread.
@@ -46,6 +63,30 @@ struct TrayMenuData {
     chat_shortcut: String,
     cloud_subscribed: bool,
     has_permission_issue: bool,
+    plan: TrayPlan,
+}
+
+/// Compute the current plan from the on-disk LicenseStore. Returns
+/// `TrayPlan::Trial { days_remaining: 0 }` when the store is missing or
+/// unreadable — the user always gets a valid menu entry rather than a
+/// silent gap.
+fn resolve_tray_plan(app: &AppHandle) -> TrayPlan {
+    let license = match LicenseStore::get(app) {
+        Ok(Some(l)) => l,
+        _ => return TrayPlan::Trial { days_remaining: 0 },
+    };
+    if license.is_licensed() {
+        match license.license_plan.as_deref() {
+            Some("lifetime") => TrayPlan::Lifetime,
+            _ => TrayPlan::Annual,
+        }
+    } else if license.is_trial_expired() {
+        TrayPlan::Expired
+    } else {
+        TrayPlan::Trial {
+            days_remaining: license.days_remaining(),
+        }
+    }
 }
 
 /// Gather all data needed by `create_dynamic_menu` on the current (non-main)
@@ -107,6 +148,8 @@ fn prefetch_tray_menu_data(app: &AppHandle) -> TrayMenuData {
         false
     };
 
+    let plan = resolve_tray_plan(app);
+
     TrayMenuData {
         onboarding_completed,
         show_shortcut,
@@ -114,6 +157,7 @@ fn prefetch_tray_menu_data(app: &AppHandle) -> TrayMenuData {
         chat_shortcut,
         cloud_subscribed,
         has_permission_issue,
+        plan,
     }
 }
 
@@ -285,6 +329,9 @@ struct MenuState {
     devices: Vec<(String, bool)>,
     /// Whether user has a pro subscription (triggers menu rebuild on login)
     cloud_subscribed: bool,
+    /// Stable signature of the resolved plan — triggers menu rebuild on
+    /// license activation, plan kind change, or trial-day ticks.
+    plan_signature: String,
 }
 
 pub fn setup_tray(app: &AppHandle, update_item: Option<&tauri::menu::MenuItem<Wry>>) -> Result<()> {
@@ -614,30 +661,63 @@ fn create_dynamic_menu(
     }
 
     // --- Plan / usage info ---
-    // THADM: disabled — upstream "Free plan / Upgrade to Pro" tray entries
-    // hidden until the license-key plan source is wired (see task #6).
-    // Re-enable here once `data` carries a real Plan { kind, expires_at }
-    // sourced from the locally-verified license key.
-    let _ = data.cloud_subscribed;
-    // if !is_tray_item_hidden("tray_plan") {
-    //     let is_pro = data.cloud_subscribed;
-    //     menu_builder = menu_builder.item(&PredefinedMenuItem::separator(app)?);
-    //     if is_pro {
-    //         menu_builder = menu_builder.item(
-    //             &MenuItemBuilder::with_id("plan_info", "Pro plan")
-    //                 .enabled(false)
-    //                 .build(app)?,
-    //         );
-    //     } else {
-    //         menu_builder = menu_builder
-    //             .item(
-    //                 &MenuItemBuilder::with_id("plan_info", "Free plan")
-    //                     .enabled(false)
-    //                     .build(app)?,
-    //             )
-    //             .item(&MenuItemBuilder::with_id("upgrade", "⚡ Upgrade to Pro").build(app)?);
-    //     }
-    // }
+    // Sourced from LicenseStore (LemonSqueezy). Lifetime → no upgrade
+    // entry; Annual → "Upgrade to Lifetime"; Trial → "Upgrade to Annual
+    // or Lifetime"; Expired → "Renew or upgrade".
+    let _ = data.cloud_subscribed; // legacy upstream flag, no longer drives the menu
+    if !is_tray_item_hidden("tray_plan") {
+        menu_builder = menu_builder.item(&PredefinedMenuItem::separator(app)?);
+        match &data.plan {
+            TrayPlan::Lifetime => {
+                menu_builder = menu_builder.item(
+                    &MenuItemBuilder::with_id("plan_info", "Lifetime plan")
+                        .enabled(false)
+                        .build(app)?,
+                );
+            }
+            TrayPlan::Annual => {
+                menu_builder = menu_builder
+                    .item(
+                        &MenuItemBuilder::with_id("plan_info", "Annual plan")
+                            .enabled(false)
+                            .build(app)?,
+                    )
+                    .item(
+                        &MenuItemBuilder::with_id("upgrade", "⚡ Upgrade to Lifetime")
+                            .build(app)?,
+                    );
+            }
+            TrayPlan::Trial { days_remaining } => {
+                let label = if *days_remaining <= 1 {
+                    "Free trial · ends today".to_string()
+                } else {
+                    format!("Free trial · {} days left", days_remaining)
+                };
+                menu_builder = menu_builder
+                    .item(
+                        &MenuItemBuilder::with_id("plan_info", label)
+                            .enabled(false)
+                            .build(app)?,
+                    )
+                    .item(
+                        &MenuItemBuilder::with_id("upgrade", "⚡ Upgrade to Annual or Lifetime")
+                            .build(app)?,
+                    );
+            }
+            TrayPlan::Expired => {
+                menu_builder = menu_builder
+                    .item(
+                        &MenuItemBuilder::with_id("plan_info", "⚠ Trial expired")
+                            .enabled(false)
+                            .build(app)?,
+                    )
+                    .item(
+                        &MenuItemBuilder::with_id("upgrade", "⚡ Renew or upgrade")
+                            .build(app)?,
+                    );
+            }
+        }
+    }
 
     // --- Update item (if available) ---
     if let Some(update_item) = update_item {
@@ -1092,6 +1172,12 @@ async fn update_menu_if_needed(
             .map(|d| (d.name.clone(), d.active))
             .collect(),
         cloud_subscribed: data.cloud_subscribed,
+        plan_signature: match &data.plan {
+            TrayPlan::Lifetime => "lifetime".to_string(),
+            TrayPlan::Annual => "annual".to_string(),
+            TrayPlan::Trial { days_remaining } => format!("trial:{}", days_remaining),
+            TrayPlan::Expired => "expired".to_string(),
+        },
     };
 
     // Compare with last state (poison-safe: run handler must not panic)
