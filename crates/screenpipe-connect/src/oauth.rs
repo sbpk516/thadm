@@ -97,24 +97,60 @@ pub const OAUTH_REDIRECT_URI: &str = "http://localhost:3030/connections/oauth/ca
 // Integration IDs are uppercased and `-` → `_`. e.g. `google-calendar` →
 // THADM_OAUTH_GOOGLE_CALENDAR_CLIENT_ID.
 
-/// Resolve the effective client_id for an integration: env var override
-/// if set, otherwise the hardcoded fallback shipped in the binary.
+/// Provider-level fallback env var for an integration. Lets the user
+/// ship one Google Cloud OAuth client (with Gmail / Drive / Calendar
+/// scopes enabled) and have Gmail, Google Docs, and Google Calendar all
+/// use it via a single `THADM_OAUTH_GOOGLE_CLIENT_ID` instead of three
+/// separate per-integration vars.
+///
+/// Returns `None` when no provider grouping applies — caller falls back
+/// to the hardcoded screenpipe credential.
+fn provider_env_prefix(integration_id: &str) -> Option<&'static str> {
+    match integration_id {
+        "gmail" | "google-docs" | "google-calendar" => Some("GOOGLE"),
+        "microsoft365" | "outlook-calendar" => Some("MICROSOFT"),
+        _ => None,
+    }
+}
+
+fn env_lookup(keys: &[String]) -> Option<String> {
+    for k in keys {
+        if let Ok(v) = std::env::var(k) {
+            if !v.trim().is_empty() {
+                return Some(v);
+            }
+        }
+    }
+    None
+}
+
+/// Resolve the effective client_id for an integration. Lookup order:
+///   1. Per-integration env var (e.g. `THADM_OAUTH_GOOGLE_DOCS_CLIENT_ID`)
+///   2. Provider-level env var (e.g. `THADM_OAUTH_GOOGLE_CLIENT_ID`)
+///   3. Hardcoded fallback shipped in the binary (upstream screenpipe's).
 pub fn resolve_client_id(integration_id: &str, fallback: &str) -> String {
-    let env_key = format!(
+    let mut keys = vec![format!(
         "THADM_OAUTH_{}_CLIENT_ID",
         integration_id.to_uppercase().replace('-', "_")
-    );
-    std::env::var(&env_key).unwrap_or_else(|_| fallback.to_string())
+    )];
+    if let Some(provider) = provider_env_prefix(integration_id) {
+        keys.push(format!("THADM_OAUTH_{}_CLIENT_ID", provider));
+    }
+    env_lookup(&keys).unwrap_or_else(|| fallback.to_string())
 }
 
 /// Resolve the optional client_secret for an integration. When set,
 /// triggers direct token exchange against the provider (no proxy).
+/// Same lookup order as `resolve_client_id` minus the hardcoded fallback.
 pub fn resolve_client_secret(integration_id: &str) -> Option<String> {
-    let env_key = format!(
+    let mut keys = vec![format!(
         "THADM_OAUTH_{}_CLIENT_SECRET",
         integration_id.to_uppercase().replace('-', "_")
-    );
-    std::env::var(&env_key).ok()
+    )];
+    if let Some(provider) = provider_env_prefix(integration_id) {
+        keys.push(format!("THADM_OAUTH_{}_CLIENT_SECRET", provider));
+    }
+    env_lookup(&keys)
 }
 
 /// Resolve the effective token-exchange URL: env var override if set,
