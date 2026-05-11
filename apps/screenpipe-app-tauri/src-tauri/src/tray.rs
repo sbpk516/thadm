@@ -614,25 +614,30 @@ fn create_dynamic_menu(
     }
 
     // --- Plan / usage info ---
-    if !is_tray_item_hidden("tray_plan") {
-        let is_pro = data.cloud_subscribed;
-        menu_builder = menu_builder.item(&PredefinedMenuItem::separator(app)?);
-        if is_pro {
-            menu_builder = menu_builder.item(
-                &MenuItemBuilder::with_id("plan_info", "Pro plan")
-                    .enabled(false)
-                    .build(app)?,
-            );
-        } else {
-            menu_builder = menu_builder
-                .item(
-                    &MenuItemBuilder::with_id("plan_info", "Free plan")
-                        .enabled(false)
-                        .build(app)?,
-                )
-                .item(&MenuItemBuilder::with_id("upgrade", "⚡ Upgrade to Pro").build(app)?);
-        }
-    }
+    // THADM: disabled — upstream "Free plan / Upgrade to Pro" tray entries
+    // hidden until the license-key plan source is wired (see task #6).
+    // Re-enable here once `data` carries a real Plan { kind, expires_at }
+    // sourced from the locally-verified license key.
+    let _ = data.cloud_subscribed;
+    // if !is_tray_item_hidden("tray_plan") {
+    //     let is_pro = data.cloud_subscribed;
+    //     menu_builder = menu_builder.item(&PredefinedMenuItem::separator(app)?);
+    //     if is_pro {
+    //         menu_builder = menu_builder.item(
+    //             &MenuItemBuilder::with_id("plan_info", "Pro plan")
+    //                 .enabled(false)
+    //                 .build(app)?,
+    //         );
+    //     } else {
+    //         menu_builder = menu_builder
+    //             .item(
+    //                 &MenuItemBuilder::with_id("plan_info", "Free plan")
+    //                     .enabled(false)
+    //                     .build(app)?,
+    //             )
+    //             .item(&MenuItemBuilder::with_id("upgrade", "⚡ Upgrade to Pro").build(app)?);
+    //     }
+    // }
 
     // --- Update item (if available) ---
     if let Some(update_item) = update_item {
