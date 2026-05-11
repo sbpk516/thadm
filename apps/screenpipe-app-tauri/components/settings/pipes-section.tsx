@@ -1411,7 +1411,7 @@ export function PipesSection() {
       <div className="flex flex-col items-center justify-center py-16 gap-3 text-muted-foreground">
         <Monitor className="h-8 w-8 opacity-40" />
         <p className="text-sm font-medium">{selectedDeviceInfo.label} is offline</p>
-        <p className="text-xs opacity-70">check that screenpipe is running on the remote device</p>
+        <p className="text-xs opacity-70">check that thadm is running on the remote device</p>
         <Button variant="outline" size="sm" onClick={() => setSelectedDevice(null)}>
           back to this device
         </Button>

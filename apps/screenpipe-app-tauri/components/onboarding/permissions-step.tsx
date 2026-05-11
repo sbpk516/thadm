@@ -101,7 +101,7 @@ export default function PermissionsStep({
       id: "screen",
       icon: <Monitor className="w-3.5 h-3.5" strokeWidth={1.5} />,
       title: "Capture your screen",
-      subtitle: "Lets Screenpipe index what's on your screen — windows, docs, chats, code",
+      subtitle: "Lets Thadm index what's on your screen — windows, docs, chats, code",
       check: () => commands.checkScreenRecordingPermission(),
       request: () => commands.requestPermission("screenRecording"),
     },
@@ -109,7 +109,7 @@ export default function PermissionsStep({
       id: "mic",
       icon: <Mic className="w-3.5 h-3.5" strokeWidth={1.5} />,
       title: "Capture what you say",
-      subtitle: "Lets Screenpipe transcribe your voice in meetings and calls",
+      subtitle: "Lets Thadm transcribe your voice in meetings and calls",
       check: () => commands.checkMicrophonePermission(),
       request: () => commands.requestPermission("microphone"),
     },
@@ -117,7 +117,7 @@ export default function PermissionsStep({
       id: "accessibility",
       icon: <Keyboard className="w-3.5 h-3.5" strokeWidth={1.5} />,
       title: "Read on-screen text",
-      subtitle: "Lets Screenpipe understand app content without OCR",
+      subtitle: "Lets Thadm understand app content without OCR",
       check: () => commands.checkAccessibilityPermissionCmd(),
       request: () => commands.requestPermission("accessibility"),
       macOnly: true,
@@ -126,7 +126,7 @@ export default function PermissionsStep({
       id: "browsers",
       icon: <Globe className="w-3.5 h-3.5" strokeWidth={1.5} />,
       title: "Capture browser URLs",
-      subtitle: "So Screenpipe knows what you were reading, not just what the pixels say",
+      subtitle: "So Thadm knows what you were reading, not just what the pixels say",
       check: async () => {
         const granted = await commands.checkBrowsersAutomationPermission();
         return granted ? "granted" : "denied";

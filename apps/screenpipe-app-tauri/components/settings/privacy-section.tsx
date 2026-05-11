@@ -631,7 +631,7 @@ export function PrivacySection() {
                     const { confirm } = await import("@tauri-apps/plugin-dialog");
                     const confirmed = await confirm(
                       "Regenerate API key? The browser extension and any other clients will need the new key. The new key takes effect after you Apply & Restart.",
-                      { title: "screenpipe", kind: "info" },
+                      { title: "thadm", kind: "info" },
                     );
                     if (!confirmed) return;
                     setRegeneratingKey(true);
@@ -777,7 +777,7 @@ export function PrivacySection() {
               <div>
                 <h3 className="text-sm font-medium text-foreground flex items-center gap-1.5">
                   Capture clipboard
-                  <HelpTooltip text="when on, screenpipe records clipboard copy/paste events and contents. turn off if you ship ~/.screenpipe to a remote LLM or share it — passwords, API keys, and private keys frequently pass through the clipboard." />
+                  <HelpTooltip text="when on, thadm records clipboard copy/paste events and contents. turn off if you ship ~/.thadm to a remote LLM or share it — passwords, API keys, and private keys frequently pass through the clipboard." />
                 </h3>
                 <p className="text-xs text-muted-foreground">
                   Skip if your data leaves the machine (passwords, keys often

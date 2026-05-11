@@ -41,10 +41,10 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
       "# OS not recognized. Please check the documentation for your specific operating system.\n";
   }
 
-  const baseInstructions = `# First, view the Screenpipe CLI arguments:
+  const baseInstructions = `# First, view the Thadm CLI arguments:
   ${cliInstructions}
-  # 3. Run: screenpipe -h
-  # 4. Choose your preferred setup and start Screenpipe:
+  # 3. Run: screenpipe -h   (internal binary name — do not rename)
+  # 4. Choose your preferred setup and start Thadm:
   #    (Replace [YOUR_ARGS] with your chosen arguments)
   #    Example: screenpipe --fps 1 `;
 
@@ -62,7 +62,7 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
     (os === "windows"
       ? `\n\n# We highly recommend adding --ocr-engine windows-native to your command.\n# This will use a very experimental but powerful engine to extract text from your screen instead of the default one.\n# Example: screenpipe --data-dir ${dataDir} --ocr-engine windows-native\n`
       : "") +
-    "\n\n# 5. If you've already started Screenpipe, try these debugging commands:\n";
+    "\n\n# 5. If you've already started Thadm, try these debugging commands:\n";
 
   if (os === "windows") {
     return (

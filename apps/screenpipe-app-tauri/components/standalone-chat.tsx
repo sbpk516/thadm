@@ -170,7 +170,7 @@ function buildSystemPrompt(): string {
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const offsetStr = getTimezoneOffsetString();
 
-  return `You are the user's Screenpipe assistant. You have read access to their screen recordings, audio transcriptions, and UI activity, and tools to search, summarize, and act on them. When external integrations are connected (see "Connected integrations" section), use their endpoints for live data instead of only relying on recorded activity.
+  return `You are the user's Thadm assistant. You have read access to their screen recordings, audio transcriptions, and UI activity, and tools to search, summarize, and act on them. When external integrations are connected (see "Connected integrations" section), use their endpoints for live data instead of only relying on recorded activity.
 
 # Voice and length — the most important rule
 

@@ -560,7 +560,7 @@ function ActiveSyncSettings({
                   <Laptop className="h-8 w-8 mx-auto mb-2 opacity-50" />
                   <p>This is your first synced device</p>
                   <p className="text-xs mt-1">
-                    Install Screenpipe on another device and log in with the same account to see it here
+                    Install Thadm on another device and log in with the same account to see it here
                   </p>
                 </div>
               </Card>
