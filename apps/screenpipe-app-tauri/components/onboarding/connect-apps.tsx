@@ -96,10 +96,10 @@ async function buildMcpConfig(): Promise<{ command: string; args: string[] }> {
   try {
     const res = await commands.bunCheck();
     if (res.status === "ok" && res.data.available && res.data.path) {
-      return { command: res.data.path, args: ["x", "screenpipe-mcp@latest"] };
+      return { command: res.data.path, args: ["x", "thadm-mcp"] };
     }
   } catch { /* fall through to npx */ }
-  return { command: "npx", args: ["-y", "screenpipe-mcp@latest"] };
+  return { command: "npx", args: ["-y", "thadm-mcp"] };
 }
 
 async function readMcpConfig(configPath: string): Promise<Record<string, unknown>> {
@@ -112,7 +112,7 @@ async function readMcpConfig(configPath: string): Promise<Record<string, unknown
 
 async function writeMcpConfig(configPath: string, config: Record<string, unknown>): Promise<void> {
   if (!config.mcpServers || typeof config.mcpServers !== "object") config.mcpServers = {};
-  (config.mcpServers as Record<string, unknown>).screenpipe = await buildMcpConfig();
+  (config.mcpServers as Record<string, unknown>).thadm = await buildMcpConfig();
   // Ensure parent directory exists (Claude Desktop may not have created it yet)
   await mkdir(await dirname(configPath), { recursive: true });
   await writeFile(configPath, new TextEncoder().encode(JSON.stringify(config, null, 2)));
@@ -127,7 +127,7 @@ async function getCursorMcpConfigPath(): Promise<string> {
 async function isCursorMcpInstalled(): Promise<boolean> {
   try {
     const content = await readTextFile(await getCursorMcpConfigPath());
-    return !!JSON.parse(content)?.mcpServers?.screenpipe;
+    return !!JSON.parse(content)?.mcpServers?.thadm;
   } catch { return false; }
 }
 
@@ -153,7 +153,7 @@ async function isClaudeMcpInstalled(): Promise<boolean> {
     const configPath = await getClaudeMcpConfigPath();
     console.log("[claude-mcp] checking install at:", configPath);
     const content = await readTextFile(configPath);
-    return !!JSON.parse(content)?.mcpServers?.screenpipe;
+    return !!JSON.parse(content)?.mcpServers?.thadm;
   } catch (e) {
     console.log("[claude-mcp] isInstalled check failed:", e);
     return false;

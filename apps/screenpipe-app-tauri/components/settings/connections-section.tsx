@@ -105,6 +105,7 @@ async function installCursorMcp(): Promise<void> {
   try { config = JSON.parse(await readTextFile(configPath)); } catch { /* fresh */ }
   if (!config.mcpServers || typeof config.mcpServers !== "object") config.mcpServers = {};
   (config.mcpServers as Record<string, unknown>).thadm = await buildMcpConfig();
+  await mkdir(await dirname(configPath), { recursive: true });
   await writeFile(configPath, new TextEncoder().encode(JSON.stringify(config, null, 2)));
 }
 

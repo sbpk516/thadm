@@ -916,7 +916,7 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
                 let _ = app_for_resume.emit("shortcut-start-recording", ());
                 send_notify(
                     "Recording resumed",
-                    "screenpipe is recording again.",
+                    "thadm is recording again.",
                 );
             });
             *PAUSE_TIMER.lock().unwrap_or_else(|e| e.into_inner()) = Some(PauseTimer {

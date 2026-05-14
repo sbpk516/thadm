@@ -6,11 +6,11 @@
 import { AgentCard } from "./agent-card";
 
 const HERMES_MCP_SNIPPET = `mcp_servers:
-  screenpipe:
+  thadm:
     command: npx
     args:
       - "-y"
-      - screenpipe-mcp@latest
+      - thadm-mcp
 `;
 
 export function HermesCard() {
@@ -26,12 +26,12 @@ export function HermesCard() {
         snippet: HERMES_MCP_SNIPPET,
       }}
       skill={{
-        localPath: "~/.hermes/skills/screenpipe/SKILL.md",
+        localPath: "~/.hermes/skills/thadm/SKILL.md",
         cliInstall:
-          "hermes skills install github:mediar-ai/screenpipe/.claude/skills/screenpipe-cli",
+          "hermes skills install github:sbpk516/thadm/.claude/skills/thadm-cli",
       }}
       sync={{
-        defaultRemotePath: "~/screenpipe-data",
+        defaultRemotePath: "~/thadm-data",
         storageKeyPrefix: "hermes",
       }}
     />

@@ -114,7 +114,7 @@ export function StorageSection() {
                   </h3>
                   <p className="text-xs text-muted-foreground truncate max-w-[250px]">
                     {!settings.dataDir || settings.dataDir === "default"
-                      ? "~/.screenpipe (default)"
+                      ? "~/.thadm (default)"
                       : settings.dataDir}
                   </p>
                   <p className="text-[10px] text-muted-foreground/70 mt-0.5">
