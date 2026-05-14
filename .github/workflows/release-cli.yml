@@ -93,8 +93,8 @@ jobs:
         with:
           path: |
             ~/Library/Caches/Homebrew
-            /usr/local/Cellar/ffmpeg
-            /usr/local/Cellar/pkg-config
+            /opt/homebrew/Cellar/ffmpeg
+            /opt/homebrew/Cellar/pkg-config
           key: ${{ runner.os }}-brew-${{ hashFiles('.github/workflows/release-cli.yml') }}
           restore-keys: |
             ${{ runner.os }}-brew-
@@ -105,10 +105,12 @@ jobs:
           brew install ffmpeg pkg-config
           brew link --overwrite pkg-config
 
+      # THADM: drop ~/.cargo/bin/ from cache — it can poison cargo binary
+      # (corrupted to rustup-init shim) and cause "unexpected argument" failures
+      # on next run. See MEMORY.md cargo-cache-poisoning note.
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
@@ -484,10 +486,10 @@ jobs:
           sudo ln -sf /usr/lib/x86_64-linux-gnu/libopenblas.a /usr/lib/x86_64-linux-gnu/openblas/lib/liblibopenblas.a
           echo "OPENBLAS_PATH=/usr/lib/x86_64-linux-gnu/openblas" >> $GITHUB_ENV
 
+      # THADM: drop ~/.cargo/bin/ from cache — same cargo-poisoning issue as macOS.
       - uses: actions/cache@v4
         with:
           path: |
-            ~/.cargo/bin/
             ~/.cargo/registry/index/
             ~/.cargo/registry/cache/
             ~/.cargo/git/db/
