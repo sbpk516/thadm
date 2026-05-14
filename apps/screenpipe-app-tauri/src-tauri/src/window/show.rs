@@ -688,7 +688,7 @@ impl ShowRewindWindow {
                                 "/overlay",
                                 main_label_for_mode("window"),
                             )
-                            .title("screenpipe")
+                            .title("thadm")
                             .inner_size(win_w, win_h)
                             .min_inner_size(800.0, 600.0)
                             .decorations(true)
@@ -709,7 +709,7 @@ impl ShowRewindWindow {
                                 "/overlay",
                                 main_label_for_mode("window"),
                             )
-                            .title("screenpipe")
+                            .title("thadm")
                             .inner_size(win_w, win_h)
                             .min_inner_size(800.0, 600.0)
                             .decorations(true)

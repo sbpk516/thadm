@@ -238,7 +238,7 @@ pub async fn handle_connection_command(command: &ConnectionCommand) -> anyhow::R
                 println!("{}", json!({ "id": id, "credentials": null }));
             } else {
                 println!("{} is not connected", id);
-                println!("\nhint: screenpipe connection set {} key=value ...", id);
+                println!("\nhint: thadm connection set {} key=value ...", id);
             }
         }
 
@@ -262,7 +262,7 @@ pub async fn handle_connection_command(command: &ConnectionCommand) -> anyhow::R
 
             if creds.is_empty() && !has_oauth {
                 eprintln!("{} has no saved credentials", id);
-                eprintln!("\nhint: screenpipe connection set {} key=value ...", id);
+                eprintln!("\nhint: thadm connection set {} key=value ...", id);
                 std::process::exit(1);
             }
 

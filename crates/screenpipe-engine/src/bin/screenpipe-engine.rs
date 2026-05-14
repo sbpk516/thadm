@@ -323,8 +323,8 @@ async fn main() -> anyhow::Result<()> {
             return Ok(());
         }
         Command::Doctor => {
-            eprintln!("screenpipe doctor");
-            eprintln!("=================");
+            eprintln!("thadm doctor");
+            eprintln!("============");
             eprintln!();
 
             // permissions
@@ -349,14 +349,14 @@ async fn main() -> anyhow::Result<()> {
             if port_ok {
                 eprintln!("  port 3030: available");
             } else {
-                eprintln!("  port 3030: in use (screenpipe may already be running)");
+                eprintln!("  port 3030: in use (thadm may already be running)");
             }
             eprintln!();
 
             if perms_ok && ffmpeg_ok {
                 eprintln!("all checks passed — ready to record");
             } else {
-                eprintln!("some checks failed — fix the issues above before running screenpipe");
+                eprintln!("some checks failed — fix the issues above before running thadm");
                 std::process::exit(1);
             }
             return Ok(());

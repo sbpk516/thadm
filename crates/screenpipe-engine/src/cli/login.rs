@@ -239,7 +239,7 @@ pub async fn handle_logout_command() -> anyhow::Result<()> {
         println!("  signed out");
     }
     println!();
-    println!("  run `screenpipe login` to sign back in");
+    println!("  run `thadm login` to sign back in");
     println!();
 
     Ok(())

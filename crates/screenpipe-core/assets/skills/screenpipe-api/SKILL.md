@@ -1,9 +1,9 @@
 ---
 name: screenpipe-api
-description: Query the user's data via the local screenpipe REST API at localhost:3030 — screen recordings, audio, UI elements, usage analytics, and the user's persistent memory store. Use when the user asks about their screen activity, meetings, apps, productivity, media export, retranscription, connected services, OR when they ask to save / remember / store / note information so it can be retrieved later (POST /memories — survives across sessions and is queryable by Claude/external agents via the same API).
+description: Query the user's data via the local thadm REST API at localhost:3030 — screen recordings, audio, UI elements, usage analytics, and the user's persistent memory store. Use when the user asks about their screen activity, meetings, apps, productivity, media export, retranscription, connected services, OR when they ask to save / remember / store / note information so it can be retrieved later (POST /memories — survives across sessions and is queryable by Claude/external agents via the same API).
 ---
 
-# Screenpipe API
+# Thadm API
 
 Local REST API at `http://localhost:3030`. 
 
@@ -172,13 +172,13 @@ Returns `{"file_path": "...", "frame_count": N, "duration_secs": N, "file_size_b
 
 Audio files from search results (`file_path`). Common operations:
 ```bash
-ffmpeg -y -i /path/to/audio.mp4 -q:a 2 ~/.screenpipe/exports/output.mp3          # convert
+ffmpeg -y -i /path/to/audio.mp4 -q:a 2 ~/.thadm/exports/output.mp3          # convert
 ffmpeg -y -i input.mp4 -ss 00:01:00 -to 00:05:00 -q:a 2 clip.mp3                 # trim
 ffmpeg -y -i input.mp4 -filter:v "setpts=0.5*PTS" -an fast.mp4                    # speed 2x
 ffmpeg -y -i input.mp4 -t 10 -vf "fps=10,scale=640:-1" output.gif                 # GIF
 ```
 
-Always use `-y`, save to `~/.screenpipe/exports/`.
+Always use `-y`, save to `~/.thadm/exports/`.
 
 ---
 
@@ -402,7 +402,7 @@ When the user says "that was actually Jordan, not Karishma":
 
 ## 11. Memories — High-Signal Persistent Knowledge
 
-**Memories are the highest-signal data source in screenpipe.** They contain curated facts, user preferences, decisions, and project context — distilled from hours of screen/audio data. Always check memories when answering questions or building context.
+**Memories are the highest-signal data source in thadm.** They contain curated facts, user preferences, decisions, and project context — distilled from hours of screen/audio data. Always check memories when answering questions or building context.
 
 ### When to Query Memories
 
@@ -453,9 +453,9 @@ When you learn something important about the user (preferences, decisions, proje
 
 ## 12. Notifications — `POST http://localhost:11435/notify`
 
-Send a notification to the screenpipe desktop UI. This uses the Tauri sidecar server (port 11435), **not** the main API (port 3030).
+Send a notification to the thadm desktop UI. This uses the Tauri sidecar server (port 11435), **not** the main API (port 3030).
 
-The notification body supports **markdown**: `**bold**`, `` `inline code` ``, and `[link text](url)`. Links can be web URLs, file paths, or screenpipe deeplinks.
+The notification body supports **markdown**: `**bold**`, `` `inline code` ``, and `[link text](url)`. Links can be web URLs, file paths, or thadm deeplinks.
 
 ```bash
 # Simple notification
@@ -475,7 +475,7 @@ curl -X POST http://localhost:11435/notify \
 
 # With action buttons
 # Use `type: "link"` for external URLs and `type: "deeplink"` for
-# screenpipe:// in-app routes. `type: "dismiss"` closes the notification.
+# thadm:// in-app routes. `type: "dismiss"` closes the notification.
 curl -X POST http://localhost:11435/notify \
   -H "Content-Type: application/json" \
   -d '{"title": "Meeting summary", "body": "**Q3 Planning**\n- Budget approved", "actions": [{"id": "view", "label": "view", "type": "deeplink", "url": "thadm://timeline"}, {"id": "skip", "label": "skip", "type": "dismiss"}]}'
@@ -483,7 +483,7 @@ curl -X POST http://localhost:11435/notify \
 # External URL action (opens in browser)
 curl -X POST http://localhost:11435/notify \
   -H "Content-Type: application/json" \
-  -d '{"title": "PR ready for review", "body": "nice work", "actions": [{"id": "open", "label": "open pr", "type": "link", "url": "https://github.com/screenpipe/screenpipe/pull/1234"}]}'
+  -d '{"title": "PR ready for review", "body": "nice work", "actions": [{"id": "open", "label": "open pr", "type": "link", "url": "https://github.com/sbpk516/thadm/pull/1234"}]}'
 
 # Custom auto-dismiss (5 seconds)
 curl -X POST http://localhost:11435/notify \
@@ -501,9 +501,9 @@ curl -X POST http://localhost:11435/notify \
 | `actions` | array | No | Action buttons |
 
 **Supported link types in body markdown:**
-- Web URLs: `[docs](https://docs.screenpi.pe)` — opens in browser
+- Web URLs: `[example](https://example.com)` — opens in browser
 - File paths: `[notes](~/notes/file.md)` or `[log](/var/log/app.log)` — opens in default app
-- Deeplinks: `[timeline](thadm://timeline)` — navigates within screenpipe
+- Deeplinks: `[timeline](thadm://timeline)` — navigates within thadm
 
 Returns `{"success": true, "message": "Notification sent successfully"}`.
 
@@ -534,5 +534,5 @@ Only use IDs/timestamps from actual search results. Never fabricate.
 
 Show `file_path` from search results as inline code for playable video:
 ```
-`/Users/name/.screenpipe/data/monitor_1_2024-01-15_10-30-00.mp4`
+`/Users/name/.thadm/data/monitor_1_2024-01-15_10-30-00.mp4`
 ```

@@ -262,7 +262,7 @@ will not auto-clear cross-host locks. resolve manually if needed.",
             }
             stop.store(true, Ordering::Relaxed);
             let _ = fs::remove_file(&path);
-            eprintln!("\nscreenpipe: caught signal, lock released. exiting.");
+            eprintln!("\nthadm: caught signal, lock released. exiting.");
             std::process::exit(130);
         });
     }
@@ -390,7 +390,7 @@ fn integrity_check(db_path: &Path) -> Result<()> {
         Ok(())
     } else {
         eprintln!("  ✗ corruption detected:\n{result}");
-        eprintln!("\n  next step: quit the screenpipe app, then run `screenpipe db recover`");
+        eprintln!("\n  next step: quit the thadm app, then run `thadm db recover`");
         std::process::exit(1)
     }
 }
@@ -511,9 +511,9 @@ async fn recover(data_dir: &Path, force: bool) -> Result<()> {
     println!("    snapshot:    {}", snapshot.display());
     println!("    pre-recover: {}", pre.display());
     println!();
-    println!("    next: start screenpipe — it will rebuild WAL/SHM on first open.");
+    println!("    next: start thadm — it will rebuild WAL/SHM on first open.");
     println!("    once you've confirmed everything works, run:");
-    println!("        screenpipe db cleanup --apply");
+    println!("        thadm db cleanup --apply");
     println!("    to reclaim disk from the snapshot + pre-recover archives.");
     Ok(())
 }

@@ -104,7 +104,7 @@ pub fn preflight_check(need_screen: bool, need_audio: bool) -> bool {
 
     if !ok {
         eprintln!();
-        eprintln!("run \"screenpipe\" again after granting permissions.");
+        eprintln!("run \"thadm\" again after granting permissions.");
 
         // try to open System Settings on macOS
         #[cfg(target_os = "macos")]

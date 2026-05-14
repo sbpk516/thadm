@@ -21,6 +21,6 @@ async fn print_token() -> Result<()> {
         return Ok(());
     }
 
-    eprintln!("no API token found. start screenpipe first, or set SCREENPIPE_API_KEY env var.");
+    eprintln!("no API token found. start thadm first, or set SCREENPIPE_API_KEY env var.");
     std::process::exit(1);
 }

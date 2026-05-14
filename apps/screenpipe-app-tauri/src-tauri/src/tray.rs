@@ -935,7 +935,7 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             };
             send_notify(
                 "Recording paused",
-                format!("screenpipe will auto-resume in {}.", pretty),
+                format!("thadm will auto-resume in {}.", pretty),
             );
             // Repaint the tray so "Recording" flips to "Paused" immediately.
             let app_for_rebuild = app_handle.clone();
@@ -1196,14 +1196,14 @@ async fn update_menu_if_needed(
     // has changed. Cheap: just an NSString swap on the existing status item.
     let has_perm_issue = new_state.has_permission_issue;
     let tooltip: String = if has_perm_issue {
-        "screenpipe — ⚠️ permissions needed".to_string()
+        "thadm — ⚠️ permissions needed".to_string()
     } else if effective_status == RecordingStatus::Paused {
         match pause_remaining() {
-            Some(d) => format!("screenpipe — paused, resumes in {}", format_remaining(d)),
-            None => "screenpipe — paused".to_string(),
+            Some(d) => format!("thadm — paused, resumes in {}", format_remaining(d)),
+            None => "thadm — paused".to_string(),
         }
     } else {
-        "screenpipe".to_string()
+        "thadm".to_string()
     };
     let app_for_tooltip = app.clone();
     let _ = app.run_on_main_thread(move || {

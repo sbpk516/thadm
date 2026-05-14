@@ -1629,7 +1629,7 @@ export function StandaloneChat({
     reader.readAsDataURL(file);
   }, [resizeImage]);
 
-  // Chat conversations — stored as individual JSON files in ~/.screenpipe/chats/
+  // Chat conversations — stored as individual JSON files in ~/.thadm/chats/
   const {
     showHistory,
     setShowHistory,

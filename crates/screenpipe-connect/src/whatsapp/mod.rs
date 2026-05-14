@@ -557,7 +557,7 @@ pub fn resolve_bun_path(hint: Option<&str>) -> Result<String> {
     }
 
     anyhow::bail!(
-        "bun binary not found. screenpipe normally ships bun bundled inside the \
+        "bun binary not found. thadm normally ships bun bundled inside the \
          app. If you're running from source or the bundled binary is missing, \
          install bun from https://bun.sh/install and restart the app."
     )
