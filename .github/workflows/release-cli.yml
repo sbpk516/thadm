@@ -73,7 +73,13 @@ jobs:
         with:
           toolchain: stable
           override: true
-          cache: true
+          # THADM: cache disabled. setup-rust-toolchain's internal
+          # rust-cache integration caches ~/.cargo/bin/, which can restore
+          # a poisoned cargo binary (rustup-init shim) across runs and
+          # break every subsequent `cargo build`/`cargo metadata` call.
+          # We do our own cache below for ~/.cargo/registry/{index,cache,git/db}
+          # which is the part that actually saves time.
+          cache: false
           target: ${{ matrix.target }}
           rustflags: ""
 
