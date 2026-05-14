@@ -11,7 +11,7 @@
   "bundle": {
     "createUpdaterArtifacts": false,
     "active": true,
-    "publisher": "Screenpipe Inc.",
+    "publisher": "Balaji Sachidanandam",
     "category": "DeveloperTool",
     "shortDescription": "24/7 memory for your desktop",
     "longDescription": "24/7 memory for your desktop. 100% local. You own your data.",
@@ -68,51 +68,7 @@
         "schemes": [
           "thadm"
         ]
-      },
-      "mobile": [
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/auth"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/stripe-connect"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/purchase-successful"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/settings"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/changelog"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/onboarding"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/status"
-          ]
-        }
-      ]
+      }
     }
   },
   "app": {

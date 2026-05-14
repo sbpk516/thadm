@@ -1003,7 +1003,7 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             let _ = app_handle.run_on_main_thread(move || {
                 let _ = app
                     .opener()
-                    .open_url("https://screenpi.pe/changelog", None::<&str>);
+                    .open_url("https://github.com/sbpk516/thadm/releases", None::<&str>);
             });
         }
         "update_now" => {
@@ -1032,10 +1032,10 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
                             if clicked_download {
                                 let _ = app
                                     .opener()
-                                    .open_url("https://screenpi.pe/download", None::<&str>);
+                                    .open_url("https://github.com/sbpk516/thadm/releases", None::<&str>);
                             } else {
                                 let _ = app.opener().open_url(
-                                    "https://github.com/screenpipe/screenpipe/releases",
+                                    "https://github.com/sbpk516/thadm/releases",
                                     None::<&str>,
                                 );
                             }

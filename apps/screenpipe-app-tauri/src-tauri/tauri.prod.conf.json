@@ -55,7 +55,7 @@
       "active": true,
       "dialog": false,
       "endpoints": [
-        "https://screenpi.pe/api/app-update/stable/{{target}}-{{arch}}/{{current_version}}"
+        "https://github.com/sbpk516/thadm/releases/latest/download/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDIyQjQ2RkQzMUNBOUFDMTcKUldRWHJLa2MwMiswSWl3RlBGUW5zYUE0Zm0vNFFRRTltNUZZTUVxR2FxUDNtSWdUSHgyL3JNcmcK"
     },
@@ -64,51 +64,7 @@
         "schemes": [
           "thadm"
         ]
-      },
-      "mobile": [
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/auth"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/stripe-connect"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/purchase-successful"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/settings"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/changelog"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/onboarding"
-          ]
-        },
-        {
-          "host": "screenpi.pe",
-          "pathPrefix": [
-            "/status"
-          ]
-        }
-      ]
+      }
     }
   },
   "app": {
