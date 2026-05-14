@@ -13,10 +13,7 @@
     "postinstall": "sh scripts/postinstall.sh || true"
   },
   "optionalDependencies": {
-    "thadm-darwin-arm64": "0.3.327",
-    "thadm-darwin-x64": "0.3.327",
-    "thadm-linux-x64": "0.3.327",
-    "thadm-win32-x64": "0.3.327"
+    "thadm-darwin-arm64": "0.3.327"
   },
   "repository": {
     "type": "git",

@@ -4,19 +4,22 @@ const { execFileSync, execSync } = require("child_process");
 const { join, dirname } = require("path");
 const { existsSync, chmodSync } = require("fs");
 
+// THADM v0.3.327: only macOS Apple Silicon is published.
+// macOS Intel, Linux, and Windows are blocked on an upstream `mlx-sys`
+// cross-platform build issue. Until that is resolved, users on those
+// platforms should install the desktop app from
+// https://github.com/sbpk516/thadm/releases instead.
 const PLATFORMS = {
   "darwin-arm64": "thadm-darwin-arm64",
-  "darwin-x64": "thadm-darwin-x64",
-  "linux-x64": "thadm-linux-x64",
-  "win32-x64": "thadm-win32-x64",
 };
 
 const key = `${process.platform}-${process.arch}`;
 const pkg = PLATFORMS[key];
 
 if (!pkg) {
-  console.error(`thadm: unsupported platform ${key}`);
-  console.error(`supported: ${Object.keys(PLATFORMS).join(", ")}`);
+  console.error(`thadm: this npm package currently ships only for macOS Apple Silicon (darwin-arm64).`);
+  console.error(`you are on ${key}.`);
+  console.error(`install the desktop app instead: https://github.com/sbpk516/thadm/releases`);
   process.exit(1);
 }
 

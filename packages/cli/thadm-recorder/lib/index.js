@@ -6,11 +6,9 @@ const { execFileSync, execSync } = require("child_process");
 const { join, dirname } = require("path");
 const { existsSync, chmodSync } = require("fs");
 
+// THADM v0.3.327: macOS Apple Silicon only (upstream mlx-sys cross-platform blocker).
 const PLATFORMS = {
   "darwin-arm64": "thadm-darwin-arm64",
-  "darwin-x64": "thadm-darwin-x64",
-  "linux-x64": "thadm-linux-x64",
-  "win32-x64": "thadm-win32-x64",
 };
 
 /**

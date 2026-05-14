@@ -62,8 +62,12 @@ jobs:
     if: needs.check_commit.outputs.should_release == 'true'
     runs-on: macos-latest
     strategy:
+      # THADM: aarch64 only. macOS x86_64, Windows, Linux all fail on
+      # upstream `mlx-sys` (Apple Silicon-only) which audiopipe@main HEAD
+      # pulls in unconditionally. Re-enable when upstream gates mlx-sys
+      # properly. Tracked in MEMORY.
       matrix:
-        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+        target: [aarch64-apple-darwin]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -241,7 +245,9 @@ jobs:
 
   build-windows:
     needs: check_commit
-    if: needs.check_commit.outputs.should_release == 'true'
+    # THADM: disabled — upstream `mlx-sys` (Apple Silicon-only) fails to
+    # build here. Re-enable when audiopipe@main gates mlx-sys properly.
+    if: false
     runs-on: windows-2022
     steps:
       - name: Checkout code
@@ -427,7 +433,8 @@ jobs:
 
   build-linux:
     needs: check_commit
-    if: needs.check_commit.outputs.should_release == 'true'
+    # THADM: disabled — same `mlx-sys` upstream issue as Windows.
+    if: false
     runs-on: ubuntu-24.04
     strategy:
       matrix:
@@ -547,7 +554,9 @@ jobs:
 
   publish-npm:
     runs-on: ubuntu-latest
-    needs: [build-macos, build-windows, build-linux]
+    # THADM: only build-macos is enabled (aarch64 only). build-windows + build-linux
+    # are gated off above. Re-add them to `needs:` when those platforms can build.
+    needs: [build-macos]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -578,8 +587,10 @@ jobs:
       - name: Prepare platform packages
         run: |
           # The Cargo bin name is `screenpipe` (internal — see crates/screenpipe-engine/Cargo.toml).
-          # We rename it to `thadm-recorder` when copying into each platform sub-package so the
+          # We rename it to `thadm-recorder` when copying into the platform sub-package so the
           # final binary the user runs matches the npm package name.
+          # THADM: only macOS ARM64 for now (the other 3 platforms are gated off
+          # above due to upstream mlx-sys cross-platform build issue).
 
           # macOS ARM64
           mkdir -p packages/cli/thadm-darwin-arm64/bin /tmp/darwin-arm64
@@ -592,23 +603,10 @@ jobs:
             echo "⚠️ mlx.metallib not found in artifact"
           chmod +x packages/cli/thadm-darwin-arm64/bin/thadm-recorder
 
-          # macOS x64
-          mkdir -p packages/cli/thadm-darwin-x64/bin
-          cd artifacts/screenpipe-macos-x86_64-apple-darwin && tar -xzf screenpipe-*.tar.gz && cp bin/screenpipe ../../packages/cli/thadm-darwin-x64/bin/thadm-recorder && cd ../..
-          chmod +x packages/cli/thadm-darwin-x64/bin/thadm-recorder
-
-          # Linux x64
-          mkdir -p packages/cli/thadm-linux-x64/bin
-          cd artifacts/screenpipe-linux-x86_64-unknown-linux-gnu && tar -xzf screenpipe-*.tar.gz && cp bin/screenpipe ../../packages/cli/thadm-linux-x64/bin/thadm-recorder && cd ../..
-          chmod +x packages/cli/thadm-linux-x64/bin/thadm-recorder
-
-          # Windows x64
-          mkdir -p packages/cli/thadm-win32-x64/bin
-          cd artifacts/screenpipe-windows && unzip -o screenpipe-*.zip -d extracted && cp extracted/bin/screenpipe.exe ../../packages/cli/thadm-win32-x64/bin/thadm-recorder.exe && cp extracted/bin/*.dll ../../packages/cli/thadm-win32-x64/bin/ 2>/dev/null || true && cd ../..
-
       - name: Update package versions
         run: |
-          for pkg in thadm-recorder thadm-darwin-arm64 thadm-darwin-x64 thadm-linux-x64 thadm-win32-x64; do
+          # THADM: only thadm-recorder + thadm-darwin-arm64 are published for now.
+          for pkg in thadm-recorder thadm-darwin-arm64; do
             cd packages/cli/$pkg
             npm version ${{ env.VERSION }} --no-git-tag-version --allow-same-version 2>/dev/null || true
             cd ../../..
@@ -634,7 +632,8 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
-          for pkg in thadm-darwin-arm64 thadm-darwin-x64 thadm-linux-x64 thadm-win32-x64; do
+          # THADM: only thadm-darwin-arm64 for now.
+          for pkg in thadm-darwin-arm64; do
             cd packages/cli/$pkg
             err=$(mktemp)
             if npm publish --access public 2>"$err"; then
