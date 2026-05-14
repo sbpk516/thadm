@@ -494,13 +494,18 @@ function CollapsibleRecents({
   emptyText: string;
   children: React.ReactNode;
 }) {
-  const [collapsed, setCollapsedRaw] = useState<boolean>(() => {
+  // Hydration-safe: start with `false` on SSR (server has no localStorage),
+  // then read the stored value after mount. This avoids the aria-expanded /
+  // ChevronDown vs. ChevronRight mismatch that React detects when the server
+  // and client render different markup on first paint.
+  const [collapsed, setCollapsedRaw] = useState<boolean>(false);
+  useEffect(() => {
     try {
-      return localStorage.getItem("screenpipe:recents-collapsed") === "true";
+      setCollapsedRaw(localStorage.getItem("screenpipe:recents-collapsed") === "true");
     } catch {
-      return false;
+      // ignore — collapse state is best-effort
     }
-  });
+  }, []);
   const setCollapsed = (v: boolean) => {
     setCollapsedRaw(v);
     try {
@@ -560,13 +565,15 @@ function CollapsibleScheduled({
     startedAt?: string;
   }>;
 }) {
-  const [collapsed, setCollapsedRaw] = useState<boolean>(() => {
+  // Hydration-safe — see CollapsibleRecents for context.
+  const [collapsed, setCollapsedRaw] = useState<boolean>(false);
+  useEffect(() => {
     try {
-      return localStorage.getItem("screenpipe:scheduled-collapsed") === "true";
+      setCollapsedRaw(localStorage.getItem("screenpipe:scheduled-collapsed") === "true");
     } catch {
-      return false;
+      // ignore
     }
-  });
+  }, []);
   const setCollapsed = (v: boolean) => {
     setCollapsedRaw(v);
     try {
@@ -734,13 +741,15 @@ function CollapsibleUpcoming({
   pipes: UpcomingPipe[];
   onCancel: (pipeName: string) => void | Promise<void>;
 }) {
-  const [collapsed, setCollapsedRaw] = useState<boolean>(() => {
+  // Hydration-safe — see CollapsibleRecents for context.
+  const [collapsed, setCollapsedRaw] = useState<boolean>(false);
+  useEffect(() => {
     try {
-      return localStorage.getItem("screenpipe:upcoming-collapsed") === "true";
+      setCollapsedRaw(localStorage.getItem("screenpipe:upcoming-collapsed") === "true");
     } catch {
-      return false;
+      // ignore
     }
-  });
+  }, []);
   const setCollapsed = (v: boolean) => {
     setCollapsedRaw(v);
     try {
