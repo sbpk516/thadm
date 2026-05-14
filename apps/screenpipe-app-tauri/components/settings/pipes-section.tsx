@@ -91,20 +91,24 @@ import { MemoizedReactMarkdown } from "@/components/markdown";
 import { useDeviceMonitor } from "@/lib/hooks/use-device-monitor";
 import { Monitor, Wifi, WifiOff, ScanSearch } from "lucide-react";
 
-const PIPE_CREATION_PROMPT = `create a thadm pipe that does the following.
+const PIPE_CREATION_PROMPT = `create a thadm scheduled task that does the following.
+
+## terminology — IMPORTANT
+
+When talking to the user, always call this a "scheduled task" (or just "task"). Never use the word "pipe" in any user-visible response — that is internal engine terminology. The on-disk files (\`pipe.md\`) and HTTP API paths (\`/pipes/...\`) keep that name for backward compatibility with the engine, but you call those endpoints silently and refer to the artifact only as a task.
 
 ## what is thadm?
 
 thadm is a desktop app that continuously captures your screen text (via accessibility APIs, with OCR as fallback for apps that don't support accessibility) and audio (transcription).
 it runs a local API at http://localhost:3030 that lets you query everything you've seen, said, or heard.
 
-## what is a pipe?
+## what is a scheduled task?
 
-a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
-every N minutes, thadm runs a coding agent (like pi or claude-code) with the pipe's prompt.
-the agent can query your screen data, write files, call external APIs, send notifications, etc.
+a scheduled task is an AI agent that runs every N minutes. it's stored on disk as a single markdown file at \`~/.thadm/pipes/{name}/pipe.md\` (engine-internal path — do not show this path to the user; just say "your task was saved").
+every N minutes, thadm runs a coding agent (like pi or claude-code) with the task's prompt.
+the agent can query screen data, write files, call external APIs, send notifications, etc.
 
-## pipe.md format
+## task file format
 
 the file starts with YAML frontmatter, then the prompt body:
 
@@ -148,19 +152,19 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 ## after creating the file
 
-install, enable, and run the pipe via the local HTTP API (no CLI needed — these endpoints are served by the running thadm app at localhost:3030):
+install, enable, and run the task via the local HTTP API (the running thadm app serves these at localhost:3030; the URL paths use \`/pipes/\` for engine backward compatibility — do not quote the URL back to the user, just call it):
 
-install: curl -X POST http://localhost:3030/pipes/install -H "Content-Type: application/json" -d '{"source": "~/.thadm/pipes/my-pipe"}'
-enable:  curl -X POST http://localhost:3030/pipes/my-pipe/enable -H "Content-Type: application/json" -d '{"enabled": true}'
-run:     curl -X POST http://localhost:3030/pipes/my-pipe/run
+install: curl -X POST http://localhost:3030/pipes/install -H "Content-Type: application/json" -d '{"source": "~/.thadm/pipes/my-task"}'
+enable:  curl -X POST http://localhost:3030/pipes/my-task/enable -H "Content-Type: application/json" -d '{"enabled": true}'
+run:     curl -X POST http://localhost:3030/pipes/my-task/run
 
 ## important formatting rules
 
-the pipe.md file MUST start with --- on the very first line (YAML front-matter). no blank lines or comments before it.
+the markdown file MUST start with --- on the very first line (YAML front-matter). no blank lines or comments before it.
 
-## task
+## your job
 
-create the pipe.md file, install it, and enable it. here is what the user wants:`;
+create the task file, install it, and enable it. when you confirm completion to the user, say "task created" / "task scheduled" — never mention pipes, the \`/pipes/\` URL path, or the \`pipe.md\` filename. here is what the user wants:`;
 
 function navigateHomeAndPrefill(data: ChatPrefillData): void {
   // Store prefill data before navigating — the page will reload so
@@ -1185,7 +1189,7 @@ export function PipesSection() {
       if (!res.ok || data?.error || data?.success === false) {
         throw new Error(
           data?.error ||
-          `failed to ${enabled ? "enable" : "disable"} pipe "${name}"`
+          `failed to ${enabled ? "enable" : "disable"} task "${name}"`
         );
       }
     } catch {
@@ -1628,12 +1632,12 @@ export function PipesSection() {
         <Card>
           <CardContent className="py-8 text-center text-muted-foreground">
             {searchQuery ? (
-              <p>no pipes match your search</p>
+              <p>no tasks match your search</p>
             ) : pipeTypeFilter === "triggered" ? (
               <>
-                <p>no triggered pipes installed</p>
+                <p>no triggered tasks installed</p>
                 <p className="text-sm mt-2">
-                  triggered pipes use{" "}
+                  triggered tasks use{" "}
                   <code className="text-xs bg-muted px-1 py-0.5 rounded">
                     trigger.events
                   </code>
@@ -2618,7 +2622,7 @@ export function PipesSection() {
                     </div>
 
                       <div className="flex items-center gap-2">
-                        <Label className="text-xs">pipe.md</Label>
+                        <Label className="text-xs">task source</Label>
                         {saveStatus[pipe.config.name] === "saving" && (
                           <span className="text-[11px] text-muted-foreground flex items-center gap-1">
                             <Loader2 className="h-3 w-3 animate-spin" /> saving...
@@ -2915,8 +2919,8 @@ export function PipesSection() {
           <div className="flex items-start gap-2 p-3 rounded-md bg-destructive/10 border border-destructive/20">
             <AlertCircle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
             <p className="text-sm text-muted-foreground">
-              you have local edits to this pipe. updating will overwrite your prompt changes.
-              a backup will be saved as <code className="text-xs">pipe.md.bak</code>.
+              you have local edits to this task. updating will overwrite your prompt changes.
+              a backup of the current source will be saved automatically.
               your schedule, model, and enabled state will be preserved.
             </p>
           </div>

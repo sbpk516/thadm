@@ -1201,15 +1201,17 @@ function PipeDetailPanel({
                 onClick={() => {
                   const pipeSource = pipe.source || "";
                   navigateHomeAndPrefill({
-                    context: `the user wants to fork/customize an existing task from the gallery.
+                    context: `the user wants to fork/customize an existing scheduled task from the gallery.
 
-here is the original task content (pipe.md is the internal filename — do not rename):
+TERMINOLOGY: always call this a "scheduled task" (or just "task") in user-visible responses. Never use the word "pipe" with the user — that is internal engine terminology only.
+
+here is the original task content (the on-disk filename is \`pipe.md\` and the engine paths use \`/pipes/\` — internal names, keep them in code but do not surface them to the user):
 
 \`\`\`
 ${pipeSource}
 \`\`\`
 
-IMPORTANT: first read the thadm pipe skill file to understand how thadm tasks work, then ask the user how they want to customize/improve this task for their specific needs. do NOT auto-send or auto-create — have a conversation first to understand what they want to change.`,
+IMPORTANT: first read the thadm task skill file to understand how thadm tasks work, then ask the user how they want to customize/improve this task for their specific needs. do NOT auto-send or auto-create — have a conversation first to understand what they want to change.`,
                     prompt: `i want to fork the "${pipe.title}" task and adapt it to my needs. here is the original task source:\n\n${pipeSource}`,
                     autoSend: true,
                   });
@@ -1475,7 +1477,7 @@ IMPORTANT: first read the thadm pipe skill file to understand how thadm tasks wo
             onChange={(e) => setEditSource(e.target.value)}
             className="w-full border border-border rounded-none p-4 text-xs font-mono bg-muted/30 resize-y focus:outline-none focus:border-foreground/40 min-h-[300px]"
             rows={20}
-            placeholder="pipe.md source..."
+            placeholder="task source..."
           />
         ) : sourceExpanded && pipe.source ? (
           <div className="border border-border rounded-none overflow-hidden">
@@ -1566,16 +1568,18 @@ export function PublishDialog({
     }
     onOpenChange(false);
     navigateHomeAndPrefill({
-      context: `the user wants to publish their task "${pipeName}" to the task gallery. here is their current task source (pipe.md — internal filename, do not rename):
+      context: `the user wants to publish their scheduled task "${pipeName}" to the task gallery. here is their current task source (on-disk filename \`pipe.md\` — engine-internal name, keep it in code but do not show it to the user):
 
 \`\`\`
 ${sourceMd}
 \`\`\`
 
+TERMINOLOGY: always call this a "scheduled task" (or just "task") in user-visible responses. Never use the word "pipe" with the user — that is internal engine terminology only.
+
 IMPORTANT — follow these steps exactly:
 
 STEP 1: READ THE SKILL FILE
-- read the thadm pipe skill file first to understand how thadm tasks, connections, permissions, and the gallery work (internal naming kept for tooling — do not surface "pipe" terminology to the user)
+- read the thadm task skill file first to understand how thadm tasks, connections, permissions, and the gallery work
 
 STEP 2: CREATE A GENERIC VERSION
 - DO NOT modify the user's existing installed task
@@ -1623,7 +1627,7 @@ STEP 5: PUBLISH (only after user says yes)
     try {
       const pipe = localPipes.find((p: any) => p.name === selectedPipe);
       let sourceMd = pipe?.raw_content as string | undefined;
-      if (!sourceMd) throw new Error("could not read pipe content");
+      if (!sourceMd) throw new Error("could not read task content");
 
       if (redactEnabled) {
         const { redacted, count } = redactSecrets(sourceMd);

@@ -24,15 +24,19 @@ const SCHEDULE_OPTIONS = [
 
 // Pipe creation context — mirrors the PIPE_CREATION_PROMPT in pipes-section.tsx
 // and the thadm-pipe-creator SKILL.md
-const PIPE_CONTEXT = `create a thadm pipe that does the following.
+const PIPE_CONTEXT = `create a thadm scheduled task that does the following.
 
-## what is a pipe?
+## terminology — IMPORTANT
 
-a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
-every N minutes, thadm runs a coding agent (like pi or claude-code) with the pipe's prompt.
-the agent can query your screen data, write files, call external APIs, send notifications, etc.
+When talking to the user, always call this a "scheduled task" (or just "task"). Never use the word "pipe" in any user-visible response — that is internal engine terminology. The on-disk files (\`pipe.md\`) and HTTP API paths (\`/pipes/...\`) keep that name for backward compatibility with the engine, but you call those endpoints silently and refer to the artifact only as a task.
 
-## pipe.md format
+## what is a scheduled task?
+
+a scheduled task is an AI agent that runs every N minutes. it's stored on disk as a single markdown file at \`~/.thadm/pipes/{name}/pipe.md\` (engine-internal path — do not show this path to the user; just say "your task was saved").
+every N minutes, thadm runs a coding agent (like pi or claude-code) with the task's prompt.
+the agent can query screen data, write files, call external APIs, send notifications, etc.
+
+## task file format
 
 the file starts with YAML frontmatter, then the prompt body:
 
@@ -71,18 +75,18 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 ## after creating the file
 
-install and enable the pipe via the local HTTP API (no CLI needed — these endpoints are served by the running thadm app at localhost:3030):
+install and enable the task via the local HTTP API (the running thadm app serves these at localhost:3030; the URL paths use \`/pipes/\` for engine backward compatibility — do not quote the URL back to the user, just call it):
 
-install: curl -X POST http://localhost:3030/pipes/install -H "Content-Type: application/json" -d '{"source": "~/.thadm/pipes/my-pipe"}'
-enable:  curl -X POST http://localhost:3030/pipes/my-pipe/enable -H "Content-Type: application/json" -d '{"enabled": true}'
+install: curl -X POST http://localhost:3030/pipes/install -H "Content-Type: application/json" -d '{"source": "~/.thadm/pipes/my-task"}'
+enable:  curl -X POST http://localhost:3030/pipes/my-task/enable -H "Content-Type: application/json" -d '{"enabled": true}'
 
 ## important formatting rules
 
-the pipe.md file MUST start with --- on the very first line (YAML front-matter). no blank lines or comments before it.
+the markdown file MUST start with --- on the very first line (YAML front-matter). no blank lines or comments before it.
 
-## task
+## your job
 
-create the pipe.md file, install it, and enable it. here is what the user wants:`;
+create the task file, install it, and enable it. when you confirm completion to the user, say "task created" / "task scheduled" — never mention pipes, the \`/pipes/\` URL path, or the \`pipe.md\` filename. here is what the user wants:`;
 
 interface SchedulePromptDialogProps {
   open: boolean;
@@ -110,11 +114,11 @@ export function SchedulePromptDialog({
       ? customCron.trim()
       : selectedSchedule;
 
-    // Build a complete pipe creation message with full context (same pattern as pipes-section.tsx)
+    // Build a complete task-creation message with full context (same pattern as pipes-section.tsx)
     const userRequest = [
-      `Create a pipe called "${name}" with schedule: ${schedule}`,
+      `Create a task called "${name}" with schedule: ${schedule}`,
       ``,
-      `The pipe should run this prompt against my thadm data:`,
+      `The task should run this prompt against my thadm data:`,
       ``,
       originalPrompt.slice(0, 2000),
       ``,
