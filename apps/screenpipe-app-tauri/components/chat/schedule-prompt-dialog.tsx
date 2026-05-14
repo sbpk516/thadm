@@ -23,13 +23,13 @@ const SCHEDULE_OPTIONS = [
 ];
 
 // Pipe creation context — mirrors the PIPE_CREATION_PROMPT in pipes-section.tsx
-// and the screenpipe-pipe-creator SKILL.md
-const PIPE_CONTEXT = `create a screenpipe pipe that does the following.
+// and the thadm-pipe-creator SKILL.md
+const PIPE_CONTEXT = `create a thadm pipe that does the following.
 
 ## what is a pipe?
 
 a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
-every N minutes, screenpipe runs a coding agent (like pi or claude-code) with the pipe's prompt.
+every N minutes, thadm runs a coding agent (like pi or claude-code) with the pipe's prompt.
 the agent can query your screen data, write files, call external APIs, send notifications, etc.
 
 ## pipe.md format
@@ -47,16 +47,16 @@ Your prompt instructions here...
 
 ## context header
 
-before execution, screenpipe prepends a context header to the prompt with:
+before execution, thadm prepends a context header to the prompt with:
 - time range (start/end timestamps based on the schedule interval)
 - current date
 - user's timezone
-- screenpipe API base URL
+- thadm API base URL
 - output directory
 
 the AI agent uses this context to query the right time range. no template variables needed in the prompt.
 
-## screenpipe search API
+## thadm search API
 
 the agent queries screen data via the local REST API:
 
@@ -71,10 +71,10 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 ## after creating the file
 
-IMPORTANT: always use "bun x screenpipe@latest" (not "bun x screenpipe" or "screenpipe") to ensure the latest CLI version:
+IMPORTANT: always use "bun x thadm-recorder@latest" (not "bun x thadm-recorder" or "thadm-recorder") to ensure the latest CLI version:
 
-install: bun x screenpipe@latest pipe install ~/.thadm/pipes/my-pipe
-enable:  bun x screenpipe@latest pipe enable my-pipe
+install: bun x thadm-recorder@latest pipe install ~/.thadm/pipes/my-pipe
+enable:  bun x thadm-recorder@latest pipe enable my-pipe
 
 ## important formatting rules
 
@@ -114,7 +114,7 @@ export function SchedulePromptDialog({
     const userRequest = [
       `Create a pipe called "${name}" with schedule: ${schedule}`,
       ``,
-      `The pipe should run this prompt against my screenpipe data:`,
+      `The pipe should run this prompt against my thadm data:`,
       ``,
       originalPrompt.slice(0, 2000),
       ``,

@@ -39,7 +39,7 @@ function showSignedOutToast() {
     variant: "destructive",
     duration: 30000,
     action: (
-      <ToastAction altText="Sign in to screenpipe" onClick={openLogin}>
+      <ToastAction altText="Sign in to thadm" onClick={openLogin}>
         sign in
       </ToastAction>
     ),

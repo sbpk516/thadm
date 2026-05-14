@@ -40,7 +40,7 @@ impl Integration for Discord {
         let url = require_str(creds, "webhook_url")?;
         client
             .post(url)
-            .json(&json!({"content": "screenpipe connected"}))
+            .json(&json!({"content": "thadm connected"}))
             .send()
             .await?
             .error_for_status()?;

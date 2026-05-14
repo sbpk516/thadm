@@ -279,7 +279,7 @@ export function shouldIgnoreTermination(
 export function getDefaultProjectDir(): string {
   // Use user's home directory as a sensible default
   if (typeof process !== "undefined" && process.env?.HOME) {
-    return `${process.env.HOME}/screenpipe-workspace`;
+    return `${process.env.HOME}/thadm-workspace`;
   }
-  return "/tmp/screenpipe-pi-chat";
+  return "/tmp/thadm-pi-chat";
 }

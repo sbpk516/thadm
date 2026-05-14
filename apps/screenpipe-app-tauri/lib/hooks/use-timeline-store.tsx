@@ -545,7 +545,7 @@ export const useTimelineStore = create<TimelineState>((set, get) => ({
 				// OPTIMISTIC: Keep showing existing frames, just update connection status
 				set({ 
 					isLoading: currentFrames.length === 0, 
-					message: currentFrames.length === 0 ? "connecting to screenpipe..." : null,
+					message: currentFrames.length === 0 ? "connecting to thadm..." : null,
 					isConnected: false,
 				});
 

@@ -544,12 +544,12 @@ function DeployDialog({
   const handleDeploy = () => {
     const sshTarget = `${user || "root"}@${host}`;
     showChatWithPrefill({
-      context: `Deploy screenpipe to remote machine via SSH.
+      context: `Deploy thadm to remote machine via SSH.
 Target: ${sshTarget}
 The machine is on the local network and has SSH enabled.`,
       prompt: `SSH into ${sshTarget} and:
-1. Check if screenpipe is already running (curl localhost:3030/health)
-2. If not installed, install via: bunx screenpipe@latest record
+1. Check if thadm is already running (curl localhost:3030/health)
+2. If not installed, install via: bunx thadm-recorder@latest record
 3. If already installed but not running, start it
 4. Debug any issues (missing deps, port conflicts, permissions)
 5. Verify it's running: curl localhost:3030/health
@@ -728,7 +728,7 @@ export function PipeMonitorView() {
             </p>
             <p className="text-xs text-muted-foreground mb-4">
               {discovering
-                ? "checking tailscale peers and SSH hosts for screenpipe instances"
+                ? "checking tailscale peers and SSH hosts for thadm instances"
                 : "scan your network or add a device manually"}
             </p>
             {discovering ? (

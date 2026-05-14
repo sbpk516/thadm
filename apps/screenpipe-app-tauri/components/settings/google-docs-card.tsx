@@ -130,7 +130,7 @@ export function GoogleDocsCard() {
 
             <p className="text-xs text-muted-foreground mb-3 leading-relaxed">
               Read and write access to Google Docs. Lets AI search, read, create, and edit documents.
-              Only docs you open with screenpipe or that screenpipe creates are visible — not your whole Drive.
+              Only docs you open with thadm or that thadm creates are visible — not your whole Drive.
             </p>
 
             {!connected ? (

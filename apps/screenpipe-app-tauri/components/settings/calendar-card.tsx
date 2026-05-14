@@ -266,7 +266,7 @@ export function CalendarCard({ onConnectionChange }: { onConnectionChange?: () =
                     }
                     // Step 2: re-trigger the OS request. With the record gone
                     // status is now NotDetermined, so this hits a fresh code
-                    // path that registers screenpipe in Privacy → Calendars
+                    // path that registers thadm in Privacy → Calendars
                     // (and shows the native prompt).
                     try {
                       await invoke<string>("calendar_authorize");

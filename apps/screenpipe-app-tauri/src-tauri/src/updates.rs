@@ -33,10 +33,13 @@ use tokio::time::interval;
 /// so the updater accepts it as an "update".
 pub async fn install_specific_version(app: &tauri::AppHandle, version: &str) -> Result<(), String> {
     let target_arch = get_target_arch();
+    // THADM: rollback endpoint not yet hosted — point at GitHub Releases tag for the target version.
+    // Future: ship a thadm-hosted rollback manifest if version-specific rollbacks are needed.
     let rollback_url = format!(
-        "https://screenpi.pe/api/app-update/rollback/{}/{}",
-        target_arch, version
+        "https://github.com/sbpk516/thadm/releases/download/app-v{}/latest.json",
+        version
     );
+    let _ = target_arch; // silenced: github releases path is arch-agnostic via latest.json contents
 
     info!("rollback: installing v{} from {}", version, rollback_url);
 
@@ -597,11 +600,11 @@ impl UpdatesManager {
             let _ = self
                 .app
                 .opener()
-                .open_url("https://screenpi.pe/download", None::<&str>);
+                .open_url("https://github.com/sbpk516/thadm/releases", None::<&str>);
         } else {
             // Open GitHub releases
             let _ = self.app.opener().open_url(
-                "https://github.com/screenpipe/screenpipe/releases",
+                "https://github.com/sbpk516/thadm/releases",
                 None::<&str>,
             );
         }
@@ -690,7 +693,7 @@ fn check_whats_new(app: &tauri::AppHandle) {
 
         let body = if release_notes.is_empty() {
             format!(
-                "thadm updated to **v{}**! check the [changelog](https://screenpi.pe/changelog) for details.",
+                "thadm updated to **v{}**! check the [changelog](https://github.com/sbpk516/thadm/releases) for details.",
                 current_version
             )
         } else {
@@ -702,7 +705,7 @@ fn check_whats_new(app: &tauri::AppHandle) {
                 release_notes
             };
             format!(
-                "thadm updated to **v{}**!\n\n{}\n\n[full changelog](https://screenpi.pe/changelog)",
+                "thadm updated to **v{}**!\n\n{}\n\n[full changelog](https://github.com/sbpk516/thadm/releases)",
                 current_version, truncated
             )
         };

@@ -29,10 +29,10 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
 
   if (os === "windows") {
     cliInstructions =
-      "# 1. Open Command Prompt as admin (search for 'cmd' in the Start menu, right click, 'Run as admin')\n# 2. Navigate to: %LOCALAPPDATA%\\screenpipe\\\n#    Type: cd %LOCALAPPDATA%\\screenpipe\n";
+      "# 1. Open Command Prompt as admin (search for 'cmd' in the Start menu, right click, 'Run as admin')\n# 2. Navigate to: %LOCALAPPDATA%\\thadm\\\n#    Type: cd %LOCALAPPDATA%\\thadm\n";
   } else if (os === "macos") {
     cliInstructions =
-      "# 1. Open Terminal\n# 2. Navigate to: /Applications/screenpipe.app/Contents/MacOS/\n#    Type: cd /Applications/screenpipe.app/Contents/MacOS/\n";
+      "# 1. Open Terminal\n# 2. Navigate to: /Applications/thadm.app/Contents/MacOS/\n#    Type: cd /Applications/thadm.app/Contents/MacOS/\n";
   } else if (os === "linux") {
     cliInstructions =
       "# 1. Open Terminal\n# 2. Navigate to: /usr/local/bin/\n#    Type: cd /usr/local/bin/\n";
@@ -43,15 +43,15 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
 
   const baseInstructions = `# First, view the Thadm CLI arguments:
   ${cliInstructions}
-  # 3. Run: screenpipe -h   (internal binary name — do not rename)
+  # 3. Run: thadm -h
   # 4. Choose your preferred setup and start Thadm:
   #    (Replace [YOUR_ARGS] with your chosen arguments)
-  #    Example: screenpipe --fps 1 `;
+  #    Example: thadm --fps 1 `;
 
   const logPath =
     os === "windows"
-      ? `${dataDir}\\screenpipe.${new Date().toISOString().split("T")[0]}.log`
-      : `${dataDir}/screenpipe.${new Date().toISOString().split("T")[0]}.log`;
+      ? `${dataDir}\\thadm.${new Date().toISOString().split("T")[0]}.log`
+      : `${dataDir}/thadm.${new Date().toISOString().split("T")[0]}.log`;
 
   const dbPath =
     os === "windows" ? `${dataDir}\\db.sqlite` : `${dataDir}/db.sqlite`;
@@ -60,7 +60,7 @@ const getDebuggingCommands = (os: string | null, dataDir: string) => {
     baseInstructions +
     dataDir +
     (os === "windows"
-      ? `\n\n# We highly recommend adding --ocr-engine windows-native to your command.\n# This will use a very experimental but powerful engine to extract text from your screen instead of the default one.\n# Example: screenpipe --data-dir ${dataDir} --ocr-engine windows-native\n`
+      ? `\n\n# We highly recommend adding --ocr-engine windows-native to your command.\n# This will use a very experimental but powerful engine to extract text from your screen instead of the default one.\n# Example: thadm --data-dir ${dataDir} --ocr-engine windows-native\n`
       : "") +
     "\n\n# 5. If you've already started Thadm, try these debugging commands:\n";
 

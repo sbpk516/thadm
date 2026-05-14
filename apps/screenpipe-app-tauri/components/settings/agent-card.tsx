@@ -31,16 +31,16 @@ import posthog from "posthog-js";
 import { useSettings } from "@/lib/hooks/use-settings";
 
 // ---------------------------------------------------------------------------
-// Canonical screenpipe SKILL.md — kept in sync with docs.screenpi.pe/openclaw
+// Canonical thadm SKILL.md
 // ---------------------------------------------------------------------------
 
 export const SCREENPIPE_SKILL_MD = `---
-name: screenpipe
+name: thadm
 description: Search screen recordings and audio transcriptions from the user's computer
 tools:
   - Bash
 ---
-# screenpipe skill
+# thadm skill
 
 Query the user's screen history via the local API at http://localhost:3030.
 
@@ -82,7 +82,7 @@ export type AgentCardProps = {
     cliInstall?: string;
   };
   sync: {
-    /** Default remote path on the VPS where ~/.screenpipe gets pushed. */
+    /** Default remote path on the VPS where ~/.thadm gets pushed. */
     defaultRemotePath: string;
     /** Prefix used for localStorage keys + posthog event names. */
     storageKeyPrefix: string;
@@ -106,8 +106,8 @@ function McpSection({ name, mcp }: { name: string; mcp: AgentCardProps["mcp"] })
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground leading-relaxed">
-        Register screenpipe as an MCP server in {name}. Best when {name} runs on the
-        same machine as screenpipe.
+        Register thadm as an MCP server in {name}. Best when {name} runs on the
+        same machine as thadm.
       </p>
       <p className="text-xs text-muted-foreground">
         1. Open <code className="bg-muted px-1 rounded">{mcp.configPath}</code>
@@ -137,7 +137,7 @@ function McpSection({ name, mcp }: { name: string; mcp: AgentCardProps["mcp"] })
 }
 
 // ---------------------------------------------------------------------------
-// Skill section — install screenpipe SKILL.md into the agent's skills dir
+// Skill section — install thadm SKILL.md into the agent's skills dir
 // ---------------------------------------------------------------------------
 
 function SkillSection({ name, skill }: { name: string; skill: AgentCardProps["skill"] }) {
@@ -175,11 +175,11 @@ function SkillSection({ name, skill }: { name: string; skill: AgentCardProps["sk
     setSavedPath(null);
     setIsSaving(true);
     try {
-      await writeTextFile("screenpipe-SKILL.md", SCREENPIPE_SKILL_MD, {
+      await writeTextFile("thadm-SKILL.md", SCREENPIPE_SKILL_MD, {
         baseDir: BaseDirectory.Download,
       });
       const dir = await downloadDir();
-      const filePath = await join(dir, "screenpipe-SKILL.md");
+      const filePath = await join(dir, "thadm-SKILL.md");
       setSavedPath(filePath);
       toast({ title: "saved to Downloads", description: filePath });
     } catch (e) {
@@ -204,8 +204,8 @@ function SkillSection({ name, skill }: { name: string; skill: AgentCardProps["sk
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground leading-relaxed">
-        Drop screenpipe&apos;s SKILL.md into {name}&apos;s skills directory. {name} will
-        load it as a new tool/skill that queries screenpipe&apos;s local API.
+        Drop thadm&apos;s SKILL.md into {name}&apos;s skills directory. {name} will
+        load it as a new tool/skill that queries thadm&apos;s local API.
       </p>
 
       {/* Path 1: agent on same machine — install via CLI or save to Downloads + manual move */}
@@ -282,9 +282,9 @@ function SkillSection({ name, skill }: { name: string; skill: AgentCardProps["sk
         <p className="text-xs text-muted-foreground leading-relaxed">
           Copy the SKILL.md contents above, paste them into{" "}
           <code className="bg-muted px-1 rounded">{skill.localPath}</code> on the remote
-          host, and either point the skill at this machine&apos;s screenpipe
+          host, and either point the skill at this machine&apos;s thadm
           (replace <code>localhost:3030</code> with your IP/Tailscale name) or use the{" "}
-          <strong>Sync (remote)</strong> tab to push your screenpipe data to that host.
+          <strong>Sync (remote)</strong> tab to push your thadm data to that host.
         </p>
       </div>
     </div>
@@ -292,7 +292,7 @@ function SkillSection({ name, skill }: { name: string; skill: AgentCardProps["sk
 }
 
 // ---------------------------------------------------------------------------
-// Sync section — SSH/rsync ~/.screenpipe to a remote VPS
+// Sync section — SSH/rsync ~/.thadm to a remote VPS
 // (extracted from the original OpenClawCard so Hermes can reuse it)
 // ---------------------------------------------------------------------------
 
@@ -522,7 +522,7 @@ function RemoteSyncSection({
   return (
     <div className="space-y-3">
       <p className="text-xs text-muted-foreground leading-relaxed">
-        Push your <code className="bg-muted px-1 rounded">~/.screenpipe</code> over
+        Push your <code className="bg-muted px-1 rounded">~/.thadm</code> over
         SFTP to the host where {agentName} runs. Use this when {agentName} lives on
         a VPS, home server, or another machine.
       </p>

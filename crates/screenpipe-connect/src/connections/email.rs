@@ -87,9 +87,9 @@ impl Integration for Email {
         let email = Message::builder()
             .from(from.parse()?)
             .to(to.parse()?)
-            .subject("screenpipe test")
+            .subject("thadm test")
             .header(ContentType::TEXT_PLAIN)
-            .body("screenpipe email connected".to_string())?;
+            .body("thadm email connected".to_string())?;
 
         let smtp_creds = Credentials::new(username.to_string(), password.to_string());
 

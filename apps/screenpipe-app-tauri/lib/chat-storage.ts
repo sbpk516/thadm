@@ -233,7 +233,7 @@ export async function migrateFromStoreBin(): Promise<void> {
     }
 
     console.log(
-      `[chat-storage] migrating ${history.conversations.length} conversations from store.bin to ~/.screenpipe/chats/`
+      `[chat-storage] migrating ${history.conversations.length} conversations from store.bin to ~/.thadm/chats/`
     );
 
     await ensureChatsDir();

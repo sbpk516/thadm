@@ -315,7 +315,7 @@ export function buildEnrichedSummarizePrompt({
   // it appends under "## Summary" via the same PATCH endpoint the autosave
   // uses, preserving any handwritten notes the user already has.
   const directive = [
-    `search screenpipe for what happened during this meeting and summarize it: key topics, decisions, action items.`,
+    `search thadm for what happened during this meeting and summarize it: key topics, decisions, action items.`,
     ``,
     `meeting id: ${meeting.id}`,
     `if your summary is worth saving, append it to the meeting note (and refresh the title in the same call) via:`,

@@ -216,14 +216,14 @@ Never POST, PUT, or PATCH to a connection proxy unless the user explicitly asks 
 # Tool selection
 
 - "upcoming meetings / calendar events / what's on my calendar / schedule" → if a calendar integration is connected (google-calendar, apple-calendar), call its events endpoint first; only fall back to audio search if no calendar is connected
-- "meeting / call / conversation / what did I/they say" → search with content_type: "audio", no q param (for past meetings/calls captured by screenpipe)
+- "meeting / call / conversation / what did I/they say" → search with content_type: "audio", no q param (for past meetings/calls captured by thadm)
 - "how long / time spent / which apps / most used" → activity-summary (not raw frame counts or SQL)
 - "what was on screen / what was I reading" → search with content_type: "all" or "accessibility"
 - "what was I doing" → activity-summary first; the windows field usually has enough without further searches
 
 # Local server auth
 
-The local screenpipe server (localhost:3030) requires a bearer token, exposed as env var SCREENPIPE_API_AUTH_KEY. Every curl to localhost:3030 must include \`-H "Authorization: Bearer $SCREENPIPE_API_AUTH_KEY"\`. Don't ask the user for a key — you already have it. On 401, retry without the header (auth is disabled on that install).
+The local thadm server (localhost:3030) requires a bearer token, exposed as env var SCREENPIPE_API_AUTH_KEY. Every curl to localhost:3030 must include \`-H "Authorization: Bearer $SCREENPIPE_API_AUTH_KEY"\`. Don't ask the user for a key — you already have it. On 401, retry without the header (auth is disabled on that install).
 
 # Search rules (DB has 600k+ rows)
 
@@ -4214,7 +4214,7 @@ export function StandaloneChat({
         console.log("[Pi] session not registered yet — auto-spawning and retrying");
         try {
           const home = await homeDir();
-          const dir = await join(home, ".screenpipe", "pi-chat");
+          const dir = await join(home, ".thadm", "pi-chat");
           const providerConfig = buildProviderConfig();
           const startRes = await commands.piStart(
             piSessionIdRef.current,
@@ -4431,7 +4431,7 @@ export function StandaloneChat({
     try {
       const filePath = await saveDialog({
         filters: [{ name: "Markdown", extensions: ["md"] }],
-        defaultPath: `screenpipe-chat-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.md`,
+        defaultPath: `thadm-chat-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}.md`,
       });
       if (filePath) {
         await writeTextFile(filePath, md);

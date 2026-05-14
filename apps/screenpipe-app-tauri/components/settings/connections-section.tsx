@@ -73,7 +73,7 @@ import {
 type McpCommand = { command: string; args: string[] };
 
 /**
- * MCP install config for screenpipe.
+ * MCP install config for thadm.
  *
  * Prefers the `bun` binary we ship with the desktop app over `npx`:
  *  - no Node.js dependency (many Claude Desktop users don't have node)
@@ -240,7 +240,7 @@ export function IntegrationIcon({ icon }: { icon: string }) {
     monday: <img src="/images/monday.png" alt="Monday.com" className="w-5 h-5 rounded" />,
     asana: <img src="/images/asana.svg" alt="Asana" className="w-5 h-5" />,
     "browser-url": <img src="/images/browser-url.svg" alt="Browser URL" className="w-5 h-5 rounded" />,
-    // user-browser: your real Chrome/Arc/Edge via the screenpipe extension.
+    // user-browser: your real Chrome/Arc/Edge via the thadm extension.
     // The arrow-out-of-square hints at "drives an external browser".
     "user-browser": (
       <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">

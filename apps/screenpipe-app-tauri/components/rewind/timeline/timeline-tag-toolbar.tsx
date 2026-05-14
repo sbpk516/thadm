@@ -231,7 +231,7 @@ export function TimelineTagToolbar({ anchorRect, onAskAI, onRunPipe, templatePip
 			posthog.capture("timeline_retranscribe", { method: "ai_chat" });
 			await showChatWithPrefill({
 				context: "",
-				prompt: `please read your screenpipe-api skill first, then retranscribe the audio from ${start} to ${end}. after retranscribing, ask me if i want to assign speaker names to the different speakers in the transcription.`,
+				prompt: `please read your thadm-api skill first, then retranscribe the audio from ${start} to ${end}. after retranscribing, ask me if i want to assign speaker names to the different speakers in the transcription.`,
 				autoSend: true,
 				source: "retranscribe-button",
 			});

@@ -47,7 +47,7 @@ impl UserBrowser {
         Self::new(
             "user-browser",
             "Your Browser",
-            "The user's real browser via the screenpipe extension. Has \
+            "The user's real browser via the thadm extension. Has \
              their actual logged-in sessions, cookies, passkeys — use this \
              when the task needs the user's identity (their email, social \
              accounts, banks, anything they're logged into). The user can \

@@ -63,7 +63,7 @@ impl Integration for Obsidian {
         }
 
         // Check writable by creating a temp file
-        let test_file = path.join(".screenpipe-test");
+        let test_file = path.join(".thadm-test");
         match std::fs::write(&test_file, "test") {
             Ok(_) => {
                 let _ = std::fs::remove_file(&test_file);

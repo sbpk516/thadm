@@ -624,7 +624,7 @@ fn find_pi_executable() -> Option<String> {
 fn ensure_screenpipe_skill(project_dir: &str) -> Result<(), String> {
     use screenpipe_core::agents::pi::PiExecutor;
     PiExecutor::ensure_screenpipe_skill(std::path::Path::new(project_dir))
-        .map_err(|e| format!("Failed to install screenpipe skills: {}", e))
+        .map_err(|e| format!("Failed to install thadm skills: {}", e))
 }
 
 /// Ensure the web-search extension exists in the project's .pi/extensions directory
@@ -1290,7 +1290,7 @@ pub async fn pi_start_inner(
     // screenpipe-api skill file — they often skip reading skills on their own.
     let is_local_model = matches!(pi_provider.as_str(), "ollama" | "custom");
     if is_local_model {
-        let api_hint = "IMPORTANT: You MUST read the screenpipe-api skill file BEFORE making any API calls. It contains authentication instructions, endpoint docs, and examples. Without reading it first, your API calls will fail with 403 unauthorized.";
+        let api_hint = "IMPORTANT: You MUST read the thadm-api skill file BEFORE making any API calls. It contains authentication instructions, endpoint docs, and examples. Without reading it first, your API calls will fail with 403 unauthorized.";
         cmd.args(["--append-system-prompt", api_hint]);
     }
 
@@ -1348,7 +1348,11 @@ pub async fn pi_start_inner(
     // `filter_pii=1`. Pro-gated client-side — non-pro can't flip the UI
     // toggle so this branch won't fire for them.
     if let Some(home) = dirs::home_dir() {
-        let store_path = home.join(".screenpipe").join("store.bin");
+        // THADM: this path is stale — store.bin actually lives at
+        // ~/Library/Application Support/thadm/store.bin (Tauri's localDataDir).
+        // Leaving as ~/.thadm/store.bin for now; privacy filter env var is a
+        // best-effort hint and falls through silently if not present.
+        let store_path = home.join(".thadm").join("store.bin");
         if let Ok(data) = std::fs::read_to_string(&store_path) {
             if let Ok(store) = serde_json::from_str::<serde_json::Value>(&data) {
                 let settings = store.get("settings").unwrap_or(&store);

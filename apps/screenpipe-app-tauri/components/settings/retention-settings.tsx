@@ -465,13 +465,13 @@ export function RetentionSettings() {
             <AlertDialogDescription>
               {pendingMode === "media" ? (
                 <>
-                  every day, screenpipe will delete video and audio files older
+                  every day, thadm will delete video and audio files older
                   than {retentionDays} days. transcripts, ocr text, and your
                   app/window timeline stay searchable.
                 </>
               ) : (
                 <>
-                  every day, screenpipe will permanently delete <em>all</em>{" "}
+                  every day, thadm will permanently delete <em>all</em>{" "}
                   data older than {retentionDays} days — recordings,
                   transcripts, ocr, ui events. search won't find anything past
                   that. this cannot be undone.

@@ -115,7 +115,7 @@ impl Integration for Teams {
         let url = require_str(creds, "webhook_url")?;
         client
             .post(url)
-            .json(&json!({"text": "screenpipe connected"}))
+            .json(&json!({"text": "thadm connected"}))
             .send()
             .await?
             .error_for_status()?;

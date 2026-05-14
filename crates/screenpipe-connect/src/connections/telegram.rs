@@ -51,7 +51,7 @@ impl Integration for Telegram {
         let url = format!("https://api.telegram.org/bot{}/sendMessage", token);
         client
             .post(&url)
-            .json(&json!({"chat_id": chat_id, "text": "screenpipe connected"}))
+            .json(&json!({"chat_id": chat_id, "text": "thadm connected"}))
             .send()
             .await?
             .error_for_status()?;

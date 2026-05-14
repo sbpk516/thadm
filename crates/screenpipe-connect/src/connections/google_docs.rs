@@ -19,7 +19,7 @@ static OAUTH: OAuthConfig = OAuthConfig {
             "scope",
             // documents — read and write full document content and structure
             // drive.file — create files + access files the user explicitly
-            //   opens with screenpipe (does NOT grant whole-Drive access;
+            //   opens with thadm (does NOT grant whole-Drive access;
             //   this is intentional privacy design)
             // userinfo.email — identify the connected account for multi-instance
             "https://www.googleapis.com/auth/documents \
@@ -45,9 +45,9 @@ static DEF: IntegrationDef = IntegrationDef {
         GET /connections/google-docs/proxy/docs/v1/documents/{documentId} — fetch full document content (paragraphs, tables, headings). \
         POST /connections/google-docs/proxy/docs/v1/documents — create a new Google Doc (body: {\"title\":\"...\"}). \
         POST /connections/google-docs/proxy/docs/v1/documents/{documentId}:batchUpdate — edit an existing doc (requests: insertText, updateTextStyle, etc.). \
-        GET /connections/google-docs/proxy/drive/v3/files?q=mimeType='application/vnd.google-apps.document' — list Docs the app created or the user opened with screenpipe. \
+        GET /connections/google-docs/proxy/drive/v3/files?q=mimeType='application/vnd.google-apps.document' — list Docs the app created or the user opened with thadm. \
         GET /connections/google-docs/proxy/drive/v3/files/{fileId}/export?mimeType=text/plain — export a Doc as plain text. \
-        Uses drive.file scope — only files the user explicitly opens with screenpipe (e.g. by pasting a Doc URL) or that screenpipe creates are visible; this is intentional privacy design.",
+        Uses drive.file scope — only files the user explicitly opens with thadm (e.g. by pasting a Doc URL) or that thadm creates are visible; this is intentional privacy design.",
     fields: &[],
 };
 

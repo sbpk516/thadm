@@ -234,7 +234,7 @@ const FREE_INTEGRATIONS: Integration[] = [
     id: "chatgpt",
     cardKey: "chatgpt",
     name: "ChatGPT",
-    valueProp: "use ChatGPT Plus as screenpipe's AI brain",
+    valueProp: "use ChatGPT Plus as thadm's AI brain",
     ahaCopy: "ChatGPT connected",
     isPro: false,
     type: "chatgpt",
@@ -790,7 +790,7 @@ export default function ConnectApps({ handleNextSlide }: ConnectAppsProps) {
         <p className="font-mono text-[10px] text-muted-foreground/60 mt-1 max-w-[300px]">
           {isPro
             ? "everything is unlocked — connect what you use"
-            : "screenpipe sees your screen — connect the tools it acts on"}
+            : "thadm sees your screen — connect the tools it acts on"}
         </p>
       </motion.div>
 
@@ -893,7 +893,7 @@ export default function ConnectApps({ handleNextSlide }: ConnectAppsProps) {
               onClick={handleUpgradeToPro}
               className="underline underline-offset-2 hover:text-muted-foreground/50 transition-colors"
             >
-              screenpipe pro
+              thadm pro
             </button>
           </motion.p>
         </>

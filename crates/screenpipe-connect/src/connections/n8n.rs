@@ -41,7 +41,7 @@ impl Integration for N8n {
         let url = require_str(creds, "webhook_url")?;
         client
             .post(url)
-            .json(&json!({"source": "screenpipe", "event": "test", "message": "screenpipe connected"}))
+            .json(&json!({"source": "thadm", "event": "test", "message": "thadm connected"}))
             .send()
             .await?
             .error_for_status()?;

@@ -63,7 +63,7 @@ impl Integration for GithubIssues {
         let resp: Value = client
             .get("https://api.github.com/user")
             .bearer_auth(token)
-            .header("User-Agent", "screenpipe")
+            .header("User-Agent", "thadm")
             .send()
             .await?
             .error_for_status()?

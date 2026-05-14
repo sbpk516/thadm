@@ -484,7 +484,7 @@ export function AIProviderConfig({
               }}
             >
               <Icons.terminal className="h-3.5 w-3.5" />
-              <span>screenpipe cloud</span>
+              <span>thadm cloud</span>
             </Button>
           )}
 

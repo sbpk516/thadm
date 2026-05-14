@@ -16,7 +16,7 @@ static DEF: IntegrationDef = IntegrationDef {
     name: "Bee",
     icon: "bee",
     category: Category::Productivity,
-    description: "Bee wearable AI — captures in-person conversations, facts, todos, and daily summaries. Pair with screenpipe to cover what you saw on screen plus what you heard out loud. Get a developer token from the Bee iOS app (tap version 5x to enable Developer Mode).",
+    description: "Bee wearable AI — captures in-person conversations, facts, todos, and daily summaries. Pair with thadm to cover what you saw on screen plus what you heard out loud. Get a developer token from the Bee iOS app (tap version 5x to enable Developer Mode).",
     fields: &[FieldDef {
         key: "api_key",
         label: "Developer Token",

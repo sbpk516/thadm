@@ -867,7 +867,7 @@ pub async fn open_login_window(app_handle: tauri::AppHandle) -> Result<(), Strin
             label,
             WebviewUrl::External(LOGIN_URL.parse().unwrap()),
         )
-        .title("sign in to screenpipe")
+        .title("sign in to thadm")
         .inner_size(460.0, 700.0)
         .focused(true);
 

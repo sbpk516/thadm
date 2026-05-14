@@ -41,7 +41,7 @@ impl Integration for Ntfy {
         client
             .post(topic_url)
             .header("Content-Type", "text/plain")
-            .body("screenpipe connected")
+            .body("thadm connected")
             .send()
             .await?
             .error_for_status()?;

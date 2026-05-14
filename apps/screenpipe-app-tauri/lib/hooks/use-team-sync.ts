@@ -107,7 +107,7 @@ export function useTeamSync(configs: TeamConfig[], hasTeam: boolean) {
       (async () => {
         try {
           const home = await homeDir();
-          const pipeDir = await join(home, ".screenpipe", "pipes", val.name!);
+          const pipeDir = await join(home, ".thadm", "pipes", val.name!);
           const pipeMd = await join(pipeDir, "pipe.md");
 
           // Check if pipe already exists locally

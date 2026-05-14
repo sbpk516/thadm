@@ -77,7 +77,7 @@ export async function syncManagedPipes(
 
   try {
     const home = await homeDir();
-    const pipesDir = await join(home, ".screenpipe", "pipes");
+    const pipesDir = await join(home, ".thadm", "pipes");
 
     for (const pipe of managedPipes) {
       try {
@@ -134,7 +134,7 @@ export async function gatherPipeStatuses(): Promise<PipeStatus[]> {
 
   try {
     const home = await homeDir();
-    const pipesDir = await join(home, ".screenpipe", "pipes");
+    const pipesDir = await join(home, ".thadm", "pipes");
 
     // Fetch all pipe statuses from local API
     const res = await localFetch("/pipes", {

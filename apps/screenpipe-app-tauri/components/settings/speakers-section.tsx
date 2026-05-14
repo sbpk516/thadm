@@ -1177,7 +1177,7 @@ export function SpeakersSection() {
               .join("\n");
 
             const prefillData = {
-              context: `here are my current speakers:\n${speakerSummary}\n\nYou have access to the screenpipe API to manage speakers:\n- POST /speakers/update {id, name} to rename\n- POST /speakers/merge {speaker_to_keep_id, speaker_to_merge_id} to merge duplicates\n- POST /speakers/delete {speaker_id} to delete\n- POST /speakers/hallucination {speaker_id} to mark false detections`,
+              context: `here are my current speakers:\n${speakerSummary}\n\nYou have access to the thadm API to manage speakers:\n- POST /speakers/update {id, name} to rename\n- POST /speakers/merge {speaker_to_keep_id, speaker_to_merge_id} to merge duplicates\n- POST /speakers/delete {speaker_id} to delete\n- POST /speakers/hallucination {speaker_id} to mark false detections`,
               prompt:
                 "look at my speakers and help me organize them. find likely duplicates to merge, suggest better names for vague ones, and flag any that look like false detections. make the changes directly via the API.",
               autoSend: true,

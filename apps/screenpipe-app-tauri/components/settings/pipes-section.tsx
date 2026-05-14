@@ -91,17 +91,17 @@ import { MemoizedReactMarkdown } from "@/components/markdown";
 import { useDeviceMonitor } from "@/lib/hooks/use-device-monitor";
 import { Monitor, Wifi, WifiOff, ScanSearch } from "lucide-react";
 
-const PIPE_CREATION_PROMPT = `create a screenpipe pipe that does the following.
+const PIPE_CREATION_PROMPT = `create a thadm pipe that does the following.
 
-## what is screenpipe?
+## what is thadm?
 
-screenpipe is a desktop app that continuously captures your screen text (via accessibility APIs, with OCR as fallback for apps that don't support accessibility) and audio (transcription).
+thadm is a desktop app that continuously captures your screen text (via accessibility APIs, with OCR as fallback for apps that don't support accessibility) and audio (transcription).
 it runs a local API at http://localhost:3030 that lets you query everything you've seen, said, or heard.
 
 ## what is a pipe?
 
 a pipe is a scheduled AI agent defined as a single markdown file: ~/.thadm/pipes/{name}/pipe.md
-every N minutes, screenpipe runs a coding agent (like pi or claude-code) with the pipe's prompt.
+every N minutes, thadm runs a coding agent (like pi or claude-code) with the pipe's prompt.
 the agent can query your screen data, write files, call external APIs, send notifications, etc.
 
 ## pipe.md format
@@ -119,16 +119,16 @@ Your prompt instructions here...
 
 ## context header
 
-before execution, screenpipe prepends a context header to the prompt with:
+before execution, thadm prepends a context header to the prompt with:
 - time range (start/end timestamps based on the schedule interval)
 - current date
 - user's timezone
-- screenpipe API base URL
+- thadm API base URL
 - output directory
 
 the AI agent uses this context to query the right time range. no template variables needed in the prompt.
 
-## screenpipe search API
+## thadm search API
 
 the agent queries screen data via the local REST API:
 
@@ -148,11 +148,11 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 ## after creating the file
 
-IMPORTANT: always use "bun x screenpipe@latest" (not "bun x screenpipe" or "screenpipe") to ensure the latest CLI version:
+IMPORTANT: always use "bun x thadm-recorder@latest" (not "bun x thadm-recorder" or "thadm-recorder") to ensure the latest CLI version:
 
-install: bun x screenpipe@latest pipe install ~/.thadm/pipes/my-pipe
-enable:  bun x screenpipe@latest pipe enable my-pipe
-test:    bun x screenpipe@latest pipe run my-pipe
+install: bun x thadm-recorder@latest pipe install ~/.thadm/pipes/my-pipe
+enable:  bun x thadm-recorder@latest pipe enable my-pipe
+test:    bun x thadm-recorder@latest pipe run my-pipe
 
 ## important formatting rules
 

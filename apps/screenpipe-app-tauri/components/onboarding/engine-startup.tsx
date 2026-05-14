@@ -473,7 +473,7 @@ export default function EngineStartup({
       summaryAbortRef.current = controller;
       setSummaryStreaming(true);
 
-      const systemPrompt = `you are writing a friendly, warm 4-5 sentence note to a person who just started screenpipe. they are watching this on their onboarding screen. the goal is to make them feel SEEN — show that you noticed what they were doing in the last few minutes — without sounding like a surveillance log.
+      const systemPrompt = `you are writing a friendly, warm 4-5 sentence note to a person who just started thadm. they are watching this on their onboarding screen. the goal is to make them feel SEEN — show that you noticed what they were doing in the last few minutes — without sounding like a surveillance log.
 
 style:
 - lowercase, plain conversational tone, like a thoughtful friend
@@ -881,7 +881,7 @@ if the input is sparse, just describe what little you have warmly. don't apologi
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
               >
-                screenpipe is up and watching. as you work, what you see and
+                thadm is up and watching. as you work, what you see and
                 say will start appearing here. you can continue now.
               </motion.p>
             ) : showWaiting ? (
