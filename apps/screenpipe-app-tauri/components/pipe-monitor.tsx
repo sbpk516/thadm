@@ -549,13 +549,11 @@ Target: ${sshTarget}
 The machine is on the local network and has SSH enabled.`,
       prompt: `SSH into ${sshTarget} and:
 1. Check if thadm is already running (curl localhost:3030/health)
-2. If not installed, install via: bunx thadm-recorder@latest record
+2. If not installed, download the appropriate build from https://github.com/sbpk516/thadm/releases (DMG on macOS, exe on Windows, deb/AppImage on Linux) and install it
 3. If already installed but not running, start it
 4. Debug any issues (missing deps, port conflicts, permissions)
 5. Verify it's running: curl localhost:3030/health
-6. Report back the hostname, version, and which port it's on
-
-Use default settings. If bunx isn't available, try npx or install bun first.`,
+6. Report back the hostname, version, and which port it's on`,
       autoSend: false,
     });
     onClose();

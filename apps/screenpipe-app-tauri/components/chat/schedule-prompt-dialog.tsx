@@ -71,10 +71,10 @@ curl "http://localhost:3030/search?limit=20&content_type=all&start_time=<ISO8601
 
 ## after creating the file
 
-IMPORTANT: always use "bun x thadm-recorder@latest" (not "bun x thadm-recorder" or "thadm-recorder") to ensure the latest CLI version:
+install and enable the pipe via the local HTTP API (no CLI needed — these endpoints are served by the running thadm app at localhost:3030):
 
-install: bun x thadm-recorder@latest pipe install ~/.thadm/pipes/my-pipe
-enable:  bun x thadm-recorder@latest pipe enable my-pipe
+install: curl -X POST http://localhost:3030/pipes/install -H "Content-Type: application/json" -d '{"source": "~/.thadm/pipes/my-pipe"}'
+enable:  curl -X POST http://localhost:3030/pipes/my-pipe/enable -H "Content-Type: application/json" -d '{"enabled": true}'
 
 ## important formatting rules
 

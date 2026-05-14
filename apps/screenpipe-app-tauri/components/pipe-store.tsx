@@ -1209,7 +1209,7 @@ here is the original task content (pipe.md is the internal filename — do not r
 ${pipeSource}
 \`\`\`
 
-IMPORTANT: first read the thadm skill file to understand how thadm tasks work, then ask the user how they want to customize/improve this task for their specific needs. do NOT auto-send or auto-create — have a conversation first to understand what they want to change.`,
+IMPORTANT: first read the thadm pipe skill file to understand how thadm tasks work, then ask the user how they want to customize/improve this task for their specific needs. do NOT auto-send or auto-create — have a conversation first to understand what they want to change.`,
                     prompt: `i want to fork the "${pipe.title}" task and adapt it to my needs. here is the original task source:\n\n${pipeSource}`,
                     autoSend: true,
                   });
