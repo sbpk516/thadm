@@ -181,6 +181,22 @@ fn set_optimistic_status(status: RecordingStatus) {
     ));
 }
 
+/// Durable "is the capture paused" flag. The health poller (health.rs::compute_status)
+/// returns `Recording` whenever the server is alive — it has no concept of pause.
+/// Without this flag, the toggle handler would think we're recording 15 sec after a
+/// pause click (OPTIMISTIC_STATUS expires after 15s) and emit a redundant
+/// `shortcut-stop-recording` instead of a `shortcut-start-recording` on resume.
+/// Set by `set_capture_paused(true)` when we emit a stop, cleared on emit start.
+pub static IS_CAPTURE_PAUSED: AtomicBool = AtomicBool::new(false);
+
+fn set_capture_paused(paused: bool) {
+    IS_CAPTURE_PAUSED.store(paused, Ordering::Relaxed);
+}
+
+fn is_capture_paused() -> bool {
+    IS_CAPTURE_PAUSED.load(Ordering::Relaxed)
+}
+
 /// Pending "pause for X minutes" timer. Held so a manual resume — or a fresh
 /// pause click — can abort the previous one and prevent a stale auto-resume
 /// from firing later. The start instant + total duration are kept so the tray
@@ -297,6 +313,13 @@ fn get_effective_recording_status() -> RecordingStatus {
         if *s == real {
             *opt = None;
         }
+    }
+    drop(opt);
+    // Durable pause override: health.rs doesn't know about pause, so it reports
+    // Recording even when capture is paused. If we know we paused (and haven't
+    // resumed yet) report Paused regardless of what health says.
+    if is_capture_paused() && real == RecordingStatus::Recording {
+        return RecordingStatus::Paused;
     }
     real
 }
@@ -747,8 +770,13 @@ fn create_dynamic_menu(
         let is_recording = effective_status == RecordingStatus::Recording;
         let label = match effective_status {
             RecordingStatus::Recording => "Recording",
+            // Transient states: show the intent the user just clicked instead of
+            // falling through to the misleading "Stopped — click to record" label.
+            // (Optimistic Starting after a resume click lasts ~15s before the real
+            // status takes over.)
+            RecordingStatus::Starting => "Resuming…",
             RecordingStatus::Paused => "Paused — click to resume",
-            _ => "Stopped — click to record",
+            RecordingStatus::Stopped | RecordingStatus::Error => "Stopped — click to record",
         };
         let toggle = CheckMenuItemBuilder::with_id("toggle_recording", label)
             .checked(is_recording)
@@ -878,13 +906,22 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             // who paused for 30 min and then resumed early would get re-paused
             // when the original timer fires.
             cancel_pause_timer();
-            let status = get_recording_status();
+            // Use the EFFECTIVE status (honors optimistic Paused) so a user who
+            // just paused and immediately clicks "Paused — click to resume" gets
+            // a start event, not a redundant stop. The real status from health
+            // polling is "Recording" even when capture is paused (health doesn't
+            // know about pause state), so reading it directly here would always
+            // emit "shortcut-stop-recording" and prevent resume.
+            let status = get_effective_recording_status();
             let is_recording = status == RecordingStatus::Recording;
             let (optimistic, event) = if is_recording {
                 (RecordingStatus::Paused, "shortcut-stop-recording")
             } else {
                 (RecordingStatus::Starting, "shortcut-start-recording")
             };
+            // Update durable pause flag so a click 30 sec after pause (when
+            // OPTIMISTIC_STATUS has expired) still emits the right event.
+            set_capture_paused(is_recording); // pausing → true ; resuming → false
             set_optimistic_status(optimistic);
             let app = app_handle.clone();
             tauri::async_runtime::spawn(async move {
@@ -904,6 +941,7 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             cancel_pause_timer();
             // Pause now (same path as the manual toggle).
             set_optimistic_status(RecordingStatus::Paused);
+            set_capture_paused(true);
             let app_for_stop = app_handle.clone();
             tauri::async_runtime::spawn(async move {
                 let _ = app_for_stop.emit("shortcut-stop-recording", ());
@@ -913,6 +951,7 @@ fn handle_menu_event(app_handle: &AppHandle, event: tauri::menu::MenuEvent) {
             let app_for_resume = app_handle.clone();
             let handle = tauri::async_runtime::spawn(async move {
                 tokio::time::sleep(total).await;
+                set_capture_paused(false);
                 let _ = app_for_resume.emit("shortcut-start-recording", ());
                 send_notify(
                     "Recording resumed",
