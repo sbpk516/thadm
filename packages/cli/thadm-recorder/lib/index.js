@@ -7,14 +7,14 @@ const { join, dirname } = require("path");
 const { existsSync, chmodSync } = require("fs");
 
 const PLATFORMS = {
-  "darwin-arm64": "@screenpipe/cli-darwin-arm64",
-  "darwin-x64": "@screenpipe/cli-darwin-x64",
-  "linux-x64": "@screenpipe/cli-linux-x64",
-  "win32-x64": "@screenpipe/cli-win32-x64",
+  "darwin-arm64": "thadm-darwin-arm64",
+  "darwin-x64": "thadm-darwin-x64",
+  "linux-x64": "thadm-linux-x64",
+  "win32-x64": "thadm-win32-x64",
 };
 
 /**
- * Resolve the path to the screenpipe native binary for the current platform.
+ * Resolve the path to the thadm native binary for the current platform.
  * Returns the absolute path, or null if not installed.
  */
 function getBinaryPath() {
@@ -25,7 +25,7 @@ function getBinaryPath() {
   try {
     const pkgPath = require.resolve(`${pkg}/package.json`);
     const ext = process.platform === "win32" ? ".exe" : "";
-    const binPath = join(dirname(pkgPath), "bin", `screenpipe${ext}`);
+    const binPath = join(dirname(pkgPath), "bin", `thadm-recorder${ext}`);
     if (!existsSync(binPath)) return null;
 
     // Ensure executable
@@ -44,7 +44,7 @@ function getBinaryPath() {
 
 /**
  * Get the local API authentication key.
- * Runs `screenpipe auth token` using the bundled native binary.
+ * Runs `thadm-recorder auth token` using the bundled native binary.
  * No PATH dependency — uses the resolved binary directly.
  * Returns the API key string, or empty string if not available.
  */

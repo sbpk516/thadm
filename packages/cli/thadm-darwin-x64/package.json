@@ -1,0 +1,15 @@
+{
+  "name": "thadm-darwin-x64",
+  "version": "0.3.327",
+  "description": "thadm CLI binary for macOS x64",
+  "os": ["darwin"],
+  "cpu": ["x64"],
+  "bin": {
+    "thadm-recorder": "bin/thadm-recorder"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sbpk516/thadm"
+  },
+  "license": "MIT"
+}
