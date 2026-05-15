@@ -47,3 +47,14 @@ export function healthUrl(baseHttpUrl: string): string {
 export function browserStatusUrl(baseHttpUrl: string): string {
   return `${baseHttpUrl.replace(/\/$/, "")}${BROWSER_BASE_PATH}/status`;
 }
+
+/** Full-text search across captured screen frames + audio transcripts. */
+export function searchUrl(baseHttpUrl: string, query: string, limit = 8): string {
+  const base = baseHttpUrl.replace(/\/$/, "");
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    content_type: "all",
+  });
+  return `${base}/search?${params.toString()}`;
+}

@@ -39,7 +39,7 @@
       }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body {
-        width: 280px;
+        width: 380px;
         background: var(--bg);
         color: var(--text);
         font-size: 13px;
@@ -103,6 +103,89 @@
       #status-bar[data-state="auth_required"],
       #status-bar[data-state="server_down"],
       #status-bar[data-state="error"]         { color: var(--red); }
+
+      /* ── Search ── */
+      #search {
+        padding: 10px 14px 14px;
+        border-top: 1px solid var(--border);
+      }
+      #query {
+        width: 100%;
+        background: var(--surface);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 7px 9px;
+        font: inherit;
+        color: var(--text);
+        outline: none;
+      }
+      #query:focus { border-color: var(--accent-bg); }
+      #search-row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+        margin-top: 8px;
+      }
+      #search-btn {
+        background: var(--accent-bg);
+        color: var(--accent-fg);
+        border: none;
+        border-radius: 6px;
+        padding: 6px 14px;
+        font: inherit;
+        font-weight: 500;
+        cursor: pointer;
+      }
+      #search-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+      #search-hint { font-size: 11px; color: var(--muted); }
+      #results {
+        margin-top: 10px;
+        max-height: 320px;
+        overflow-y: auto;
+      }
+      #results:empty { display: none; }
+      #results.error {
+        padding: 9px 11px;
+        background: var(--surface);
+        border-radius: 6px;
+        font-size: 12.5px;
+        color: var(--red);
+      }
+      .result {
+        padding: 8px 10px;
+        background: var(--surface);
+        border-radius: 6px;
+        margin-bottom: 6px;
+        font-size: 12px;
+        line-height: 1.45;
+      }
+      .result-meta {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 11px;
+        margin-bottom: 3px;
+      }
+      .result-app { font-weight: 500; color: var(--text); }
+      .result-text {
+        color: var(--text);
+        word-break: break-word;
+        display: -webkit-box;
+        -webkit-line-clamp: 3;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+      .result-type {
+        display: inline-block;
+        padding: 1px 5px;
+        border-radius: 3px;
+        background: var(--border);
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: 0.03em;
+        margin-right: 4px;
+      }
     </style>
   </head>
   <body>
@@ -114,6 +197,15 @@
     <div id="status-bar" data-state="checking">
       <span id="status-dot"></span>
       <span id="status-text">checking…</span>
+    </div>
+
+    <div id="search">
+      <input id="query" type="text" placeholder="Search thadm…" autofocus />
+      <div id="search-row">
+        <button id="search-btn">Search</button>
+        <span id="search-hint">⌘+Enter to search</span>
+      </div>
+      <div id="results"></div>
     </div>
 
     <script src="popup.js" type="module"></script>

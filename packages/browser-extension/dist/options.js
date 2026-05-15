@@ -16,6 +16,15 @@ function healthUrl(baseHttpUrl) {
 function browserStatusUrl(baseHttpUrl) {
   return `${baseHttpUrl.replace(/\/$/, "")}${BROWSER_BASE_PATH}/status`;
 }
+function searchUrl(baseHttpUrl, query, limit = 8) {
+  const base = baseHttpUrl.replace(/\/$/, "");
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    content_type: "all"
+  });
+  return `${base}/search?${params.toString()}`;
+}
 
 // src/options.ts
 var $ = (id) => document.getElementById(id);
@@ -46,7 +55,7 @@ async function probeConnection(token, baseUrl) {
   } catch (e) {
     return {
       status: "server_down",
-      message: `can't reach screenpipe at ${baseUrl} — is the app running?`
+      message: `can't reach thadm at ${baseUrl} — is the app running?`
     };
   }
   try {
@@ -60,7 +69,7 @@ async function probeConnection(token, baseUrl) {
     if (auth.status === 401 || auth.status === 403) {
       return {
         status: "auth_required",
-        message: token ? "token was rejected — copy a fresh one from screenpipe Settings" : "this server requires a token — paste one above"
+        message: token ? "token was rejected — copy a fresh one from thadm Settings" : "this server requires a token — paste one above"
       };
     }
     return { status: "error", message: `unexpected HTTP ${auth.status}` };
@@ -100,7 +109,7 @@ async function init() {
     const { status, message } = await probeConnection(token, baseUrl);
     setStatus(status, message);
   } else {
-    setStatus("idle", "paste your screenpipe API token to get started");
+    setStatus("idle", "paste your thadm API token to get started");
   }
 }
 document.addEventListener("DOMContentLoaded", () => {

@@ -130,7 +130,7 @@ async function connect(): Promise<void> {
   }
 
   socket.onopen = () => {
-    console.log("[screenpipe] connected");
+    console.log("[thadm] connected");
     openedThisAttempt = true;
     reconnectDelay = RECONNECT_BASE_MS;
     closeWithoutOpen = 0;
@@ -259,7 +259,7 @@ function startHeartbeat(): void {
     // cadence, so any traffic at all resets lastFrameAt. If we go silent for
     // longer than HEARTBEAT_DEAD_MS, the connection is half-dead.
     if (Date.now() - lastFrameAt > HEARTBEAT_DEAD_MS) {
-      console.warn("[screenpipe] no server traffic for 50s — reconnecting");
+      console.warn("[thadm] no server traffic for 50s — reconnecting");
       forceReconnect();
       return;
     }

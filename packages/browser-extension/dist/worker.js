@@ -16,6 +16,15 @@ function healthUrl(baseHttpUrl) {
 function browserStatusUrl(baseHttpUrl) {
   return `${baseHttpUrl.replace(/\/$/, "")}${BROWSER_BASE_PATH}/status`;
 }
+function searchUrl(baseHttpUrl, query, limit = 8) {
+  const base = baseHttpUrl.replace(/\/$/, "");
+  const params = new URLSearchParams({
+    q: query,
+    limit: String(limit),
+    content_type: "all"
+  });
+  return `${base}/search?${params.toString()}`;
+}
 
 // src/worker.ts
 var RECONNECT_BASE_MS = 500;
@@ -78,7 +87,7 @@ async function connect() {
     return;
   }
   socket.onopen = () => {
-    console.log("[screenpipe] connected");
+    console.log("[thadm] connected");
     openedThisAttempt = true;
     reconnectDelay = RECONNECT_BASE_MS;
     closeWithoutOpen = 0;
@@ -99,7 +108,7 @@ async function connect() {
       closeWithoutOpen += 1;
       if (closeWithoutOpen >= AUTH_FAIL_THRESHOLD) {
         setBadge("!", "#dc2626");
-        notifyOnce("Screenpipe extension needs a token", "Open the extension options to paste your screenpipe API token.");
+        notifyOnce("Thadm extension needs a token", "Open the extension options to paste your thadm API token.");
       }
     }
     scheduleReconnect();
@@ -174,7 +183,7 @@ function startHeartbeat() {
       return;
     }
     if (Date.now() - lastFrameAt > HEARTBEAT_DEAD_MS) {
-      console.warn("[screenpipe] no server traffic for 50s — reconnecting");
+      console.warn("[thadm] no server traffic for 50s — reconnecting");
       forceReconnect();
       return;
     }

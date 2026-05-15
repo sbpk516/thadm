@@ -1,5 +1,5 @@
 {
-  "name": "@screenpipe/browser-extension",
+  "name": "@thadm/browser-extension",
   "version": "0.3.2",
   "private": true,
   "scripts": {
