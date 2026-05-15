@@ -107,7 +107,7 @@ pub const OAUTH_REDIRECT_URI: &str = "http://localhost:3030/connections/oauth/ca
 /// to the hardcoded screenpipe credential.
 fn provider_env_prefix(integration_id: &str) -> Option<&'static str> {
     match integration_id {
-        "gmail" | "google-docs" | "google-calendar" => Some("GOOGLE"),
+        "gmail" | "google-docs" | "google-calendar" | "google-sheets" => Some("GOOGLE"),
         "microsoft365" | "outlook-calendar" => Some("MICROSOFT"),
         _ => None,
     }

@@ -28,6 +28,16 @@ if [ ! -f "$APP_DIR/src-tauri/Cargo.toml" ]; then
 fi
 echo "OK: project found at $APP_DIR"
 
+# Auto-load .env.local so THADM_OAUTH_* (and other) vars reach the Rust
+# backend without the user having to `source` it before every dev run.
+if [ -f "$SCRIPT_DIR/.env.local" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  source "$SCRIPT_DIR/.env.local"
+  set +a
+  echo "OK: loaded .env.local"
+fi
+
 # -------------------------------------------------------
 phase 2 "Checking prerequisites"
 # -------------------------------------------------------
