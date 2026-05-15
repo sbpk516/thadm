@@ -320,7 +320,7 @@ export function buildEnrichedSummarizePrompt({
     `meeting id: ${meeting.id}`,
     `if your summary is worth saving, append it to the meeting note (and refresh the title in the same call) via:`,
     `  curl -s -X PATCH "http://localhost:3030/meetings/${meeting.id}" \\`,
-    `    -H "Authorization: Bearer $SCREENPIPE_API_AUTH_KEY" \\`,
+    `    -H "Authorization: Bearer $THADM_API_AUTH_KEY" \\`,
     `    -H "Content-Type: application/json" \\`,
     `    -d '{"title": "<NEW_TITLE_OR_OMIT>", "note": "<EXISTING_NOTE>\\n\\n## Summary\\n<YOUR_SUMMARY>"}'`,
     `replace <EXISTING_NOTE> with the meeting's current notes (shown above as "notes:" — empty string if none) so you don't overwrite the user's work; just append your summary under a "## Summary" heading. for the title: if the current "title:" is missing, generic ("untitled", "meeting", just the app name) or doesn't capture what actually happened, replace it with a 5-8 word plain-english title (no quotes, no "meeting about…" prefix) — otherwise omit the field so a user-set title is left alone. if there's nothing useful to summarize (empty transcript, irrelevant audio), say so out loud and skip the PATCH — don't write a placeholder.`,

@@ -670,6 +670,9 @@ impl PiExecutor {
 
         if let Some(ref key) = self.api_auth_key {
             cmd.env("SCREENPIPE_API_AUTH_KEY", key);
+            // THADM-branded alias so Pi's chat output shows $THADM_API_AUTH_KEY
+            // instead of $SCREENPIPE_API_AUTH_KEY in user-visible bash commands.
+            cmd.env("THADM_API_AUTH_KEY", key);
         }
 
         // Auto-auth the agent's `curl localhost:3030/...` calls via a bash
@@ -788,6 +791,9 @@ impl PiExecutor {
 
         if let Some(ref key) = self.api_auth_key {
             cmd.env("SCREENPIPE_API_AUTH_KEY", key);
+            // THADM-branded alias so Pi's chat output shows $THADM_API_AUTH_KEY
+            // instead of $SCREENPIPE_API_AUTH_KEY in user-visible bash commands.
+            cmd.env("THADM_API_AUTH_KEY", key);
         }
 
         // Auto-auth the agent's `curl localhost:3030/...` calls via a bash

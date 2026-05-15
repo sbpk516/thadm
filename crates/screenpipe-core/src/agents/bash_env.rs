@@ -59,8 +59,11 @@ pub const WRAPPER_SCRIPT: &str = r#"# screenpipe — auto-injected by pi-agent b
 unset SCREENPIPE_API_KEY
 
 _sp_auth_key() {
-  # accept either name so we don't depend on which spawn path set it
-  printf '%s' "${SCREENPIPE_LOCAL_API_KEY:-${SCREENPIPE_API_AUTH_KEY:-}}"
+  # Accept any of the three names so the wrapper survives any spawn path:
+  #   THADM_API_AUTH_KEY        — user-visible alias (added 2026-05-15)
+  #   SCREENPIPE_LOCAL_API_KEY  — desktop-app spawn
+  #   SCREENPIPE_API_AUTH_KEY   — pipe-executor spawn (legacy name)
+  printf '%s' "${THADM_API_AUTH_KEY:-${SCREENPIPE_LOCAL_API_KEY:-${SCREENPIPE_API_AUTH_KEY:-}}}"
 }
 
 curl() {
@@ -188,7 +191,12 @@ mod tests {
     }
 
     #[test]
-    fn wrapper_script_contains_both_env_var_names() {
+    fn wrapper_script_contains_all_env_var_names() {
+        // THADM_API_AUTH_KEY is the user-visible alias (added 2026-05-15) and
+        // must appear FIRST in the precedence chain so the agent sees the
+        // thadm-branded name in its env. The two SCREENPIPE_* names remain as
+        // backward-compat fallbacks for older spawn paths and in-flight pipes.
+        assert!(WRAPPER_SCRIPT.contains("THADM_API_AUTH_KEY"));
         assert!(WRAPPER_SCRIPT.contains("SCREENPIPE_LOCAL_API_KEY"));
         assert!(WRAPPER_SCRIPT.contains("SCREENPIPE_API_AUTH_KEY"));
     }
