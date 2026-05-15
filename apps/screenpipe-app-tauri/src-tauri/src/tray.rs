@@ -384,6 +384,23 @@ pub fn setup_tray(app: &AppHandle, update_item: Option<&tauri::menu::MenuItem<Wr
         // expires. Without it, source builds (which have no auto-update item)
         // would freeze the menu forever after the first force_tray_rebuild.
         setup_tray_menu_updater(app.clone(), update_item);
+
+        // macOS only: re-create the icon shortly after launch to push it to
+        // the rightmost visible position. Without this, on systems with many
+        // menubar items the icon can end up off-screen (observed at x=2322
+        // on a 1728-wide MBP) and the user has no way to recover — macOS
+        // doesn't allow Cmd+drag of an icon that isn't visible. The first
+        // setup happens during boot when display layout may still be settling
+        // (external monitors, Stage Manager, notch etc.), so a delayed
+        // recreate is more reliable than re-creating in-place at boot.
+        #[cfg(target_os = "macos")]
+        {
+            let app_for_recreate = app.clone();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(std::time::Duration::from_millis(1500)).await;
+                recreate_tray(&app_for_recreate);
+            });
+        }
     }
     Ok(())
 }
